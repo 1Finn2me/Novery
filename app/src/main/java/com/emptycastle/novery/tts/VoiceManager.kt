@@ -1,0 +1,534 @@
+package com.emptycastle.novery.tts
+
+import android.content.Context
+import android.speech.tts.TextToSpeech
+import android.speech.tts.Voice
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+import java.util.Locale
+
+/**
+ * Voice quality tier based on voice characteristics
+ */
+enum class VoiceQuality(val displayName: String, val priority: Int) {
+    PREMIUM("Premium", 0),      // Neural/WaveNet voices
+    HIGH("High Quality", 1),    // Enhanced voices
+    NORMAL("Standard", 2),      // Regular voices
+    LOW("Basic", 3),            // Low quality/network required
+    UNKNOWN("Unknown", 4)
+}
+
+/**
+ * Voice gender classification
+ */
+enum class VoiceGender(val displayName: String) {
+    FEMALE("Female"),
+    MALE("Male"),
+    NEUTRAL("Neutral"),
+    UNKNOWN("Unknown")
+}
+
+/**
+ * Processed voice information with metadata
+ */
+data class VoiceInfo(
+    val id: String,
+    val name: String,
+    val displayName: String,
+    val locale: Locale,
+    val languageCode: String,
+    val languageDisplayName: String,
+    val countryDisplayName: String,
+    val isLocal: Boolean,
+    val isNetworkRequired: Boolean,
+    val quality: VoiceQuality,
+    val gender: VoiceGender,
+    val isInstalled: Boolean = true
+) {
+    /**
+     * Short display name for compact UI
+     */
+    val shortName: String
+        get() = displayName.split("•").firstOrNull()?.trim() ?: displayName
+
+    /**
+     * Full description including quality and network status
+     */
+    val fullDescription: String
+        get() = buildString {
+            append(displayName)
+            if (!isLocal) append(" ☁️")
+            if (quality == VoiceQuality.PREMIUM) append(" ⭐")
+        }
+}
+
+/**
+ * Language group containing voices
+ */
+data class LanguageGroup(
+    val languageCode: String,
+    val displayName: String,
+    val flag: String?,
+    val voices: List<VoiceInfo>
+) {
+    val voiceCount: Int get() = voices.size
+    val hasLocalVoices: Boolean get() = voices.any { it.isLocal }
+    val hasPremiumVoices: Boolean get() = voices.any { it.quality == VoiceQuality.PREMIUM }
+}
+
+/**
+ * Manages TTS voices with detection, grouping, and selection
+ */
+object VoiceManager {
+
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+
+    private var tts: TextToSpeech? = null
+    private var isInitialized = false
+
+    // State
+    private val _voices = MutableStateFlow<List<VoiceInfo>>(emptyList())
+    val voices: StateFlow<List<VoiceInfo>> = _voices.asStateFlow()
+
+    private val _languageGroups = MutableStateFlow<List<LanguageGroup>>(emptyList())
+    val languageGroups: StateFlow<List<LanguageGroup>> = _languageGroups.asStateFlow()
+
+    private val _selectedVoice = MutableStateFlow<VoiceInfo?>(null)
+    val selectedVoice: StateFlow<VoiceInfo?> = _selectedVoice.asStateFlow()
+
+    private val _isLoading = MutableStateFlow(false)
+    val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
+
+    // Language code to flag emoji mapping
+    private val languageFlags = mapOf(
+        "en" to "🇺🇸",
+        "en-US" to "🇺🇸",
+        "en-GB" to "🇬🇧",
+        "en-AU" to "🇦🇺",
+        "en-IN" to "🇮🇳",
+        "es" to "🇪🇸",
+        "es-ES" to "🇪🇸",
+        "es-MX" to "🇲🇽",
+        "es-US" to "🇺🇸",
+        "fr" to "🇫🇷",
+        "fr-FR" to "🇫🇷",
+        "fr-CA" to "🇨🇦",
+        "de" to "🇩🇪",
+        "de-DE" to "🇩🇪",
+        "it" to "🇮🇹",
+        "it-IT" to "🇮🇹",
+        "pt" to "🇵🇹",
+        "pt-BR" to "🇧🇷",
+        "pt-PT" to "🇵🇹",
+        "ru" to "🇷🇺",
+        "ru-RU" to "🇷🇺",
+        "ja" to "🇯🇵",
+        "ja-JP" to "🇯🇵",
+        "ko" to "🇰🇷",
+        "ko-KR" to "🇰🇷",
+        "zh" to "🇨🇳",
+        "zh-CN" to "🇨🇳",
+        "zh-TW" to "🇹🇼",
+        "hi" to "🇮🇳",
+        "hi-IN" to "🇮🇳",
+        "ar" to "🇸🇦",
+        "ar-SA" to "🇸🇦",
+        "nl" to "🇳🇱",
+        "nl-NL" to "🇳🇱",
+        "pl" to "🇵🇱",
+        "pl-PL" to "🇵🇱",
+        "tr" to "🇹🇷",
+        "tr-TR" to "🇹🇷",
+        "vi" to "🇻🇳",
+        "vi-VN" to "🇻🇳",
+        "th" to "🇹🇭",
+        "th-TH" to "🇹🇭",
+        "id" to "🇮🇩",
+        "id-ID" to "🇮🇩",
+        "sv" to "🇸🇪",
+        "sv-SE" to "🇸🇪",
+        "da" to "🇩🇰",
+        "da-DK" to "🇩🇰",
+        "no" to "🇳🇴",
+        "nb-NO" to "🇳🇴",
+        "fi" to "🇫🇮",
+        "fi-FI" to "🇫🇮",
+        "cs" to "🇨🇿",
+        "cs-CZ" to "🇨🇿",
+        "el" to "🇬🇷",
+        "el-GR" to "🇬🇷",
+        "he" to "🇮🇱",
+        "he-IL" to "🇮🇱",
+        "uk" to "🇺🇦",
+        "uk-UA" to "🇺🇦",
+        "ro" to "🇷🇴",
+        "ro-RO" to "🇷🇴",
+        "hu" to "🇭🇺",
+        "hu-HU" to "🇭🇺",
+        "sk" to "🇸🇰",
+        "sk-SK" to "🇸🇰",
+        "bg" to "🇧🇬",
+        "bg-BG" to "🇧🇬",
+        "hr" to "🇭🇷",
+        "hr-HR" to "🇭🇷",
+        "ms" to "🇲🇾",
+        "ms-MY" to "🇲🇾",
+        "fil" to "🇵🇭",
+        "tl-PH" to "🇵🇭"
+    )
+
+    /**
+     * Initialize the voice manager and load available voices
+     */
+    fun initialize(context: Context, onComplete: (() -> Unit)? = null) {
+        if (isInitialized) {
+            onComplete?.invoke()
+            return
+        }
+
+        _isLoading.value = true
+
+        tts = TextToSpeech(context.applicationContext) { status ->
+            if (status == TextToSpeech.SUCCESS) {
+                isInitialized = true
+                loadVoices()
+            }
+            _isLoading.value = false
+            onComplete?.invoke()
+        }
+    }
+
+    /**
+     * Load and process all available voices
+     */
+    private fun loadVoices() {
+        val engine = tts ?: return
+
+        scope.launch(Dispatchers.Default) {
+            try {
+                val rawVoices = engine.voices ?: emptySet()
+
+                val processedVoices = rawVoices
+                    .filter { isVoiceUsable(it) }
+                    .map { processVoice(it) }
+                    .sortedWith(voiceComparator())
+
+                _voices.value = processedVoices
+
+                // Group by language
+                val groups = processedVoices
+                    .groupBy { it.languageCode }
+                    .map { (langCode, voices) ->
+                        val firstVoice = voices.first()
+                        LanguageGroup(
+                            languageCode = langCode,
+                            displayName = firstVoice.languageDisplayName,
+                            flag = getFlag(langCode, firstVoice.locale),
+                            voices = voices.sortedWith(voiceComparator())
+                        )
+                    }
+                    .sortedWith(languageGroupComparator())
+
+                _languageGroups.value = groups
+
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
+    /**
+     * Check if a voice is usable
+     */
+    private fun isVoiceUsable(voice: Voice): Boolean {
+        // Include all voices, but we'll sort network ones lower
+        return true
+    }
+
+    /**
+     * Process a raw Voice into VoiceInfo
+     */
+    private fun processVoice(voice: Voice): VoiceInfo {
+        val name = voice.name
+        val locale = voice.locale
+
+        return VoiceInfo(
+            id = name,
+            name = name,
+            displayName = formatVoiceDisplayName(voice),
+            locale = locale,
+            languageCode = locale.language,
+            languageDisplayName = locale.displayLanguage,
+            countryDisplayName = locale.displayCountry,
+            isLocal = !voice.isNetworkConnectionRequired,
+            isNetworkRequired = voice.isNetworkConnectionRequired,
+            quality = detectVoiceQuality(voice),
+            gender = detectVoiceGender(voice),
+            isInstalled = !voice.features.contains(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED)
+        )
+    }
+
+    /**
+     * Format voice name for display
+     */
+    private fun formatVoiceDisplayName(voice: Voice): String {
+        val name = voice.name
+
+        // Clean up common prefixes
+        var cleanName = name
+            .replace(Regex("^[a-z]{2}-[a-z]{2}-x-"), "") // Remove locale prefix
+            .replace(Regex("-local$"), "")
+            .replace(Regex("-network$"), " (Network)")
+            .replace(Regex("#.+$"), "") // Remove hash suffixes
+            .replace("_", " ")
+            .replace("-", " ")
+
+        // Capitalize words
+        cleanName = cleanName.split(" ")
+            .joinToString(" ") { word ->
+                word.replaceFirstChar { it.uppercase() }
+            }
+
+        // Add country if different from language
+        val country = voice.locale.displayCountry
+        val language = voice.locale.displayLanguage
+
+        return if (country.isNotBlank() && country != language) {
+            "$cleanName • $country"
+        } else {
+            cleanName
+        }
+    }
+
+    /**
+     * Detect voice quality from name and features
+     */
+    private fun detectVoiceQuality(voice: Voice): VoiceQuality {
+        val name = voice.name.lowercase()
+        val features = voice.features
+
+        return when {
+            // Premium voices (Neural, WaveNet, etc.)
+            name.contains("wavenet") -> VoiceQuality.PREMIUM
+            name.contains("neural") -> VoiceQuality.PREMIUM
+            name.contains("premium") -> VoiceQuality.PREMIUM
+            name.contains("studio") -> VoiceQuality.PREMIUM
+
+            // High quality voices
+            name.contains("enhanced") -> VoiceQuality.HIGH
+            name.contains("hd") -> VoiceQuality.HIGH
+            name.contains("high") -> VoiceQuality.HIGH
+            features.contains("highQuality") -> VoiceQuality.HIGH
+
+            // Network-only voices are typically lower priority
+            voice.isNetworkConnectionRequired -> VoiceQuality.LOW
+
+            // Standard local voices
+            else -> VoiceQuality.NORMAL
+        }
+    }
+
+    /**
+     * Detect voice gender from name
+     */
+    private fun detectVoiceGender(voice: Voice): VoiceGender {
+        val name = voice.name.lowercase()
+
+        return when {
+            name.contains("female") -> VoiceGender.FEMALE
+            name.contains("male") && !name.contains("female") -> VoiceGender.MALE
+            name.contains("-f-") -> VoiceGender.FEMALE
+            name.contains("-m-") -> VoiceGender.MALE
+            name.contains("woman") -> VoiceGender.FEMALE
+            name.contains("man") && !name.contains("woman") -> VoiceGender.MALE
+
+            // Common female voice names
+            name.contains("samantha") -> VoiceGender.FEMALE
+            name.contains("victoria") -> VoiceGender.FEMALE
+            name.contains("karen") -> VoiceGender.FEMALE
+            name.contains("susan") -> VoiceGender.FEMALE
+            name.contains("emma") -> VoiceGender.FEMALE
+            name.contains("amy") -> VoiceGender.FEMALE
+            name.contains("joanna") -> VoiceGender.FEMALE
+            name.contains("salli") -> VoiceGender.FEMALE
+            name.contains("kimberly") -> VoiceGender.FEMALE
+            name.contains("ivy") -> VoiceGender.FEMALE
+
+            // Common male voice names
+            name.contains("daniel") -> VoiceGender.MALE
+            name.contains("james") -> VoiceGender.MALE
+            name.contains("david") -> VoiceGender.MALE
+            name.contains("matthew") -> VoiceGender.MALE
+            name.contains("brian") -> VoiceGender.MALE
+            name.contains("joey") -> VoiceGender.MALE
+            name.contains("justin") -> VoiceGender.MALE
+
+            else -> VoiceGender.UNKNOWN
+        }
+    }
+
+    /**
+     * Get flag emoji for a language
+     */
+    private fun getFlag(languageCode: String, locale: Locale): String? {
+        val localeTag = locale.toLanguageTag()
+        return languageFlags[localeTag]
+            ?: languageFlags[languageCode]
+            ?: languageFlags[locale.language]
+    }
+
+    /**
+     * Comparator for sorting voices
+     */
+    private fun voiceComparator(): Comparator<VoiceInfo> {
+        return compareBy(
+            // 1. Local voices first
+            { !it.isLocal },
+            // 2. Higher quality first
+            { it.quality.priority },
+            // 3. Installed first
+            { !it.isInstalled },
+            // 4. Alphabetically by display name
+            { it.displayName }
+        )
+    }
+
+    /**
+     * Comparator for sorting language groups
+     */
+    private fun languageGroupComparator(): Comparator<LanguageGroup> {
+        return compareBy(
+            // 1. English first (most common for novels)
+            { it.languageCode != "en" },
+            // 2. Languages with local voices first
+            { !it.hasLocalVoices },
+            // 3. Languages with premium voices first
+            { !it.hasPremiumVoices },
+            // 4. Alphabetically
+            { it.displayName }
+        )
+    }
+
+    /**
+     * Select a voice by ID
+     */
+    fun selectVoice(voiceId: String): Boolean {
+        val voice = _voices.value.find { it.id == voiceId }
+        if (voice != null) {
+            _selectedVoice.value = voice
+
+            // Apply to TTS engine
+            tts?.let { engine ->
+                val androidVoice = engine.voices?.find { it.name == voiceId }
+                if (androidVoice != null) {
+                    engine.voice = androidVoice
+                    return true
+                }
+            }
+        }
+        return false
+    }
+
+    /**
+     * Select best voice for a language
+     */
+    fun selectBestVoiceForLanguage(languageCode: String): VoiceInfo? {
+        val voicesForLanguage = _voices.value.filter { it.languageCode == languageCode }
+
+        // Find best voice (local, high quality, installed)
+        val bestVoice = voicesForLanguage
+            .filter { it.isLocal && it.isInstalled }
+            .minByOrNull { it.quality.priority }
+            ?: voicesForLanguage.firstOrNull()
+
+        bestVoice?.let { selectVoice(it.id) }
+        return bestVoice
+    }
+
+    /**
+     * Get recommended voices (top 5 for each quality tier)
+     */
+    fun getRecommendedVoices(): List<VoiceInfo> {
+        val allVoices = _voices.value
+
+        return allVoices
+            .filter { it.isLocal && it.languageCode == "en" }
+            .take(5) +
+                allVoices
+                    .filter { it.isLocal && it.languageCode != "en" }
+                    .take(5)
+    }
+
+    /**
+     * Get voices for a specific language
+     */
+    fun getVoicesForLanguage(languageCode: String): List<VoiceInfo> {
+        return _voices.value.filter {
+            it.languageCode.equals(languageCode, ignoreCase = true)
+        }
+    }
+
+    /**
+     * Search voices by name or language
+     */
+    fun searchVoices(query: String): List<VoiceInfo> {
+        if (query.isBlank()) return _voices.value
+
+        val lowerQuery = query.lowercase()
+        return _voices.value.filter { voice ->
+            voice.displayName.lowercase().contains(lowerQuery) ||
+                    voice.languageDisplayName.lowercase().contains(lowerQuery) ||
+                    voice.countryDisplayName.lowercase().contains(lowerQuery)
+        }
+    }
+
+    /**
+     * Get the currently selected voice ID
+     */
+    fun getSelectedVoiceId(): String? = _selectedVoice.value?.id
+
+    /**
+     * Check if a voice is selected
+     */
+    fun isVoiceSelected(voiceId: String): Boolean = _selectedVoice.value?.id == voiceId
+
+    /**
+     * Preview a voice with sample text
+     */
+    fun previewVoice(voiceId: String, sampleText: String = "This is a preview of how this voice sounds.") {
+        tts?.let { engine ->
+            val voice = engine.voices?.find { it.name == voiceId }
+            if (voice != null) {
+                val previousVoice = engine.voice
+                engine.voice = voice
+                engine.speak(sampleText, TextToSpeech.QUEUE_FLUSH, null, "preview_$voiceId")
+                // Note: In production, you might want to restore the previous voice after preview
+            }
+        }
+    }
+
+    /**
+     * Stop any ongoing preview
+     */
+    fun stopPreview() {
+        tts?.stop()
+    }
+
+    /**
+     * Cleanup resources
+     */
+    fun shutdown() {
+        tts?.stop()
+        tts?.shutdown()
+        tts = null
+        isInitialized = false
+        _voices.value = emptyList()
+        _languageGroups.value = emptyList()
+        _selectedVoice.value = null
+    }
+}
