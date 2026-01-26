@@ -1,10 +1,17 @@
+// com/emptycastle/novery/ui/components/NovelCard.kt
+
 package com.emptycastle.novery.ui.components
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
@@ -23,7 +30,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Book
-import androidx.compose.material.icons.filled.CloudDownload
+import androidx.compose.material.icons.filled.FiberNew
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
@@ -39,6 +46,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -72,7 +80,6 @@ private object NovelCardTokens {
 
 /**
  * Main Novel Card Entry Point
- * Switches between Compact and Comfortable styles based on UiDensity
  */
 @Composable
 fun NovelCard(
@@ -81,7 +88,7 @@ fun NovelCard(
     modifier: Modifier = Modifier,
     density: UiDensity = UiDensity.DEFAULT,
     onLongClick: (() -> Unit)? = null,
-    downloadCount: Int = 0,
+    newChapterCount: Int = 0,
     readingStatus: ReadingStatus? = null,
     lastReadChapter: String? = null,
     showApiName: Boolean = false
@@ -92,7 +99,7 @@ fun NovelCard(
             onClick = onClick,
             modifier = modifier,
             onLongClick = onLongClick,
-            downloadCount = downloadCount,
+            newChapterCount = newChapterCount,
             readingStatus = readingStatus,
             lastReadChapter = lastReadChapter,
             showApiName = showApiName
@@ -103,7 +110,7 @@ fun NovelCard(
             onClick = onClick,
             modifier = modifier,
             onLongClick = onLongClick,
-            downloadCount = downloadCount,
+            newChapterCount = newChapterCount,
             readingStatus = readingStatus,
             lastReadChapter = lastReadChapter,
             showApiName = showApiName,
@@ -122,7 +129,7 @@ private fun ComfortableNovelCard(
     onClick: () -> Unit,
     modifier: Modifier,
     onLongClick: (() -> Unit)?,
-    downloadCount: Int,
+    newChapterCount: Int,
     readingStatus: ReadingStatus?,
     lastReadChapter: String?,
     showApiName: Boolean
@@ -171,6 +178,7 @@ private fun ComfortableNovelCard(
                         )
                 )
 
+                // Status badge - top left
                 if (readingStatus != null) {
                     StatusBadge(
                         status = readingStatus,
@@ -181,9 +189,10 @@ private fun ComfortableNovelCard(
                     )
                 }
 
-                if (downloadCount > 0) {
-                    DownloadBadge(
-                        count = downloadCount,
+                // NEW CHAPTERS BADGE - top right
+                if (newChapterCount > 0) {
+                    NewChaptersBadge(
+                        count = newChapterCount,
                         modifier = Modifier
                             .align(Alignment.TopEnd)
                             .padding(8.dp)
@@ -239,7 +248,7 @@ private fun CompactNovelCard(
     onClick: () -> Unit,
     modifier: Modifier,
     onLongClick: (() -> Unit)?,
-    downloadCount: Int,
+    newChapterCount: Int,
     readingStatus: ReadingStatus?,
     lastReadChapter: String?,
     showApiName: Boolean,
@@ -285,6 +294,7 @@ private fun CompactNovelCard(
                     )
             )
 
+            // Status badge - top left
             if (readingStatus != null) {
                 StatusBadge(
                     status = readingStatus,
@@ -295,12 +305,14 @@ private fun CompactNovelCard(
                 )
             }
 
-            if (downloadCount > 0) {
-                DownloadBadge(
-                    count = downloadCount,
+            // NEW CHAPTERS BADGE - top right
+            if (newChapterCount > 0) {
+                NewChaptersBadge(
+                    count = newChapterCount,
                     modifier = Modifier
                         .align(Alignment.TopEnd)
-                        .padding(8.dp)
+                        .padding(8.dp),
+                    compactMode = isCompact
                 )
             }
 
@@ -351,9 +363,6 @@ private fun CompactNovelCard(
 
 // ---------------- Helper Components ----------------
 
-/**
- * We draw a fallback first, then AsyncImage on top (so fallback shows while loading).
- */
 @Composable
 private fun NovelCoverImage(
     url: String?,
@@ -390,33 +399,61 @@ private fun CoverFallback(title: String, modifier: Modifier = Modifier) {
 }
 
 /**
- * Neutral monochrome download badge (pill)
+ * New Chapters Badge - Shows count of new chapters since last view
  */
 @Composable
-private fun DownloadBadge(count: Int, modifier: Modifier = Modifier) {
-    Surface(
-        modifier = modifier,
-        shape = NovelCardTokens.BadgeShape,
-        color = Color.Black.copy(alpha = 0.55f),
-        shadowElevation = 0.dp
+private fun NewChaptersBadge(
+    count: Int,
+    modifier: Modifier = Modifier,
+    compactMode: Boolean = false
+) {
+    AnimatedVisibility(
+        visible = count > 0,
+        enter = fadeIn() + scaleIn(),
+        exit = fadeOut() + scaleOut(),
+        modifier = modifier
     ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        Surface(
+            shape = NovelCardTokens.BadgeShape,
+            color = MaterialTheme.colorScheme.primary,
+            shadowElevation = 4.dp
         ) {
-            Icon(
-                imageVector = Icons.Default.CloudDownload,
-                contentDescription = null,
-                modifier = Modifier.size(12.dp),
-                tint = Color.White.copy(alpha = 0.92f)
-            )
-            Text(
-                text = count.toString(),
-                style = MaterialTheme.typography.labelSmall,
-                fontWeight = FontWeight.SemiBold,
-                color = Color.White.copy(alpha = 0.92f)
-            )
+            if (compactMode) {
+                // Just show the number in a small circle
+                Box(
+                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = if (count > 99) "99+" else count.toString(),
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onPrimary,
+                        fontSize = 10.sp
+                    )
+                }
+            } else {
+                // Show icon with count
+                Row(
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.FiberNew,
+                        contentDescription = null,
+                        modifier = Modifier.size(14.dp),
+                        tint = MaterialTheme.colorScheme.onPrimary
+                    )
+                    Text(
+                        text = if (count > 99) "+99" else "+$count",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onPrimary,
+                        fontSize = 11.sp
+                    )
+                }
+            }
         }
     }
 }
@@ -441,20 +478,21 @@ private fun StatusBadge(
     val containerColor = if (compactMode) {
         Color.Black.copy(alpha = 0.55f)
     } else {
-        statusColor.copy(alpha = 0.70f)
+        statusColor.copy(alpha = 0.85f)
     }
 
     Surface(
         modifier = modifier,
         shape = NovelCardTokens.BadgeShape,
         color = containerColor,
-        shadowElevation = 0.dp
+        shadowElevation = if (compactMode) 0.dp else 2.dp
     ) {
         if (compactMode) {
             Box(modifier = Modifier.padding(horizontal = 7.dp, vertical = 6.dp)) {
                 Box(
                     modifier = Modifier
                         .size(8.dp)
+                        .shadow(1.dp, CircleShape)
                         .clip(CircleShape)
                         .background(statusColor)
                 )
@@ -462,7 +500,7 @@ private fun StatusBadge(
         } else {
             Text(
                 text = status.displayName(),
-                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
                 style = MaterialTheme.typography.labelSmall,
                 fontWeight = FontWeight.SemiBold,
                 color = Color.White,
@@ -527,10 +565,6 @@ fun NovelCardSkeleton(
     }
 }
 
-/**
- * Animated shimmer effect modifier.
- * Uses rememberInfiniteTransition to create a smooth, continuous shimmer animation.
- */
 fun Modifier.shimmerEffect(): Modifier = composed {
     var size by remember { mutableStateOf(IntSize.Zero) }
 

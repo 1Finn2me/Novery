@@ -11,6 +11,9 @@ composeBom = "2024.09.00"
 foundation = "1.10.0"
 foundationLayout = "1.10.0"
 paletteKtx = "1.0.0"
+roomCommonJvm = "2.8.4"
+adapters = "3.2.0-alpha11"
+animation = "1.10.1"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -30,6 +33,9 @@ androidx-compose-material3 = { group = "androidx.compose.material3", name = "mat
 androidx-compose-foundation = { group = "androidx.compose.foundation", name = "foundation", version.ref = "foundation" }
 androidx-compose-foundation-layout = { group = "androidx.compose.foundation", name = "foundation-layout", version.ref = "foundationLayout" }
 androidx-palette-ktx = { group = "androidx.palette", name = "palette-ktx", version.ref = "paletteKtx" }
+androidx-room-common-jvm = { group = "androidx.room", name = "room-common-jvm", version.ref = "roomCommonJvm" }
+androidx-adapters = { group = "androidx.databinding", name = "adapters", version.ref = "adapters" }
+androidx-compose-animation = { group = "androidx.compose.animation", name = "animation", version.ref = "animation" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

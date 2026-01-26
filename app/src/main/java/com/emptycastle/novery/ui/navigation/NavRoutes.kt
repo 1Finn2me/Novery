@@ -4,40 +4,105 @@ import java.net.URLDecoder
 import java.net.URLEncoder
 
 /**
- * Navigation routes for the app
+ * Type-safe navigation routes
  */
 sealed class NavRoutes(val route: String) {
 
-    // Main home screen with tabs
-    object Home : NavRoutes("home/{initialTab}") {
-        fun createRoute(initialTab: String = "library"): String {
-            return "home/$initialTab"
-        }
-    }
+    // ================================================================
+    // ROOT DESTINATIONS
+    // ================================================================
 
-    // Settings screen
+    object Home : NavRoutes("home")
+
     object Settings : NavRoutes("settings")
 
-    // Novel details screen
-    object Details : NavRoutes("details/{novelUrl}/{providerName}") {
-        fun createRoute(novelUrl: String, providerName: String): String {
-            val encodedUrl = URLEncoder.encode(novelUrl, "UTF-8")
-            val encodedProvider = URLEncoder.encode(providerName, "UTF-8")
-            return "details/$encodedUrl/$encodedProvider"
-        }
+    object Notifications : NavRoutes("notifications")
 
-        fun decodeUrl(encodedUrl: String): String {
-            return URLDecoder.decode(encodedUrl, "UTF-8")
+    // ================================================================
+    // READER DESTINATIONS
+    // ================================================================
+
+    object ReaderSettings : NavRoutes("reader_settings")
+
+    // ================================================================
+    // PROVIDER DESTINATIONS
+    // ================================================================
+
+    /**
+     * Browse novels from a specific provider
+     */
+    object ProviderBrowse : NavRoutes("provider_browse/{providerName}") {
+        fun createRoute(providerName: String): String {
+            val encodedProvider = encodeUrl(providerName)
+            return "provider_browse/$encodedProvider"
         }
     }
 
-    // Chapter reader screen
+    /**
+     * WebView for a provider (for Cloudflare bypass, manual browsing, etc.)
+     */
+    object ProviderWebView : NavRoutes("provider_webview/{providerName}/{initialUrl}") {
+        fun createRoute(providerName: String, initialUrl: String? = null): String {
+            val encodedProvider = encodeUrl(providerName)
+            val encodedUrl = encodeUrl(initialUrl ?: "")
+            return "provider_webview/$encodedProvider/$encodedUrl"
+        }
+    }
+
+    // ================================================================
+    // SHARED DESTINATIONS (accessible from any tab)
+    // ================================================================
+
+    object Details : NavRoutes("details/{novelUrl}/{providerName}") {
+        fun createRoute(novelUrl: String, providerName: String): String {
+            val encodedUrl = encodeUrl(novelUrl)
+            val encodedProvider = encodeUrl(providerName)
+            return "details/$encodedUrl/$encodedProvider"
+        }
+    }
+
     object Reader : NavRoutes("reader/{chapterUrl}/{novelUrl}/{providerName}") {
         fun createRoute(chapterUrl: String, novelUrl: String, providerName: String): String {
-            val encodedChapterUrl = URLEncoder.encode(chapterUrl, "UTF-8")
-            val encodedNovelUrl = URLEncoder.encode(novelUrl, "UTF-8")
-            val encodedProvider = URLEncoder.encode(providerName, "UTF-8")
+            val encodedChapterUrl = encodeUrl(chapterUrl)
+            val encodedNovelUrl = encodeUrl(novelUrl)
+            val encodedProvider = encodeUrl(providerName)
             return "reader/$encodedChapterUrl/$encodedNovelUrl/$encodedProvider"
+        }
+    }
+
+    // ================================================================
+    // TAB ROUTES (for bottom navigation)
+    // ================================================================
+
+    sealed class Tab(route: String) : NavRoutes(route) {
+        object Library : Tab("tab_library")
+        object Browse : Tab("tab_browse")
+        object Search : Tab("tab_search")
+        object History : Tab("tab_history")
+    }
+
+    companion object {
+        fun encodeUrl(url: String): String = URLEncoder.encode(url, "UTF-8")
+        fun decodeUrl(encodedUrl: String): String = URLDecoder.decode(encodedUrl, "UTF-8")
+    }
+}
+
+/**
+ * Bottom navigation tab configuration
+ */
+enum class HomeTabs(
+    val route: String,
+    val title: String
+) {
+    LIBRARY("tab_library", "Library"),
+    BROWSE("tab_browse", "Browse"),
+    SEARCH("tab_search", "Search"),
+    HISTORY("tab_history", "History"),
+    PROFILE("tab_profile", "Profile");
+
+    companion object {
+        fun fromRoute(route: String): HomeTabs? {
+            return entries.find { it.route == route }
         }
     }
 }

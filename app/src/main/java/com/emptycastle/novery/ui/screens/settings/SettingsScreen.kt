@@ -2,6 +2,8 @@ package com.emptycastle.novery.ui.screens.settings
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -33,6 +35,7 @@ import androidx.compose.material.icons.filled.LibraryBooks
 import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.ViewCompact
+import androidx.compose.material.icons.rounded.CloudDownload
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
@@ -72,6 +75,7 @@ import com.emptycastle.novery.data.repository.RepositoryProvider
 import com.emptycastle.novery.domain.model.GridColumns
 import com.emptycastle.novery.domain.model.LibraryFilter
 import com.emptycastle.novery.domain.model.LibrarySortOrder
+import com.emptycastle.novery.domain.model.ReadingStatus
 import com.emptycastle.novery.domain.model.ThemeMode
 import com.emptycastle.novery.domain.model.UiDensity
 
@@ -302,6 +306,75 @@ fun SettingsScreen(
                 }
             }
 
+            // ═══════════════════════════════════════════════════════════════════════════
+            // AUTO-DOWNLOAD SECTION
+            // ═══════════════════════════════════════════════════════════════════════════
+            item {
+                SettingsSection(title = "Auto-Download", icon = Icons.Rounded.CloudDownload)
+            }
+
+            item {
+                SettingsCard {
+                    // Enable Auto-Download
+                    SettingsSwitch(
+                        title = "Auto-Download New Chapters",
+                        subtitle = "Automatically download new chapters when found",
+                        checked = appSettings.autoDownloadEnabled,
+                        onCheckedChange = { preferencesManager.updateAutoDownloadEnabled(it) }
+                    )
+
+                    AnimatedVisibility(
+                        visible = appSettings.autoDownloadEnabled,
+                        enter = expandVertically() + fadeIn(),
+                        exit = shrinkVertically() + fadeOut()
+                    ) {
+                        Column {
+                            HorizontalDivider(
+                                color = MaterialTheme.colorScheme.outlineVariant,
+                                modifier = Modifier.padding(vertical = 8.dp)
+                            )
+
+                            // WiFi Only
+                            SettingsSwitch(
+                                title = "WiFi Only",
+                                subtitle = "Only auto-download when connected to WiFi",
+                                checked = appSettings.autoDownloadOnWifiOnly,
+                                onCheckedChange = { preferencesManager.updateAutoDownloadWifiOnly(it) }
+                            )
+
+                            HorizontalDivider(
+                                color = MaterialTheme.colorScheme.outlineVariant,
+                                modifier = Modifier.padding(vertical = 8.dp)
+                            )
+
+                            // Download Limit
+                            SettingsSlider(
+                                title = "Download Limit per Novel",
+                                subtitle = if (appSettings.autoDownloadLimit == 0) "Unlimited" else "Max ${appSettings.autoDownloadLimit} chapters",
+                                value = appSettings.autoDownloadLimit.toFloat(),
+                                valueRange = 0f..50f,
+                                steps = 9,
+                                valueLabel = if (appSettings.autoDownloadLimit == 0) "∞" else appSettings.autoDownloadLimit.toString(),
+                                onValueChange = { preferencesManager.updateAutoDownloadLimit(it.toInt()) }
+                            )
+
+                            HorizontalDivider(
+                                color = MaterialTheme.colorScheme.outlineVariant,
+                                modifier = Modifier.padding(vertical = 8.dp)
+                            )
+
+                            // Status filter
+                            SettingsLabel(title = "Auto-download for")
+                            Spacer(modifier = Modifier.height(8.dp))
+                            AutoDownloadStatusSelector(
+                                selectedStatuses = appSettings.autoDownloadForStatuses,
+                                onStatusesChanged = { preferencesManager.updateAutoDownloadStatuses(it) }
+                            )
+                        }
+                    }
+                }
+            }
+
             // ═══════════════════════════════════════════════════════════
             // READER SECTION
             // ═══════════════════════════════════════════════════════════
@@ -367,6 +440,60 @@ fun SettingsScreen(
 // ═══════════════════════════════════════════════════════════════════════════
 // CUSTOM SELECTORS
 // ═══════════════════════════════════════════════════════════════════════════
+
+@Composable
+private fun AutoDownloadStatusSelector(
+    selectedStatuses: Set<ReadingStatus>,
+    onStatusesChanged: (Set<ReadingStatus>) -> Unit
+) {
+    val statuses = listOf(
+        ReadingStatus.READING,
+        ReadingStatus.PLAN_TO_READ,
+        ReadingStatus.ON_HOLD
+    )
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        statuses.forEach { status ->
+            val isSelected = selectedStatuses.contains(status)
+            FilterChip(
+                selected = isSelected,
+                onClick = {
+                    val newSet = if (isSelected) {
+                        selectedStatuses - status
+                    } else {
+                        selectedStatuses + status
+                    }
+                    onStatusesChanged(newSet)
+                },
+                label = {
+                    Text(
+                        status.displayName(),
+                        fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal
+                    )
+                },
+                leadingIcon = if (isSelected) {
+                    {
+                        Icon(
+                            Icons.Default.Check,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                } else null,
+                colors = FilterChipDefaults.filterChipColors(
+                    selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                    selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                    selectedLeadingIconColor = MaterialTheme.colorScheme.onPrimaryContainer
+                )
+            )
+        }
+    }
+}
 
 @Composable
 private fun ThemeModeSelector(
@@ -522,7 +649,7 @@ private fun GridColumnsRow(
 private fun LivePreviewCard(
     gridColumns: GridColumns,
     showBadges: Boolean,
-    density: UiDensity = UiDensity.DEFAULT // Add density param to LivePreviewCard
+    density: UiDensity = UiDensity.DEFAULT
 ) {
     val columnCount = when (gridColumns) {
         is GridColumns.Auto -> 3

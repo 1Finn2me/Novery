@@ -4,27 +4,129 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <path android:pathData="M31,63.928c0,0 6.4,-11 12.1,-13.1c7.2,-2.6 26,-1.4 26,-1.4l38.1,38.1L107,108.928l-32,-1L31,63.928z">
+    
+    <!-- Shadow/depth layer -->
+    <path
+        android:pathData="M30,38 L78,38 L78,82 L54,90 L30,82 Z"
+        android:fillColor="#22000000"/>
+
+    <!-- Left page of book -->
+    <path
+        android:pathData="M28,35 Q28,30 33,30 L51,30 L51,75 Q51,78 48,78 L33,78 Q28,78 28,73 Z"
+        android:fillColor="#FFFFFF"
+        android:fillAlpha="0.98"/>
+
+    <!-- Right page of book -->
+    <path
+        android:pathData="M57,30 L75,30 Q80,30 80,35 L80,73 Q80,78 75,78 L60,78 Q57,78 57,75 Z"
+        android:fillColor="#FFFFFF"
+        android:fillAlpha="0.98"/>
+
+    <!-- Book spine/center fold -->
+    <path
+        android:pathData="M51,30 L57,30 L57,78 L51,78 Z">
         <aapt:attr name="android:fillColor">
             <gradient
-                android:endX="85.84757"
-                android:endY="92.4963"
-                android:startX="42.9492"
-                android:startY="49.59793"
+                android:startX="51"
+                android:startY="54"
+                android:endX="57"
+                android:endY="54"
                 android:type="linear">
                 <item
-                    android:color="#44000000"
+                    android:color="#FED7AA"
                     android:offset="0.0" />
                 <item
-                    android:color="#00000000"
+                    android:color="#FFF7ED"
+                    android:offset="0.5" />
+                <item
+                    android:color="#FED7AA"
                     android:offset="1.0" />
             </gradient>
         </aapt:attr>
     </path>
+
+    <!-- Decorative bookmark ribbon -->
     <path
+        android:pathData="M52,28 L56,28 L56,50 L54,47 L52,50 Z"
+        android:fillColor="#FBBF24"/>
+
+    <!-- Left page text lines (decorative) -->
+    <path
+        android:pathData="M35,40 L46,40"
+        android:strokeColor="#F97316"
+        android:strokeWidth="1.5"
+        android:strokeAlpha="0.25"
+        android:strokeLineCap="round"/>
+    <path
+        android:pathData="M35,46 L46,46"
+        android:strokeColor="#F97316"
+        android:strokeWidth="1.5"
+        android:strokeAlpha="0.25"
+        android:strokeLineCap="round"/>
+    <path
+        android:pathData="M35,52 L46,52"
+        android:strokeColor="#F97316"
+        android:strokeWidth="1.5"
+        android:strokeAlpha="0.25"
+        android:strokeLineCap="round"/>
+    <path
+        android:pathData="M35,58 L46,58"
+        android:strokeColor="#F97316"
+        android:strokeWidth="1.5"
+        android:strokeAlpha="0.25"
+        android:strokeLineCap="round"/>
+    <path
+        android:pathData="M35,64 L46,64"
+        android:strokeColor="#F97316"
+        android:strokeWidth="1.5"
+        android:strokeAlpha="0.25"
+        android:strokeLineCap="round"/>
+
+    <!-- Right page text lines (decorative) -->
+    <path
+        android:pathData="M62,40 L73,40"
+        android:strokeColor="#EA580C"
+        android:strokeWidth="1.5"
+        android:strokeAlpha="0.25"
+        android:strokeLineCap="round"/>
+    <path
+        android:pathData="M62,46 L73,46"
+        android:strokeColor="#EA580C"
+        android:strokeWidth="1.5"
+        android:strokeAlpha="0.25"
+        android:strokeLineCap="round"/>
+    <path
+        android:pathData="M62,52 L73,52"
+        android:strokeColor="#EA580C"
+        android:strokeWidth="1.5"
+        android:strokeAlpha="0.25"
+        android:strokeLineCap="round"/>
+    <path
+        android:pathData="M62,58 L73,58"
+        android:strokeColor="#EA580C"
+        android:strokeWidth="1.5"
+        android:strokeAlpha="0.25"
+        android:strokeLineCap="round"/>
+    <path
+        android:pathData="M62,64 L73,64"
+        android:strokeColor="#EA580C"
+        android:strokeWidth="1.5"
+        android:strokeAlpha="0.25"
+        android:strokeLineCap="round"/>
+
+    <!-- Highlight shine effect -->
+    <path
+        android:pathData="M33,32 Q38,32 40,34 L40,70 Q38,72 33,72 L33,32 Z"
         android:fillColor="#FFFFFF"
-        android:fillType="nonZero"
-        android:pathData="M65.3,45.828l3.8,-6.6c0.2,-0.4 0.1,-0.9 -0.3,-1.1c-0.4,-0.2 -0.9,-0.1 -1.1,0.3l-3.9,6.7c-6.3,-2.8 -13.4,-2.8 -19.7,0l-3.9,-6.7c-0.2,-0.4 -0.7,-0.5 -1.1,-0.3C38.8,38.328 38.7,38.828 38.9,39.228l3.8,6.6C36.2,49.428 31.7,56.028 31,63.928h46C76.3,56.028 71.8,49.428 65.3,45.828zM43.4,57.328c-0.8,0 -1.5,-0.5 -1.8,-1.2c-0.3,-0.7 -0.1,-1.5 0.4,-2.1c0.5,-0.5 1.4,-0.7 2.1,-0.4c0.7,0.3 1.2,1 1.2,1.8C45.3,56.528 44.5,57.328 43.4,57.328L43.4,57.328zM64.6,57.328c-0.8,0 -1.5,-0.5 -1.8,-1.2s-0.1,-1.5 0.4,-2.1c0.5,-0.5 1.4,-0.7 2.1,-0.4c0.7,0.3 1.2,1 1.2,1.8C66.5,56.528 65.6,57.328 64.6,57.328L64.6,57.328z"
-        android:strokeWidth="1"
-        android:strokeColor="#00000000" />
+        android:fillAlpha="0.2"/>
+
+    <!-- Bottom "N" monogram/accent -->
+    <path
+        android:pathData="M45,68 L45,73 M45,68 L50,73 M50,68 L50,73"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="2.5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:strokeAlpha="0.8"/>
+
 </vector>

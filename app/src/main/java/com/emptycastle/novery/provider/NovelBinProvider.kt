@@ -1,5 +1,6 @@
 package com.emptycastle.novery.provider
 
+import com.emptycastle.novery.R
 import com.emptycastle.novery.domain.model.Chapter
 import com.emptycastle.novery.domain.model.FilterOption
 import com.emptycastle.novery.domain.model.MainPageResult
@@ -13,9 +14,9 @@ import org.jsoup.nodes.Element
 import org.jsoup.select.Elements
 import java.util.concurrent.atomic.AtomicLong
 
+
 /**
  * Provider for NovelBin.com
- * Improved based on the JavaScript reference implementation with better parsing,
  * error handling, and multiple fallback selectors.
  */
 class NovelBinProvider : MainProvider() {
@@ -23,6 +24,7 @@ class NovelBinProvider : MainProvider() {
     override val name = "NovelBin"
     override val mainUrl = "https://novelbin.com"
     override val hasMainPage = true
+    override val iconRes: Int = R.drawable.ic_provider_novelbin
 
     // ================================================================
     // THROTTLING & PATTERNS

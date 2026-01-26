@@ -9,7 +9,11 @@ import androidx.navigation.navArgument
 import com.emptycastle.novery.domain.model.AppSettings
 import com.emptycastle.novery.ui.screens.details.DetailsScreen
 import com.emptycastle.novery.ui.screens.home.HomeScreen
+import com.emptycastle.novery.ui.screens.home.tabs.browse.ProviderBrowseScreen
+import com.emptycastle.novery.ui.screens.home.tabs.browse.ProviderWebViewScreen
+import com.emptycastle.novery.ui.screens.notification.NotificationScreen
 import com.emptycastle.novery.ui.screens.reader.ReaderScreen
+import com.emptycastle.novery.ui.screens.reader.settings.ReaderSettingsScreen
 import com.emptycastle.novery.ui.screens.settings.SettingsScreen
 
 @Composable
@@ -19,47 +23,136 @@ fun NoveryNavGraph(
 ) {
     NavHost(
         navController = navController,
-        startDestination = NavRoutes.Home.createRoute()
+        startDestination = NavRoutes.Home.route
     ) {
-        // Home Screen with tabs
-        composable(
-            route = NavRoutes.Home.route,
-            arguments = listOf(
-                navArgument("initialTab") {
-                    type = NavType.StringType
-                    defaultValue = "library"
-                }
-            )
-        ) { backStackEntry ->
-            val initialTab = backStackEntry.arguments?.getString("initialTab") ?: "library"
-
+        // ================================================================
+        // HOME (with nested tab navigation)
+        // ================================================================
+        composable(route = NavRoutes.Home.route) {
             HomeScreen(
-                initialTab = initialTab,
                 appSettings = appSettings,
-                onNovelClick = { novel, providerName ->
+                onNavigateToDetails = { novelUrl, providerName ->
                     navController.navigate(
-                        NavRoutes.Details.createRoute(novel.url, providerName)
+                        NavRoutes.Details.createRoute(novelUrl, providerName)
                     )
                 },
-                onSettingsClick = {
-                    navController.navigate(NavRoutes.Settings.route)
-                },
-                onChapterClick = { chapterUrl, novelUrl, providerName ->
+                onNavigateToReader = { chapterUrl, novelUrl, providerName ->
                     navController.navigate(
                         NavRoutes.Reader.createRoute(chapterUrl, novelUrl, providerName)
+                    )
+                },
+                onNavigateToSettings = {
+                    navController.navigate(NavRoutes.Settings.route)
+                },
+                onNavigateToProviderBrowse = { providerName ->
+                    navController.navigate(
+                        NavRoutes.ProviderBrowse.createRoute(providerName)
+                    )
+                },
+                onNavigateToNotifications = {
+                    navController.navigate(NavRoutes.Notifications.route)
+                }
+            )
+        }
+
+        // ================================================================
+        // NOTIFICATIONS
+        // ================================================================
+        composable(route = NavRoutes.Notifications.route) {
+            NotificationScreen(
+                onNavigateBack = { navController.popBackStack() },
+                onNavigateToReader = { chapterUrl, novelUrl, providerName ->
+                    navController.navigate(
+                        NavRoutes.Reader.createRoute(chapterUrl, novelUrl, providerName)
+                    )
+                },
+                onNavigateToDetails = { novelUrl, providerName ->
+                    navController.navigate(
+                        NavRoutes.Details.createRoute(novelUrl, providerName)
                     )
                 }
             )
         }
 
-        // Settings Screen
+        // ================================================================
+        // SETTINGS
+        // ================================================================
         composable(route = NavRoutes.Settings.route) {
             SettingsScreen(
                 onBack = { navController.popBackStack() }
             )
         }
 
-        // Details Screen
+        // ================================================================
+        // PROVIDER BROWSE (novels from specific provider)
+        // ================================================================
+        composable(
+            route = NavRoutes.ProviderBrowse.route,
+            arguments = listOf(
+                navArgument("providerName") { type = NavType.StringType }
+            )
+        ) { backStackEntry ->
+            val encodedProvider = backStackEntry.arguments?.getString("providerName") ?: ""
+            val providerName = NavRoutes.decodeUrl(encodedProvider)
+
+            ProviderBrowseScreen(
+                providerName = providerName,
+                appSettings = appSettings,
+                onBack = { navController.popBackStack() },
+                onNavigateToDetails = { novelUrl, provider ->
+                    navController.navigate(
+                        NavRoutes.Details.createRoute(novelUrl, provider)
+                    )
+                },
+                onNavigateToReader = { chapterUrl, novelUrl, provider ->
+                    navController.navigate(
+                        NavRoutes.Reader.createRoute(chapterUrl, novelUrl, provider)
+                    )
+                },
+                onNavigateToWebView = { provider, url ->
+                    navController.navigate(
+                        NavRoutes.ProviderWebView.createRoute(provider, url)
+                    )
+                }
+            )
+        }
+
+        // ================================================================
+        // PROVIDER WEBVIEW (for Cloudflare bypass, manual browsing)
+        // ================================================================
+        composable(
+            route = NavRoutes.ProviderWebView.route,
+            arguments = listOf(
+                navArgument("providerName") { type = NavType.StringType },
+                navArgument("initialUrl") {
+                    type = NavType.StringType
+                    defaultValue = ""
+                }
+            )
+        ) { backStackEntry ->
+            val encodedProvider = backStackEntry.arguments?.getString("providerName") ?: ""
+            val encodedUrl = backStackEntry.arguments?.getString("initialUrl") ?: ""
+
+            val providerName = NavRoutes.decodeUrl(encodedProvider)
+            val initialUrl = NavRoutes.decodeUrl(encodedUrl).takeIf { it.isNotBlank() }
+
+            ProviderWebViewScreen(
+                providerName = providerName,
+                initialUrl = initialUrl,
+                onBack = { navController.popBackStack() },
+                onOpenNovelInApp = { novelUrl ->
+                    navController.navigate(
+                        NavRoutes.Details.createRoute(novelUrl, providerName)
+                    ) {
+                        popUpTo(NavRoutes.ProviderWebView.route) { inclusive = true }
+                    }
+                }
+            )
+        }
+
+        // ================================================================
+        // DETAILS
+        // ================================================================
         composable(
             route = NavRoutes.Details.route,
             arguments = listOf(
@@ -70,22 +163,24 @@ fun NoveryNavGraph(
             val encodedUrl = backStackEntry.arguments?.getString("novelUrl") ?: ""
             val encodedProvider = backStackEntry.arguments?.getString("providerName") ?: ""
 
-            val novelUrl = NavRoutes.Details.decodeUrl(encodedUrl)
-            val providerName = NavRoutes.Details.decodeUrl(encodedProvider)
+            val novelUrl = NavRoutes.decodeUrl(encodedUrl)
+            val providerName = NavRoutes.decodeUrl(encodedProvider)
 
             DetailsScreen(
                 novelUrl = novelUrl,
                 providerName = providerName,
                 onBack = { navController.popBackStack() },
-                onChapterClick = { chapterUrl, novelUrl, provider ->
+                onChapterClick = { chapterUrl, nUrl, provider ->
                     navController.navigate(
-                        NavRoutes.Reader.createRoute(chapterUrl, novelUrl, provider)
+                        NavRoutes.Reader.createRoute(chapterUrl, nUrl, provider)
                     )
                 }
             )
         }
 
-        // Reader Screen
+        // ================================================================
+        // READER
+        // ================================================================
         composable(
             route = NavRoutes.Reader.route,
             arguments = listOf(
@@ -98,14 +193,26 @@ fun NoveryNavGraph(
             val encodedNovelUrl = backStackEntry.arguments?.getString("novelUrl") ?: ""
             val encodedProvider = backStackEntry.arguments?.getString("providerName") ?: ""
 
-            val chapterUrl = NavRoutes.Details.decodeUrl(encodedChapterUrl)
-            val novelUrl = NavRoutes.Details.decodeUrl(encodedNovelUrl)
-            val providerName = NavRoutes.Details.decodeUrl(encodedProvider)
+            val chapterUrl = NavRoutes.decodeUrl(encodedChapterUrl)
+            val novelUrl = NavRoutes.decodeUrl(encodedNovelUrl)
+            val providerName = NavRoutes.decodeUrl(encodedProvider)
 
             ReaderScreen(
                 chapterUrl = chapterUrl,
                 novelUrl = novelUrl,
                 providerName = providerName,
+                onBack = { navController.popBackStack() },
+                onNavigateToSettings = {
+                    navController.navigate(NavRoutes.ReaderSettings.route)
+                }
+            )
+        }
+
+        // ================================================================
+        // READER SETTINGS
+        // ================================================================
+        composable(route = NavRoutes.ReaderSettings.route) {
+            ReaderSettingsScreen(
                 onBack = { navController.popBackStack() }
             )
         }

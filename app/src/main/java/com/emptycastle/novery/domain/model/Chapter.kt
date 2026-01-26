@@ -5,5 +5,6 @@ package com.emptycastle.novery.domain.model
  */
 data class Chapter(
     val name: String,
-    val url: String
+    val url: String,
+    val dateOfRelease: String? = null
 )

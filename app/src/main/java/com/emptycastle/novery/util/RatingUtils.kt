@@ -1,5 +1,3 @@
-// util/RatingUtils.kt
-
 package com.emptycastle.novery.util
 
 /**

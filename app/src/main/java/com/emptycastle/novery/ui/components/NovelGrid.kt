@@ -1,3 +1,5 @@
+// com/emptycastle/novery/ui/components/NovelGrid.kt
+
 package com.emptycastle.novery.ui.components
 
 import androidx.compose.foundation.layout.Arrangement
@@ -23,7 +25,7 @@ import com.emptycastle.novery.ui.theme.NoveryTheme
  */
 data class NovelGridItem(
     val novel: Novel,
-    val downloadCount: Int = 0,
+    val newChapterCount: Int = 0,
     val readingStatus: ReadingStatus? = null,
     val lastReadChapter: String? = null
 )
@@ -36,7 +38,7 @@ fun NovelGrid(
     items: List<NovelGridItem>,
     onNovelClick: (Novel) -> Unit,
     modifier: Modifier = Modifier,
-    onPlayClick: ((Novel) -> Unit)? = null,
+    onNovelLongClick: ((Novel) -> Unit)? = null,
     showApiName: Boolean = false,
     columns: Int = 2
 ) {
@@ -56,7 +58,8 @@ fun NovelGrid(
             NovelCard(
                 novel = item.novel,
                 onClick = { onNovelClick(item.novel) },
-                downloadCount = item.downloadCount,
+                onLongClick = onNovelLongClick?.let { { it(item.novel) } },
+                newChapterCount = item.newChapterCount,
                 readingStatus = item.readingStatus,
                 lastReadChapter = item.lastReadChapter,
                 showApiName = showApiName
@@ -81,7 +84,8 @@ fun NovelGridSkeleton(
         modifier = modifier.fillMaxSize(),
         contentPadding = PaddingValues(dimensions.gridPadding),
         horizontalArrangement = Arrangement.spacedBy(dimensions.cardSpacing),
-        verticalArrangement = Arrangement.spacedBy(dimensions.cardSpacing)
+        verticalArrangement = Arrangement.spacedBy(dimensions.cardSpacing),
+        userScrollEnabled = false
     ) {
         items(count) {
             NovelCardSkeleton()
@@ -121,6 +125,9 @@ fun PaginatedNovelGrid(
             NovelCard(
                 novel = item.novel,
                 onClick = { onNovelClick(item.novel) },
+                newChapterCount = item.newChapterCount,
+                readingStatus = item.readingStatus,
+                lastReadChapter = item.lastReadChapter,
                 showApiName = showApiName
             )
         }

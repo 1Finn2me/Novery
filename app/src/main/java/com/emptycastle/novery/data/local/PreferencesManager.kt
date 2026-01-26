@@ -4,33 +4,47 @@ import android.content.Context
 import android.content.SharedPreferences
 import com.emptycastle.novery.domain.model.AppSettings
 import com.emptycastle.novery.domain.model.FontFamily
+import com.emptycastle.novery.domain.model.FontWeight
 import com.emptycastle.novery.domain.model.GridColumns
 import com.emptycastle.novery.domain.model.LibraryFilter
 import com.emptycastle.novery.domain.model.LibrarySortOrder
 import com.emptycastle.novery.domain.model.MaxWidth
+import com.emptycastle.novery.domain.model.PageAnimation
+import com.emptycastle.novery.domain.model.ProgressStyle
 import com.emptycastle.novery.domain.model.ReaderSettings
 import com.emptycastle.novery.domain.model.ReaderTheme
+import com.emptycastle.novery.domain.model.ReadingDirection
+import com.emptycastle.novery.domain.model.ReadingStatus
+import com.emptycastle.novery.domain.model.ScrollMode
+import com.emptycastle.novery.domain.model.TapAction
+import com.emptycastle.novery.domain.model.TapZoneConfig
 import com.emptycastle.novery.domain.model.TextAlign
 import com.emptycastle.novery.domain.model.ThemeMode
 import com.emptycastle.novery.domain.model.UiDensity
+import com.emptycastle.novery.domain.model.VolumeKeyDirection
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 /**
  * Manages user preferences using SharedPreferences.
+ * Provides reactive state flows for settings and handles persistence.
  */
 class PreferencesManager(context: Context) {
 
     private val prefs: SharedPreferences = context.getSharedPreferences(
-        "novery_prefs",
+        PREFS_NAME,
         Context.MODE_PRIVATE
     )
 
     private val scrollPrefs: SharedPreferences = context.getSharedPreferences(
-        "novery_scroll_positions",
+        SCROLL_PREFS_NAME,
         Context.MODE_PRIVATE
     )
+
+    // =========================================================================
+    // STATE FLOWS
+    // =========================================================================
 
     private val _readerSettings = MutableStateFlow(loadReaderSettings())
     val readerSettings: StateFlow<ReaderSettings> = _readerSettings.asStateFlow()
@@ -38,11 +52,17 @@ class PreferencesManager(context: Context) {
     private val _appSettings = MutableStateFlow(loadAppSettings())
     val appSettings: StateFlow<AppSettings> = _appSettings.asStateFlow()
 
+    // =========================================================================
+    // READING POSITION
+    // =========================================================================
+
     data class SavedReadingPosition(
         val segmentId: String,
         val segmentIndex: Int,
         val progress: Float,
         val offset: Int,
+        val chapterIndex: Int,
+        val sentenceIndex: Int,
         val timestamp: Long
     )
 
@@ -51,15 +71,19 @@ class PreferencesManager(context: Context) {
         segmentId: String,
         segmentIndex: Int,
         progress: Float,
-        offset: Int
+        offset: Int,
+        chapterIndex: Int = 0,
+        sentenceIndex: Int = 0
     ) {
         val key = chapterUrl.hashCode().toString()
         scrollPrefs.edit().apply {
             putString("${key}${KEY_SEGMENT_ID}", segmentId)
             putInt("${key}${KEY_SEGMENT_INDEX}", segmentIndex)
             putFloat("${key}${KEY_PROGRESS}", progress)
-            putInt("${key}_offset", offset)
-            putLong("${key}_timestamp", System.currentTimeMillis())
+            putInt("${key}${KEY_OFFSET}", offset)
+            putInt("${key}${KEY_CHAPTER_INDEX}", chapterIndex)
+            putInt("${key}${KEY_SENTENCE_INDEX}", sentenceIndex)
+            putLong("${key}${KEY_TIMESTAMP}", System.currentTimeMillis())
             apply()
         }
     }
@@ -67,28 +91,30 @@ class PreferencesManager(context: Context) {
     fun getReadingPosition(chapterUrl: String): SavedReadingPosition? {
         val key = chapterUrl.hashCode().toString()
 
-        val timestamp = scrollPrefs.getLong("${key}_timestamp", 0)
+        val timestamp = scrollPrefs.getLong("${key}${KEY_TIMESTAMP}", 0)
         if (timestamp == 0L) return null
 
-        // Check freshness (30 days)
-        val thirtyDaysMs = 30L * 24 * 60 * 60 * 1000
-        if (System.currentTimeMillis() - timestamp > thirtyDaysMs) {
+        // Check freshness (configurable, default 30 days)
+        val maxAgeMs = getPositionRetentionDays() * 24L * 60 * 60 * 1000
+        if (System.currentTimeMillis() - timestamp > maxAgeMs) {
             clearReadingPosition(chapterUrl)
             return null
         }
 
         val segmentId = scrollPrefs.getString("${key}${KEY_SEGMENT_ID}", null)
 
-        // If no segmentId, try to migrate from old format
+        // Migration from old format
         if (segmentId == null) {
             val oldIndex = scrollPrefs.getInt("${key}_index", -1)
             if (oldIndex >= 0) {
-                val oldOffset = scrollPrefs.getInt("${key}_offset", 0)
+                val oldOffset = scrollPrefs.getInt("${key}${KEY_OFFSET}", 0)
                 return SavedReadingPosition(
                     segmentId = "seg-$oldIndex",
                     segmentIndex = oldIndex,
                     progress = 0f,
                     offset = oldOffset,
+                    chapterIndex = 0,
+                    sentenceIndex = 0,
                     timestamp = timestamp
                 )
             }
@@ -99,7 +125,9 @@ class PreferencesManager(context: Context) {
             segmentId = segmentId,
             segmentIndex = scrollPrefs.getInt("${key}${KEY_SEGMENT_INDEX}", 0),
             progress = scrollPrefs.getFloat("${key}${KEY_PROGRESS}", 0f),
-            offset = scrollPrefs.getInt("${key}_offset", 0),
+            offset = scrollPrefs.getInt("${key}${KEY_OFFSET}", 0),
+            chapterIndex = scrollPrefs.getInt("${key}${KEY_CHAPTER_INDEX}", 0),
+            sentenceIndex = scrollPrefs.getInt("${key}${KEY_SENTENCE_INDEX}", 0),
             timestamp = timestamp
         )
     }
@@ -110,17 +138,36 @@ class PreferencesManager(context: Context) {
             remove("${key}${KEY_SEGMENT_ID}")
             remove("${key}${KEY_SEGMENT_INDEX}")
             remove("${key}${KEY_PROGRESS}")
-            remove("${key}_offset")
-            remove("${key}_timestamp")
-            // Also remove old format keys
+            remove("${key}${KEY_OFFSET}")
+            remove("${key}${KEY_CHAPTER_INDEX}")
+            remove("${key}${KEY_SENTENCE_INDEX}")
+            remove("${key}${KEY_TIMESTAMP}")
+            // Remove old format keys
             remove("${key}_index")
             apply()
         }
     }
 
-    // ============ APP SETTINGS ============
+    fun getPositionRetentionDays(): Int = prefs.getInt(KEY_POSITION_RETENTION_DAYS, 30)
+
+    fun setPositionRetentionDays(days: Int) {
+        prefs.edit().putInt(KEY_POSITION_RETENTION_DAYS, days.coerceIn(1, 365)).apply()
+    }
+
+    // =========================================================================
+    // APP SETTINGS
+    // =========================================================================
 
     private fun loadAppSettings(): AppSettings {
+        val statusesString = prefs.getString(KEY_AUTO_DOWNLOAD_STATUSES, null)
+        val autoDownloadStatuses = if (statusesString.isNullOrEmpty()) {
+            setOf(ReadingStatus.READING)
+        } else {
+            statusesString.split(",").mapNotNull {
+                try { ReadingStatus.valueOf(it) } catch (e: Exception) { null }
+            }.toSet()
+        }
+
         return AppSettings(
             themeMode = ThemeMode.valueOf(
                 prefs.getString(KEY_THEME_MODE, ThemeMode.DARK.name) ?: ThemeMode.DARK.name
@@ -144,7 +191,11 @@ class PreferencesManager(context: Context) {
                     ?: LibraryFilter.DOWNLOADED.name
             ),
             keepScreenOn = prefs.getBoolean(KEY_KEEP_SCREEN_ON, true),
-            infiniteScroll = prefs.getBoolean(KEY_INFINITE_SCROLL, false)
+            infiniteScroll = prefs.getBoolean(KEY_INFINITE_SCROLL, false),
+            autoDownloadEnabled = prefs.getBoolean(KEY_AUTO_DOWNLOAD_ENABLED, false),
+            autoDownloadOnWifiOnly = prefs.getBoolean(KEY_AUTO_DOWNLOAD_WIFI_ONLY, true),
+            autoDownloadLimit = prefs.getInt(KEY_AUTO_DOWNLOAD_LIMIT, 10),
+            autoDownloadForStatuses = autoDownloadStatuses
         )
     }
 
@@ -163,101 +214,567 @@ class PreferencesManager(context: Context) {
             putString(KEY_DEFAULT_LIBRARY_FILTER, settings.defaultLibraryFilter.name)
             putBoolean(KEY_KEEP_SCREEN_ON, settings.keepScreenOn)
             putBoolean(KEY_INFINITE_SCROLL, settings.infiniteScroll)
+            putBoolean(KEY_AUTO_DOWNLOAD_ENABLED, settings.autoDownloadEnabled)
+            putBoolean(KEY_AUTO_DOWNLOAD_WIFI_ONLY, settings.autoDownloadOnWifiOnly)
+            putInt(KEY_AUTO_DOWNLOAD_LIMIT, settings.autoDownloadLimit)
+            putString(
+                KEY_AUTO_DOWNLOAD_STATUSES,
+                settings.autoDownloadForStatuses.joinToString(",") { it.name }
+            )
             apply()
         }
         _appSettings.value = settings
     }
 
+    // Convenience methods for app settings
     fun updateDensity(density: UiDensity) {
-        val current = _appSettings.value
-        updateAppSettings(current.copy(uiDensity = density))
+        updateAppSettings(_appSettings.value.copy(uiDensity = density))
     }
 
     fun updateThemeMode(mode: ThemeMode) {
-        val current = _appSettings.value
-        updateAppSettings(current.copy(themeMode = mode))
+        updateAppSettings(_appSettings.value.copy(themeMode = mode))
     }
 
     fun updateAmoledBlack(enabled: Boolean) {
-        val current = _appSettings.value
-        updateAppSettings(current.copy(amoledBlack = enabled))
+        updateAppSettings(_appSettings.value.copy(amoledBlack = enabled))
     }
 
     fun updateLibraryGridColumns(columns: GridColumns) {
-        val current = _appSettings.value
-        updateAppSettings(current.copy(libraryGridColumns = columns))
+        updateAppSettings(_appSettings.value.copy(libraryGridColumns = columns))
     }
 
     fun updateBrowseGridColumns(columns: GridColumns) {
-        val current = _appSettings.value
-        updateAppSettings(current.copy(browseGridColumns = columns))
+        updateAppSettings(_appSettings.value.copy(browseGridColumns = columns))
     }
 
     fun updateSearchGridColumns(columns: GridColumns) {
-        val current = _appSettings.value
-        updateAppSettings(current.copy(searchGridColumns = columns))
+        updateAppSettings(_appSettings.value.copy(searchGridColumns = columns))
     }
 
-    // ============ READER SETTINGS ============
+    fun updateAutoDownloadEnabled(enabled: Boolean) {
+        updateAppSettings(_appSettings.value.copy(autoDownloadEnabled = enabled))
+    }
+
+    fun updateAutoDownloadWifiOnly(wifiOnly: Boolean) {
+        updateAppSettings(_appSettings.value.copy(autoDownloadOnWifiOnly = wifiOnly))
+    }
+
+    fun updateAutoDownloadLimit(limit: Int) {
+        updateAppSettings(_appSettings.value.copy(autoDownloadLimit = limit.coerceIn(0, 100)))
+    }
+
+    fun updateAutoDownloadStatuses(statuses: Set<ReadingStatus>) {
+        updateAppSettings(_appSettings.value.copy(autoDownloadForStatuses = statuses))
+    }
+
+    // =========================================================================
+    // READER SETTINGS
+    // =========================================================================
 
     private fun loadReaderSettings(): ReaderSettings {
+        // Check if we need to migrate from old format
+        val needsMigration = prefs.getBoolean(KEY_NEEDS_MIGRATION, true)
+        if (needsMigration) {
+            migrateOldReaderSettings()
+        }
+
         return ReaderSettings(
-            fontSize = prefs.getInt(KEY_FONT_SIZE, 18),
-            fontFamily = FontFamily.valueOf(
-                prefs.getString(KEY_FONT_FAMILY, FontFamily.SERIF.name) ?: FontFamily.SERIF.name
+            // Typography
+            fontSize = prefs.getInt(KEY_FONT_SIZE, ReaderSettings.DEFAULT_FONT_SIZE),
+            fontFamily = loadFontFamily(),
+            fontWeight = loadFontWeight(),
+            lineHeight = prefs.getFloat(KEY_LINE_HEIGHT, ReaderSettings.DEFAULT_LINE_HEIGHT),
+            letterSpacing = prefs.getFloat(KEY_LETTER_SPACING, ReaderSettings.DEFAULT_LETTER_SPACING),
+            wordSpacing = prefs.getFloat(KEY_WORD_SPACING, ReaderSettings.DEFAULT_WORD_SPACING),
+            textAlign = loadTextAlign(),
+            hyphenation = prefs.getBoolean(KEY_HYPHENATION, true),
+
+            // Layout
+            maxWidth = loadMaxWidth(),
+            marginHorizontal = prefs.getInt(KEY_MARGIN_HORIZONTAL, ReaderSettings.DEFAULT_MARGIN_HORIZONTAL),
+            marginVertical = prefs.getInt(KEY_MARGIN_VERTICAL, ReaderSettings.DEFAULT_MARGIN_VERTICAL),
+            paragraphSpacing = prefs.getFloat(KEY_PARAGRAPH_SPACING, ReaderSettings.DEFAULT_PARAGRAPH_SPACING),
+            paragraphIndent = prefs.getFloat(KEY_PARAGRAPH_INDENT, ReaderSettings.DEFAULT_PARAGRAPH_INDENT),
+
+            // Appearance
+            theme = loadReaderTheme(),
+            brightness = prefs.getFloat(KEY_BRIGHTNESS, ReaderSettings.BRIGHTNESS_SYSTEM),
+            warmthFilter = prefs.getFloat(KEY_WARMTH_FILTER, 0f),
+            showProgress = prefs.getBoolean(KEY_SHOW_PROGRESS, true),
+            progressStyle = loadProgressStyle(),
+            showReadingTime = prefs.getBoolean(KEY_SHOW_READING_TIME, true),
+            showChapterTitle = prefs.getBoolean(KEY_SHOW_CHAPTER_TITLE, true),
+
+            // Behavior
+            keepScreenOn = prefs.getBoolean(KEY_READER_KEEP_SCREEN_ON, true),
+            volumeKeyNavigation = prefs.getBoolean(KEY_VOLUME_KEY_NAVIGATION, false),
+            volumeKeyDirection = loadVolumeKeyDirection(),
+            readingDirection = loadReadingDirection(),
+            tapZones = loadTapZoneConfig(),
+            longPressSelection = prefs.getBoolean(KEY_LONG_PRESS_SELECTION, true),
+            autoHideControlsDelay = prefs.getLong(KEY_AUTO_HIDE_CONTROLS_DELAY, ReaderSettings.DEFAULT_AUTO_HIDE_DELAY),
+
+            // Scroll & Navigation
+            scrollMode = loadScrollMode(),
+            pageAnimation = loadPageAnimation(),
+            smoothScroll = prefs.getBoolean(KEY_SMOOTH_SCROLL, true),
+            scrollSensitivity = prefs.getFloat(KEY_SCROLL_SENSITIVITY, 1.0f),
+            edgeGestures = prefs.getBoolean(KEY_EDGE_GESTURES, true),
+
+            // Accessibility
+            forceHighContrast = prefs.getBoolean(KEY_FORCE_HIGH_CONTRAST, false),
+            reduceMotion = prefs.getBoolean(KEY_REDUCE_MOTION, false),
+            largerTouchTargets = prefs.getBoolean(KEY_LARGER_TOUCH_TARGETS, false)
+        )
+    }
+
+    private fun migrateOldReaderSettings() {
+        prefs.edit().apply {
+            // Migrate old font family if exists
+            val oldFontFamily = prefs.getString(KEY_FONT_FAMILY, null)
+            if (oldFontFamily != null) {
+                val newFontFamily = when (oldFontFamily) {
+                    "SERIF" -> FontFamily.SYSTEM_SERIF.id
+                    "SANS" -> FontFamily.SYSTEM_SANS.id
+                    "MONO" -> FontFamily.SYSTEM_MONO.id
+                    else -> FontFamily.SYSTEM_SERIF.id
+                }
+                putString(KEY_FONT_FAMILY, newFontFamily)
+            }
+
+            // Migrate old text align if exists
+            val oldTextAlign = prefs.getString(KEY_TEXT_ALIGN, null)
+            if (oldTextAlign != null) {
+                val newTextAlign = when (oldTextAlign) {
+                    "LEFT" -> TextAlign.LEFT.id
+                    "JUSTIFY" -> TextAlign.JUSTIFY.id
+                    else -> TextAlign.LEFT.id
+                }
+                putString(KEY_TEXT_ALIGN, newTextAlign)
+            }
+
+            // Migrate old max width if exists
+            val oldMaxWidth = prefs.getString(KEY_MAX_WIDTH, null)
+            if (oldMaxWidth != null) {
+                val newMaxWidth = when (oldMaxWidth) {
+                    "MEDIUM" -> MaxWidth.MEDIUM.id
+                    "LARGE" -> MaxWidth.LARGE.id
+                    "EXTRA_LARGE" -> MaxWidth.EXTRA_LARGE.id
+                    "FULL" -> MaxWidth.FULL.id
+                    else -> MaxWidth.LARGE.id
+                }
+                putString(KEY_MAX_WIDTH, newMaxWidth)
+            }
+
+            // Migrate old theme if exists
+            val oldTheme = prefs.getString(KEY_READER_THEME, null)
+            if (oldTheme != null) {
+                val newTheme = when (oldTheme) {
+                    "LIGHT" -> ReaderTheme.LIGHT.id
+                    "SEPIA" -> ReaderTheme.SEPIA.id
+                    "DARK" -> ReaderTheme.DARK.id
+                    else -> oldTheme.lowercase()
+                }
+                putString(KEY_READER_THEME, newTheme)
+            }
+
+            putBoolean(KEY_NEEDS_MIGRATION, false)
+            apply()
+        }
+    }
+
+    private fun loadFontFamily(): FontFamily {
+        val id = prefs.getString(KEY_FONT_FAMILY, FontFamily.SYSTEM_SERIF.id)
+        return FontFamily.fromId(id ?: FontFamily.SYSTEM_SERIF.id) ?: FontFamily.SYSTEM_SERIF
+    }
+
+    private fun loadFontWeight(): FontWeight {
+        val value = prefs.getInt(KEY_FONT_WEIGHT, FontWeight.REGULAR.value)
+        return FontWeight.fromValue(value)
+    }
+
+    private fun loadTextAlign(): TextAlign {
+        val id = prefs.getString(KEY_TEXT_ALIGN, TextAlign.LEFT.id)
+        return TextAlign.fromId(id ?: TextAlign.LEFT.id)
+    }
+
+    private fun loadMaxWidth(): MaxWidth {
+        val id = prefs.getString(KEY_MAX_WIDTH, MaxWidth.LARGE.id)
+        return MaxWidth.fromId(id ?: MaxWidth.LARGE.id)
+    }
+
+    private fun loadReaderTheme(): ReaderTheme {
+        val id = prefs.getString(KEY_READER_THEME, ReaderTheme.DARK.id)
+        return ReaderTheme.fromId(id ?: ReaderTheme.DARK.id)
+    }
+
+    private fun loadProgressStyle(): ProgressStyle {
+        val id = prefs.getString(KEY_PROGRESS_STYLE, ProgressStyle.BAR.id)
+        return ProgressStyle.fromId(id ?: ProgressStyle.BAR.id)
+    }
+
+    private fun loadVolumeKeyDirection(): VolumeKeyDirection {
+        val id = prefs.getString(KEY_VOLUME_KEY_DIRECTION, VolumeKeyDirection.NATURAL.id)
+        return VolumeKeyDirection.fromId(id ?: VolumeKeyDirection.NATURAL.id)
+    }
+
+    private fun loadReadingDirection(): ReadingDirection {
+        val id = prefs.getString(KEY_READING_DIRECTION, ReadingDirection.LTR.id)
+        return ReadingDirection.fromId(id ?: ReadingDirection.LTR.id)
+    }
+
+    private fun loadScrollMode(): ScrollMode {
+        val id = prefs.getString(KEY_SCROLL_MODE, ScrollMode.CONTINUOUS.id)
+        return ScrollMode.fromId(id ?: ScrollMode.CONTINUOUS.id)
+    }
+
+    private fun loadPageAnimation(): PageAnimation {
+        val id = prefs.getString(KEY_PAGE_ANIMATION, PageAnimation.SLIDE.id)
+        return PageAnimation.fromId(id ?: PageAnimation.SLIDE.id)
+    }
+
+    private fun loadTapZoneConfig(): TapZoneConfig {
+        return TapZoneConfig(
+            horizontalZoneRatio = prefs.getFloat(KEY_TAP_HORIZONTAL_RATIO, 0.25f),
+            verticalZoneRatio = prefs.getFloat(KEY_TAP_VERTICAL_RATIO, 0.2f),
+            leftZoneAction = TapAction.fromId(
+                prefs.getString(KEY_TAP_LEFT_ACTION, TapAction.PREVIOUS_PAGE.id) ?: TapAction.PREVIOUS_PAGE.id
             ),
-            maxWidth = MaxWidth.valueOf(
-                prefs.getString(KEY_MAX_WIDTH, MaxWidth.LARGE.name) ?: MaxWidth.LARGE.name
+            rightZoneAction = TapAction.fromId(
+                prefs.getString(KEY_TAP_RIGHT_ACTION, TapAction.NEXT_PAGE.id) ?: TapAction.NEXT_PAGE.id
             ),
-            lineHeight = prefs.getFloat(KEY_LINE_HEIGHT, 1.8f),
-            textAlign = TextAlign.valueOf(
-                prefs.getString(KEY_TEXT_ALIGN, TextAlign.LEFT.name) ?: TextAlign.LEFT.name
+            topZoneAction = TapAction.fromId(
+                prefs.getString(KEY_TAP_TOP_ACTION, TapAction.TOGGLE_CONTROLS.id) ?: TapAction.TOGGLE_CONTROLS.id
             ),
-            theme = ReaderTheme.valueOf(
-                prefs.getString(KEY_READER_THEME, ReaderTheme.DARK.name) ?: ReaderTheme.DARK.name
+            bottomZoneAction = TapAction.fromId(
+                prefs.getString(KEY_TAP_BOTTOM_ACTION, TapAction.TOGGLE_CONTROLS.id) ?: TapAction.TOGGLE_CONTROLS.id
+            ),
+            centerZoneAction = TapAction.fromId(
+                prefs.getString(KEY_TAP_CENTER_ACTION, TapAction.TOGGLE_CONTROLS.id) ?: TapAction.TOGGLE_CONTROLS.id
+            ),
+            doubleTapAction = TapAction.fromId(
+                prefs.getString(KEY_TAP_DOUBLE_TAP_ACTION, TapAction.TOGGLE_FULLSCREEN.id) ?: TapAction.TOGGLE_FULLSCREEN.id
             )
         )
     }
 
     fun updateReaderSettings(settings: ReaderSettings) {
         prefs.edit().apply {
+            // Typography
             putInt(KEY_FONT_SIZE, settings.fontSize)
-            putString(KEY_FONT_FAMILY, settings.fontFamily.name)
-            putString(KEY_MAX_WIDTH, settings.maxWidth.name)
+            putString(KEY_FONT_FAMILY, settings.fontFamily.id)
+            putInt(KEY_FONT_WEIGHT, settings.fontWeight.value)
             putFloat(KEY_LINE_HEIGHT, settings.lineHeight)
-            putString(KEY_TEXT_ALIGN, settings.textAlign.name)
-            putString(KEY_READER_THEME, settings.theme.name)
+            putFloat(KEY_LETTER_SPACING, settings.letterSpacing)
+            putFloat(KEY_WORD_SPACING, settings.wordSpacing)
+            putString(KEY_TEXT_ALIGN, settings.textAlign.id)
+            putBoolean(KEY_HYPHENATION, settings.hyphenation)
+
+            // Layout
+            putString(KEY_MAX_WIDTH, settings.maxWidth.id)
+            putInt(KEY_MARGIN_HORIZONTAL, settings.marginHorizontal)
+            putInt(KEY_MARGIN_VERTICAL, settings.marginVertical)
+            putFloat(KEY_PARAGRAPH_SPACING, settings.paragraphSpacing)
+            putFloat(KEY_PARAGRAPH_INDENT, settings.paragraphIndent)
+
+            // Appearance
+            putString(KEY_READER_THEME, settings.theme.id)
+            putFloat(KEY_BRIGHTNESS, settings.brightness)
+            putFloat(KEY_WARMTH_FILTER, settings.warmthFilter)
+            putBoolean(KEY_SHOW_PROGRESS, settings.showProgress)
+            putString(KEY_PROGRESS_STYLE, settings.progressStyle.id)
+            putBoolean(KEY_SHOW_READING_TIME, settings.showReadingTime)
+            putBoolean(KEY_SHOW_CHAPTER_TITLE, settings.showChapterTitle)
+
+            // Behavior
+            putBoolean(KEY_READER_KEEP_SCREEN_ON, settings.keepScreenOn)
+            putBoolean(KEY_VOLUME_KEY_NAVIGATION, settings.volumeKeyNavigation)
+            putString(KEY_VOLUME_KEY_DIRECTION, settings.volumeKeyDirection.id)
+            putString(KEY_READING_DIRECTION, settings.readingDirection.id)
+            putBoolean(KEY_LONG_PRESS_SELECTION, settings.longPressSelection)
+            putLong(KEY_AUTO_HIDE_CONTROLS_DELAY, settings.autoHideControlsDelay)
+
+            // Tap zones
+            putFloat(KEY_TAP_HORIZONTAL_RATIO, settings.tapZones.horizontalZoneRatio)
+            putFloat(KEY_TAP_VERTICAL_RATIO, settings.tapZones.verticalZoneRatio)
+            putString(KEY_TAP_LEFT_ACTION, settings.tapZones.leftZoneAction.id)
+            putString(KEY_TAP_RIGHT_ACTION, settings.tapZones.rightZoneAction.id)
+            putString(KEY_TAP_TOP_ACTION, settings.tapZones.topZoneAction.id)
+            putString(KEY_TAP_BOTTOM_ACTION, settings.tapZones.bottomZoneAction.id)
+            putString(KEY_TAP_CENTER_ACTION, settings.tapZones.centerZoneAction.id)
+            putString(KEY_TAP_DOUBLE_TAP_ACTION, settings.tapZones.doubleTapAction.id)
+
+            // Scroll & Navigation
+            putString(KEY_SCROLL_MODE, settings.scrollMode.id)
+            putString(KEY_PAGE_ANIMATION, settings.pageAnimation.id)
+            putBoolean(KEY_SMOOTH_SCROLL, settings.smoothScroll)
+            putFloat(KEY_SCROLL_SENSITIVITY, settings.scrollSensitivity)
+            putBoolean(KEY_EDGE_GESTURES, settings.edgeGestures)
+
+            // Accessibility
+            putBoolean(KEY_FORCE_HIGH_CONTRAST, settings.forceHighContrast)
+            putBoolean(KEY_REDUCE_MOTION, settings.reduceMotion)
+            putBoolean(KEY_LARGER_TOUCH_TARGETS, settings.largerTouchTargets)
+
             apply()
         }
         _readerSettings.value = settings
     }
 
-    // ============ CHAPTER LIST SETTINGS ============
+    // =========================================================================
+    // READER SETTINGS CONVENIENCE METHODS
+    // =========================================================================
 
-    /**
-     * Get the chapter sort order preference
-     * @return true if descending (newest first), false if ascending (oldest first)
-     */
+    fun updateFontSize(size: Int) {
+        val current = _readerSettings.value
+        updateReaderSettings(current.withFontSize(size))
+    }
+
+    fun updateFontFamily(family: FontFamily) {
+        val current = _readerSettings.value
+        updateReaderSettings(current.withFontFamily(family))
+    }
+
+    fun updateFontWeight(weight: FontWeight) {
+        val current = _readerSettings.value
+        updateReaderSettings(current.copy(fontWeight = weight))
+    }
+
+    fun updateLineHeight(height: Float) {
+        val current = _readerSettings.value
+        updateReaderSettings(current.withLineHeight(height))
+    }
+
+    fun updateLetterSpacing(spacing: Float) {
+        val current = _readerSettings.value
+        updateReaderSettings(current.withLetterSpacing(spacing))
+    }
+
+    fun updateWordSpacing(spacing: Float) {
+        val current = _readerSettings.value
+        updateReaderSettings(current.copy(
+            wordSpacing = spacing.coerceIn(ReaderSettings.MIN_WORD_SPACING, ReaderSettings.MAX_WORD_SPACING)
+        ))
+    }
+
+    fun updateTextAlign(align: TextAlign) {
+        val current = _readerSettings.value
+        updateReaderSettings(current.copy(textAlign = align))
+    }
+
+    fun updateHyphenation(enabled: Boolean) {
+        val current = _readerSettings.value
+        updateReaderSettings(current.copy(hyphenation = enabled))
+    }
+
+    fun updateMaxWidth(maxWidth: MaxWidth) {
+        val current = _readerSettings.value
+        updateReaderSettings(current.copy(maxWidth = maxWidth))
+    }
+
+    fun updateMargins(horizontal: Int? = null, vertical: Int? = null) {
+        val current = _readerSettings.value
+        updateReaderSettings(current.withMargins(
+            horizontal = horizontal ?: current.marginHorizontal,
+            vertical = vertical ?: current.marginVertical
+        ))
+    }
+
+    fun updateParagraphSpacing(spacing: Float) {
+        val current = _readerSettings.value
+        updateReaderSettings(current.copy(
+            paragraphSpacing = spacing.coerceIn(
+                ReaderSettings.MIN_PARAGRAPH_SPACING,
+                ReaderSettings.MAX_PARAGRAPH_SPACING
+            )
+        ))
+    }
+
+    fun updateParagraphIndent(indent: Float) {
+        val current = _readerSettings.value
+        updateReaderSettings(current.copy(
+            paragraphIndent = indent.coerceIn(
+                ReaderSettings.MIN_PARAGRAPH_INDENT,
+                ReaderSettings.MAX_PARAGRAPH_INDENT
+            )
+        ))
+    }
+
+    fun updateReaderTheme(theme: ReaderTheme) {
+        val current = _readerSettings.value
+        updateReaderSettings(current.withTheme(theme))
+    }
+
+    fun updateBrightness(brightness: Float) {
+        val current = _readerSettings.value
+        updateReaderSettings(current.withBrightness(brightness))
+    }
+
+    fun resetBrightness() {
+        val current = _readerSettings.value
+        updateReaderSettings(current.resetBrightness())
+    }
+
+    fun updateWarmthFilter(warmth: Float) {
+        val current = _readerSettings.value
+        updateReaderSettings(current.copy(warmthFilter = warmth.coerceIn(0f, 1f)))
+    }
+
+    fun updateShowProgress(show: Boolean) {
+        val current = _readerSettings.value
+        updateReaderSettings(current.copy(showProgress = show))
+    }
+
+    fun updateProgressStyle(style: ProgressStyle) {
+        val current = _readerSettings.value
+        updateReaderSettings(current.copy(progressStyle = style))
+    }
+
+    fun updateShowReadingTime(show: Boolean) {
+        val current = _readerSettings.value
+        updateReaderSettings(current.copy(showReadingTime = show))
+    }
+
+    fun updateShowChapterTitle(show: Boolean) {
+        val current = _readerSettings.value
+        updateReaderSettings(current.copy(showChapterTitle = show))
+    }
+
+    fun updateReaderKeepScreenOn(enabled: Boolean) {
+        val current = _readerSettings.value
+        updateReaderSettings(current.copy(keepScreenOn = enabled))
+    }
+
+    fun updateVolumeKeyNavigation(enabled: Boolean) {
+        val current = _readerSettings.value
+        updateReaderSettings(current.copy(volumeKeyNavigation = enabled))
+    }
+
+    fun updateVolumeKeyDirection(direction: VolumeKeyDirection) {
+        val current = _readerSettings.value
+        updateReaderSettings(current.copy(volumeKeyDirection = direction))
+    }
+
+    fun updateReadingDirection(direction: ReadingDirection) {
+        val current = _readerSettings.value
+        updateReaderSettings(current.copy(readingDirection = direction))
+    }
+
+    fun updateTapZoneConfig(config: TapZoneConfig) {
+        val current = _readerSettings.value
+        updateReaderSettings(current.copy(tapZones = config))
+    }
+
+    fun updateLongPressSelection(enabled: Boolean) {
+        val current = _readerSettings.value
+        updateReaderSettings(current.copy(longPressSelection = enabled))
+    }
+
+    fun updateAutoHideControlsDelay(delay: Long) {
+        val current = _readerSettings.value
+        updateReaderSettings(current.copy(autoHideControlsDelay = delay.coerceAtLeast(0)))
+    }
+
+    fun updateScrollMode(mode: ScrollMode) {
+        val current = _readerSettings.value
+        updateReaderSettings(current.copy(scrollMode = mode))
+    }
+
+    fun updatePageAnimation(animation: PageAnimation) {
+        val current = _readerSettings.value
+        updateReaderSettings(current.copy(pageAnimation = animation))
+    }
+
+    fun updateSmoothScroll(enabled: Boolean) {
+        val current = _readerSettings.value
+        updateReaderSettings(current.copy(smoothScroll = enabled))
+    }
+
+    fun updateScrollSensitivity(sensitivity: Float) {
+        val current = _readerSettings.value
+        updateReaderSettings(current.copy(scrollSensitivity = sensitivity.coerceIn(0.5f, 2.0f)))
+    }
+
+    fun updateEdgeGestures(enabled: Boolean) {
+        val current = _readerSettings.value
+        updateReaderSettings(current.copy(edgeGestures = enabled))
+    }
+
+    fun updateForceHighContrast(enabled: Boolean) {
+        val current = _readerSettings.value
+        updateReaderSettings(current.copy(forceHighContrast = enabled))
+    }
+
+    fun updateReduceMotion(enabled: Boolean) {
+        val current = _readerSettings.value
+        updateReaderSettings(current.copy(reduceMotion = enabled))
+    }
+
+    fun updateLargerTouchTargets(enabled: Boolean) {
+        val current = _readerSettings.value
+        updateReaderSettings(current.copy(largerTouchTargets = enabled))
+    }
+
+    // Apply preset
+    fun applyReaderPreset(preset: ReaderSettings) {
+        updateReaderSettings(preset)
+    }
+
+    // Reset to defaults
+    fun resetReaderSettings() {
+        updateReaderSettings(ReaderSettings.DEFAULT)
+    }
+
+    // =========================================================================
+    // CHAPTER LIST SETTINGS
+    // =========================================================================
+
     fun getChapterSortDescending(): Boolean {
         return prefs.getBoolean(KEY_CHAPTER_SORT_DESCENDING, false)
     }
 
-    /**
-     * Set the chapter sort order preference
-     * @param descending true for newest first, false for oldest first
-     */
     fun setChapterSortDescending(descending: Boolean) {
         prefs.edit().putBoolean(KEY_CHAPTER_SORT_DESCENDING, descending).apply()
     }
 
-    // ============ SCROLL POSITION MEMORY ============
+    // =========================================================================
+    // READING GOALS
+    // =========================================================================
+
+    fun getDailyReadingGoal(): Int {
+        return prefs.getInt(KEY_DAILY_READING_GOAL, 30)
+    }
+
+    fun setDailyReadingGoal(minutes: Int) {
+        prefs.edit().putInt(KEY_DAILY_READING_GOAL, minutes.coerceIn(5, 480)).apply()
+    }
+
+    fun getWeeklyReadingGoal(): Int {
+        return prefs.getInt(KEY_WEEKLY_READING_GOAL, 180)
+    }
+
+    fun setWeeklyReadingGoal(minutes: Int) {
+        prefs.edit().putInt(KEY_WEEKLY_READING_GOAL, minutes.coerceIn(30, 2400)).apply()
+    }
+
+    fun getMonthlyChapterGoal(): Int {
+        return prefs.getInt(KEY_MONTHLY_CHAPTER_GOAL, 50)
+    }
+
+    fun setMonthlyChapterGoal(chapters: Int) {
+        prefs.edit().putInt(KEY_MONTHLY_CHAPTER_GOAL, chapters.coerceIn(1, 500)).apply()
+    }
+
+    // =========================================================================
+    // SCROLL POSITION MEMORY (Legacy support)
+    // =========================================================================
 
     fun saveScrollPosition(chapterUrl: String, firstVisibleItemIndex: Int, firstVisibleItemOffset: Int) {
         val key = chapterUrl.hashCode().toString()
         scrollPrefs.edit().apply {
             putInt("${key}_index", firstVisibleItemIndex)
-            putInt("${key}_offset", firstVisibleItemOffset)
-            putLong("${key}_timestamp", System.currentTimeMillis())
+            putInt("${key}${KEY_OFFSET}", firstVisibleItemOffset)
+            putLong("${key}${KEY_TIMESTAMP}", System.currentTimeMillis())
             apply()
         }
     }
@@ -265,13 +782,13 @@ class PreferencesManager(context: Context) {
     fun getScrollPosition(chapterUrl: String): Pair<Int, Int>? {
         val key = chapterUrl.hashCode().toString()
         val index = scrollPrefs.getInt("${key}_index", -1)
-        val offset = scrollPrefs.getInt("${key}_offset", 0)
+        val offset = scrollPrefs.getInt("${key}${KEY_OFFSET}", 0)
 
         if (index < 0) return null
 
-        val timestamp = scrollPrefs.getLong("${key}_timestamp", 0)
-        val thirtyDaysMs = 30L * 24 * 60 * 60 * 1000
-        if (System.currentTimeMillis() - timestamp > thirtyDaysMs) {
+        val timestamp = scrollPrefs.getLong("${key}${KEY_TIMESTAMP}", 0)
+        val maxAgeMs = getPositionRetentionDays() * 24L * 60 * 60 * 1000
+        if (System.currentTimeMillis() - timestamp > maxAgeMs) {
             clearScrollPosition(chapterUrl)
             return null
         }
@@ -283,8 +800,8 @@ class PreferencesManager(context: Context) {
         val key = chapterUrl.hashCode().toString()
         scrollPrefs.edit().apply {
             remove("${key}_index")
-            remove("${key}_offset")
-            remove("${key}_timestamp")
+            remove("${key}${KEY_OFFSET}")
+            remove("${key}${KEY_TIMESTAMP}")
             apply()
         }
     }
@@ -293,12 +810,14 @@ class PreferencesManager(context: Context) {
         scrollPrefs.edit().clear().apply()
     }
 
-    // ============ TTS SETTINGS ============
+    // =========================================================================
+    // TTS SETTINGS
+    // =========================================================================
 
     fun getTtsSpeed(): Float = prefs.getFloat(KEY_TTS_SPEED, 1.0f)
 
     fun setTtsSpeed(speed: Float) {
-        prefs.edit().putFloat(KEY_TTS_SPEED, speed).apply()
+        prefs.edit().putFloat(KEY_TTS_SPEED, speed.coerceIn(0.5f, 2.5f)).apply()
     }
 
     fun getTtsVoice(): String? = prefs.getString(KEY_TTS_VOICE, null)
@@ -337,14 +856,267 @@ class PreferencesManager(context: Context) {
         prefs.edit().putBoolean(KEY_TTS_PAUSE_ON_CALLS, enabled).apply()
     }
 
+    fun getTtsSkipChapterHeaders(): Boolean = prefs.getBoolean(KEY_TTS_SKIP_CHAPTER_HEADERS, false)
+
+    fun setTtsSkipChapterHeaders(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_TTS_SKIP_CHAPTER_HEADERS, enabled).apply()
+    }
+
+    fun getTtsContinueOnChapterEnd(): Boolean = prefs.getBoolean(KEY_TTS_CONTINUE_ON_CHAPTER_END, true)
+
+    fun setTtsContinueOnChapterEnd(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_TTS_CONTINUE_ON_CHAPTER_END, enabled).apply()
+    }
+
+    fun getTtsSentenceDelay(): Long = prefs.getLong(KEY_TTS_SENTENCE_DELAY, 0)
+
+    fun setTtsSentenceDelay(delay: Long) {
+        prefs.edit().putLong(KEY_TTS_SENTENCE_DELAY, delay.coerceIn(0, 2000)).apply()
+    }
+
+    fun getTtsParagraphDelay(): Long = prefs.getLong(KEY_TTS_PARAGRAPH_DELAY, 200)
+
+    fun setTtsParagraphDelay(delay: Long) {
+        prefs.edit().putLong(KEY_TTS_PARAGRAPH_DELAY, delay.coerceIn(0, 3000)).apply()
+    }
+
+    // =========================================================================
+    // NOTIFICATION SETTINGS
+    // =========================================================================
+
+    fun getUpdateNotificationsEnabled(): Boolean = prefs.getBoolean(KEY_UPDATE_NOTIFICATIONS, true)
+
+    fun setUpdateNotificationsEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_UPDATE_NOTIFICATIONS, enabled).apply()
+    }
+
+    fun getDownloadNotificationsEnabled(): Boolean = prefs.getBoolean(KEY_DOWNLOAD_NOTIFICATIONS, true)
+
+    fun setDownloadNotificationsEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_DOWNLOAD_NOTIFICATIONS, enabled).apply()
+    }
+
+    // =========================================================================
+    // BACKUP & SYNC
+    // =========================================================================
+
+    fun getLastBackupTime(): Long = prefs.getLong(KEY_LAST_BACKUP_TIME, 0)
+
+    fun setLastBackupTime(time: Long) {
+        prefs.edit().putLong(KEY_LAST_BACKUP_TIME, time).apply()
+    }
+
+    fun getAutoBackupEnabled(): Boolean = prefs.getBoolean(KEY_AUTO_BACKUP_ENABLED, false)
+
+    fun setAutoBackupEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_AUTO_BACKUP_ENABLED, enabled).apply()
+    }
+
+    fun getAutoBackupInterval(): Int = prefs.getInt(KEY_AUTO_BACKUP_INTERVAL, 7) // days
+
+    fun setAutoBackupInterval(days: Int) {
+        prefs.edit().putInt(KEY_AUTO_BACKUP_INTERVAL, days.coerceIn(1, 30)).apply()
+    }
+
+    // =========================================================================
+    // CACHE SETTINGS
+    // =========================================================================
+
+    fun getImageCacheSize(): Int = prefs.getInt(KEY_IMAGE_CACHE_SIZE, 100) // MB
+
+    fun setImageCacheSize(sizeMb: Int) {
+        prefs.edit().putInt(KEY_IMAGE_CACHE_SIZE, sizeMb.coerceIn(50, 500)).apply()
+    }
+
+    fun getClearCacheOnExit(): Boolean = prefs.getBoolean(KEY_CLEAR_CACHE_ON_EXIT, false)
+
+    fun setClearCacheOnExit(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_CLEAR_CACHE_ON_EXIT, enabled).apply()
+    }
+
+    // =========================================================================
+    // FIRST RUN & ONBOARDING
+    // =========================================================================
+
+    fun isFirstRun(): Boolean = prefs.getBoolean(KEY_FIRST_RUN, true)
+
+    fun setFirstRunComplete() {
+        prefs.edit().putBoolean(KEY_FIRST_RUN, false).apply()
+    }
+
+    fun hasCompletedOnboarding(): Boolean = prefs.getBoolean(KEY_ONBOARDING_COMPLETE, false)
+
+    fun setOnboardingComplete() {
+        prefs.edit().putBoolean(KEY_ONBOARDING_COMPLETE, true).apply()
+    }
+
+    fun getAppVersion(): Int = prefs.getInt(KEY_APP_VERSION, 0)
+
+    fun setAppVersion(version: Int) {
+        prefs.edit().putInt(KEY_APP_VERSION, version).apply()
+    }
+
+    // =========================================================================
+    // EXPORT ALL SETTINGS
+    // =========================================================================
+
+    fun exportSettings(): Map<String, Any?> {
+        return buildMap {
+            put("readerSettings", exportReaderSettings())
+            put("appSettings", exportAppSettings())
+            put("ttsSettings", exportTtsSettings())
+        }
+    }
+
+    private fun exportReaderSettings(): Map<String, Any?> {
+        val settings = _readerSettings.value
+        return buildMap {
+            put("fontSize", settings.fontSize)
+            put("fontFamily", settings.fontFamily.id)
+            put("fontWeight", settings.fontWeight.value)
+            put("lineHeight", settings.lineHeight)
+            put("letterSpacing", settings.letterSpacing)
+            put("wordSpacing", settings.wordSpacing)
+            put("textAlign", settings.textAlign.id)
+            put("hyphenation", settings.hyphenation)
+            put("maxWidth", settings.maxWidth.id)
+            put("marginHorizontal", settings.marginHorizontal)
+            put("marginVertical", settings.marginVertical)
+            put("paragraphSpacing", settings.paragraphSpacing)
+            put("paragraphIndent", settings.paragraphIndent)
+            put("theme", settings.theme.id)
+            put("brightness", settings.brightness)
+            put("warmthFilter", settings.warmthFilter)
+            put("showProgress", settings.showProgress)
+            put("progressStyle", settings.progressStyle.id)
+            put("showReadingTime", settings.showReadingTime)
+            put("showChapterTitle", settings.showChapterTitle)
+            put("keepScreenOn", settings.keepScreenOn)
+            put("volumeKeyNavigation", settings.volumeKeyNavigation)
+            put("volumeKeyDirection", settings.volumeKeyDirection.id)
+            put("readingDirection", settings.readingDirection.id)
+            put("longPressSelection", settings.longPressSelection)
+            put("autoHideControlsDelay", settings.autoHideControlsDelay)
+            put("scrollMode", settings.scrollMode.id)
+            put("pageAnimation", settings.pageAnimation.id)
+            put("smoothScroll", settings.smoothScroll)
+            put("scrollSensitivity", settings.scrollSensitivity)
+            put("edgeGestures", settings.edgeGestures)
+            put("forceHighContrast", settings.forceHighContrast)
+            put("reduceMotion", settings.reduceMotion)
+            put("largerTouchTargets", settings.largerTouchTargets)
+        }
+    }
+
+    private fun exportAppSettings(): Map<String, Any?> {
+        val settings = _appSettings.value
+        return buildMap {
+            put("themeMode", settings.themeMode.name)
+            put("amoledBlack", settings.amoledBlack)
+            put("useDynamicColor", settings.useDynamicColor)
+            put("uiDensity", settings.uiDensity.name)
+            put("showBadges", settings.showBadges)
+            put("defaultLibrarySort", settings.defaultLibrarySort.name)
+            put("defaultLibraryFilter", settings.defaultLibraryFilter.name)
+            put("keepScreenOn", settings.keepScreenOn)
+            put("infiniteScroll", settings.infiniteScroll)
+            put("autoDownloadEnabled", settings.autoDownloadEnabled)
+            put("autoDownloadOnWifiOnly", settings.autoDownloadOnWifiOnly)
+            put("autoDownloadLimit", settings.autoDownloadLimit)
+        }
+    }
+
+    private fun exportTtsSettings(): Map<String, Any?> {
+        return buildMap {
+            put("speed", getTtsSpeed())
+            put("pitch", getTtsPitch())
+            put("volume", getTtsVolume())
+            put("voice", getTtsVoice())
+            put("autoScroll", getTtsAutoScroll())
+            put("highlightSentence", getTtsHighlightSentence())
+            put("pauseOnCalls", getTtsPauseOnCalls())
+            put("skipChapterHeaders", getTtsSkipChapterHeaders())
+            put("continueOnChapterEnd", getTtsContinueOnChapterEnd())
+            put("sentenceDelay", getTtsSentenceDelay())
+            put("paragraphDelay", getTtsParagraphDelay())
+        }
+    }
+
+    // =========================================================================
+    // COMPANION OBJECT
+    // =========================================================================
+
     companion object {
-        // Reader settings keys
+        private const val PREFS_NAME = "novery_prefs"
+        private const val SCROLL_PREFS_NAME = "novery_scroll_positions"
+
+        // =====================================================================
+        // READER SETTINGS KEYS
+        // =====================================================================
+
+        // Typography
         private const val KEY_FONT_SIZE = "reader_font_size"
         private const val KEY_FONT_FAMILY = "reader_font_family"
-        private const val KEY_MAX_WIDTH = "reader_max_width"
+        private const val KEY_FONT_WEIGHT = "reader_font_weight"
         private const val KEY_LINE_HEIGHT = "reader_line_height"
+        private const val KEY_LETTER_SPACING = "reader_letter_spacing"
+        private const val KEY_WORD_SPACING = "reader_word_spacing"
         private const val KEY_TEXT_ALIGN = "reader_text_align"
+        private const val KEY_HYPHENATION = "reader_hyphenation"
+
+        // Layout
+        private const val KEY_MAX_WIDTH = "reader_max_width"
+        private const val KEY_MARGIN_HORIZONTAL = "reader_margin_horizontal"
+        private const val KEY_MARGIN_VERTICAL = "reader_margin_vertical"
+        private const val KEY_PARAGRAPH_SPACING = "reader_paragraph_spacing"
+        private const val KEY_PARAGRAPH_INDENT = "reader_paragraph_indent"
+
+        // Appearance
         private const val KEY_READER_THEME = "reader_theme"
+        private const val KEY_BRIGHTNESS = "reader_brightness"
+        private const val KEY_WARMTH_FILTER = "reader_warmth_filter"
+        private const val KEY_SHOW_PROGRESS = "reader_show_progress"
+        private const val KEY_PROGRESS_STYLE = "reader_progress_style"
+        private const val KEY_SHOW_READING_TIME = "reader_show_reading_time"
+        private const val KEY_SHOW_CHAPTER_TITLE = "reader_show_chapter_title"
+
+        // Behavior
+        private const val KEY_READER_KEEP_SCREEN_ON = "reader_keep_screen_on"
+        private const val KEY_VOLUME_KEY_NAVIGATION = "reader_volume_key_navigation"
+        private const val KEY_VOLUME_KEY_DIRECTION = "reader_volume_key_direction"
+        private const val KEY_READING_DIRECTION = "reader_reading_direction"
+        private const val KEY_LONG_PRESS_SELECTION = "reader_long_press_selection"
+        private const val KEY_AUTO_HIDE_CONTROLS_DELAY = "reader_auto_hide_controls_delay"
+
+        // Tap zones
+        private const val KEY_TAP_HORIZONTAL_RATIO = "reader_tap_horizontal_ratio"
+        private const val KEY_TAP_VERTICAL_RATIO = "reader_tap_vertical_ratio"
+        private const val KEY_TAP_LEFT_ACTION = "reader_tap_left_action"
+        private const val KEY_TAP_RIGHT_ACTION = "reader_tap_right_action"
+        private const val KEY_TAP_TOP_ACTION = "reader_tap_top_action"
+        private const val KEY_TAP_BOTTOM_ACTION = "reader_tap_bottom_action"
+        private const val KEY_TAP_CENTER_ACTION = "reader_tap_center_action"
+        private const val KEY_TAP_DOUBLE_TAP_ACTION = "reader_tap_double_tap_action"
+
+        // Scroll & Navigation
+        private const val KEY_SCROLL_MODE = "reader_scroll_mode"
+        private const val KEY_PAGE_ANIMATION = "reader_page_animation"
+        private const val KEY_SMOOTH_SCROLL = "reader_smooth_scroll"
+        private const val KEY_SCROLL_SENSITIVITY = "reader_scroll_sensitivity"
+        private const val KEY_EDGE_GESTURES = "reader_edge_gestures"
+
+        // Accessibility
+        private const val KEY_FORCE_HIGH_CONTRAST = "reader_force_high_contrast"
+        private const val KEY_REDUCE_MOTION = "reader_reduce_motion"
+        private const val KEY_LARGER_TOUCH_TARGETS = "reader_larger_touch_targets"
+
+        // Migration
+        private const val KEY_NEEDS_MIGRATION = "reader_needs_migration"
+
+        // =====================================================================
+        // TTS SETTINGS KEYS
+        // =====================================================================
+
         private const val KEY_TTS_SPEED = "tts_speed"
         private const val KEY_TTS_VOICE = "tts_voice"
         private const val KEY_TTS_PITCH = "tts_pitch"
@@ -352,16 +1124,51 @@ class PreferencesManager(context: Context) {
         private const val KEY_TTS_AUTO_SCROLL = "tts_auto_scroll"
         private const val KEY_TTS_HIGHLIGHT_SENTENCE = "tts_highlight_sentence"
         private const val KEY_TTS_PAUSE_ON_CALLS = "tts_pause_on_calls"
+        private const val KEY_TTS_SKIP_CHAPTER_HEADERS = "tts_skip_chapter_headers"
+        private const val KEY_TTS_CONTINUE_ON_CHAPTER_END = "tts_continue_on_chapter_end"
+        private const val KEY_TTS_SENTENCE_DELAY = "tts_sentence_delay"
+        private const val KEY_TTS_PARAGRAPH_DELAY = "tts_paragraph_delay"
 
-        // New Scroll position keys
+        // =====================================================================
+        // SCROLL POSITION KEYS
+        // =====================================================================
+
         private const val KEY_SEGMENT_ID = "_segmentId"
         private const val KEY_SEGMENT_INDEX = "_segmentIndex"
         private const val KEY_PROGRESS = "_progress"
+        private const val KEY_OFFSET = "_offset"
+        private const val KEY_CHAPTER_INDEX = "_chapterIndex"
+        private const val KEY_SENTENCE_INDEX = "_sentenceIndex"
+        private const val KEY_TIMESTAMP = "_timestamp"
+        private const val KEY_POSITION_RETENTION_DAYS = "position_retention_days"
 
-        // Chapter list settings
+        // =====================================================================
+        // CHAPTER LIST SETTINGS
+        // =====================================================================
+
         private const val KEY_CHAPTER_SORT_DESCENDING = "chapter_sort_descending"
 
-        // App settings keys
+        // =====================================================================
+        // READING GOALS
+        // =====================================================================
+
+        private const val KEY_DAILY_READING_GOAL = "daily_reading_goal"
+        private const val KEY_WEEKLY_READING_GOAL = "weekly_reading_goal"
+        private const val KEY_MONTHLY_CHAPTER_GOAL = "monthly_chapter_goal"
+
+        // =====================================================================
+        // AUTO-DOWNLOAD
+        // =====================================================================
+
+        private const val KEY_AUTO_DOWNLOAD_ENABLED = "auto_download_enabled"
+        private const val KEY_AUTO_DOWNLOAD_WIFI_ONLY = "auto_download_wifi_only"
+        private const val KEY_AUTO_DOWNLOAD_LIMIT = "auto_download_limit"
+        private const val KEY_AUTO_DOWNLOAD_STATUSES = "auto_download_statuses"
+
+        // =====================================================================
+        // APP SETTINGS KEYS
+        // =====================================================================
+
         private const val KEY_THEME_MODE = "theme_mode"
         private const val KEY_AMOLED_BLACK = "amoled_black"
         private const val KEY_DYNAMIC_COLOR = "dynamic_color"
@@ -375,6 +1182,40 @@ class PreferencesManager(context: Context) {
         private const val KEY_KEEP_SCREEN_ON = "keep_screen_on"
         private const val KEY_INFINITE_SCROLL = "infinite_scroll"
         private const val KEY_SEARCH_RESULTS_PER_PROVIDER = "search_results_per_provider"
+
+        // =====================================================================
+        // NOTIFICATIONS
+        // =====================================================================
+
+        private const val KEY_UPDATE_NOTIFICATIONS = "update_notifications"
+        private const val KEY_DOWNLOAD_NOTIFICATIONS = "download_notifications"
+
+        // =====================================================================
+        // BACKUP & SYNC
+        // =====================================================================
+
+        private const val KEY_LAST_BACKUP_TIME = "last_backup_time"
+        private const val KEY_AUTO_BACKUP_ENABLED = "auto_backup_enabled"
+        private const val KEY_AUTO_BACKUP_INTERVAL = "auto_backup_interval"
+
+        // =====================================================================
+        // CACHE
+        // =====================================================================
+
+        private const val KEY_IMAGE_CACHE_SIZE = "image_cache_size"
+        private const val KEY_CLEAR_CACHE_ON_EXIT = "clear_cache_on_exit"
+
+        // =====================================================================
+        // FIRST RUN & ONBOARDING
+        // =====================================================================
+
+        private const val KEY_FIRST_RUN = "first_run"
+        private const val KEY_ONBOARDING_COMPLETE = "onboarding_complete"
+        private const val KEY_APP_VERSION = "app_version"
+
+        // =====================================================================
+        // SINGLETON
+        // =====================================================================
 
         @Volatile
         private var INSTANCE: PreferencesManager? = null

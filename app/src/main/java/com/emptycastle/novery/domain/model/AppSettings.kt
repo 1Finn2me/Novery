@@ -101,6 +101,12 @@ data class AppSettings(
     val defaultLibrarySort: LibrarySortOrder = LibrarySortOrder.LAST_READ,
     val defaultLibraryFilter: LibraryFilter = LibraryFilter.DOWNLOADED,
 
+    // Auto-Download
+    val autoDownloadEnabled: Boolean = false,
+    val autoDownloadOnWifiOnly: Boolean = true,
+    val autoDownloadLimit: Int = 10, // 0 = unlimited, max chapters per novel
+    val autoDownloadForStatuses: Set<ReadingStatus> = setOf(ReadingStatus.READING),
+
     // Search
     val searchResultsPerProvider: Int = 6,
 
@@ -117,7 +123,8 @@ enum class LibrarySortOrder {
     TITLE_ASC,
     TITLE_DESC,
     DATE_ADDED,
-    UNREAD_COUNT;
+    UNREAD_COUNT,
+    NEW_CHAPTERS;
 
     fun displayName(): String = when (this) {
         LAST_READ -> "Last Read"
@@ -125,6 +132,8 @@ enum class LibrarySortOrder {
         TITLE_DESC -> "Title (Z-A)"
         DATE_ADDED -> "Date Added"
         UNREAD_COUNT -> "Unread Count"
+        NEW_CHAPTERS -> "New Chapters"
+
     }
 }
 

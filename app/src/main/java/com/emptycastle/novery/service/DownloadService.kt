@@ -8,14 +8,18 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.ServiceInfo
+import android.graphics.Bitmap
 import android.os.Binder
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
+import android.util.Log
 import androidx.annotation.RequiresPermission
 import androidx.core.app.NotificationManagerCompat
 import com.emptycastle.novery.data.repository.RepositoryProvider
 import com.emptycastle.novery.domain.model.Novel
+import com.emptycastle.novery.util.NotificationImageLoader
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -25,34 +29,60 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
+import java.util.concurrent.ConcurrentLinkedDeque
+import java.util.concurrent.atomic.AtomicBoolean
 
-/**
- * Foreground service for downloading chapters in the background.
- * Shows progress notification with pause/resume/cancel controls.
- */
+private const val TAG = "DownloadService"
+private const val EXTRA_ACTION = "action"
+private const val ACTION_START = "start"
+private const val IDLE_TIMEOUT_MS = 10000L // 10 seconds to wait for download request
+
 class DownloadService : Service() {
 
     private val binder = LocalBinder()
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var downloadJob: Job? = null
+    private var notificationJob: Job? = null
+    private var idleTimeoutJob: Job? = null
     private var wakeLock: PowerManager.WakeLock? = null
+    private val stateMutex = Mutex()
 
-    // Repositories
     private val offlineRepository by lazy { RepositoryProvider.getOfflineRepository() }
     private val novelRepository by lazy { RepositoryProvider.getNovelRepository() }
 
-    // State
     private val _downloadState = MutableStateFlow(DownloadState())
     val downloadState: StateFlow<DownloadState> = _downloadState.asStateFlow()
 
-    // Current download info
+    // Use Deque for priority insertion
+    private val downloadQueue = ConcurrentLinkedDeque<DownloadRequest>()
+
     private var currentRequest: DownloadRequest? = null
     private var downloadedChapterUrls: Set<String> = emptySet()
     private var pausedAtIndex: Int = 0
+    private var failedChapters = mutableListOf<Pair<Int, String>>()
 
-    // Broadcast receiver for notification actions
+    private var cachedCoverBitmap: Bitmap? = null
+
+    // Track if foreground was started
+    private val isForegroundStarted = AtomicBoolean(false)
+    private val hasReceivedWork = AtomicBoolean(false)
+
+    // Speed calculation
+    private var lastSpeedCalculationTime = 0L
+    private var lastBytesDownloaded = 0L
+    private val speedHistory = mutableListOf<Long>()
+    private val maxSpeedHistorySize = 5
+
+    // Notification throttling
+    private var lastNotificationUpdateTime = 0L
+    private val minNotificationUpdateInterval = 500L
+
     private val actionReceiver = object : BroadcastReceiver() {
         @RequiresPermission(Manifest.permission.POST_NOTIFICATIONS)
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -70,31 +100,95 @@ class DownloadService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        Log.d(TAG, "Service created")
         registerActionReceiver()
-        acquireWakeLock()
     }
 
-    override fun onBind(intent: Intent?): IBinder = binder
+    override fun onBind(intent: Intent?): IBinder {
+        Log.d(TAG, "Service bound")
+        return binder
+    }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        // If service is restarted and no active download, stop
-        if (!_downloadState.value.isActive && currentRequest == null) {
-            stopSelf()
+        Log.d(TAG, "onStartCommand called, isForegroundStarted=${isForegroundStarted.get()}")
+
+        // CRITICAL: Must start foreground immediately when started via startForegroundService
+        if (!isForegroundStarted.getAndSet(true)) {
+            startInitialForeground()
         }
+
+        // Start idle timeout - if no work arrives, stop the service
+        startIdleTimeout()
+
         return START_STICKY
     }
 
     override fun onDestroy() {
         super.onDestroy()
+        Log.d(TAG, "Service destroyed")
         unregisterActionReceiver()
         releaseWakeLock()
         downloadJob?.cancel()
+        notificationJob?.cancel()
+        idleTimeoutJob?.cancel()
         serviceScope.cancel()
+        cachedCoverBitmap = null
     }
 
-    // ================================================================
-    // BROADCAST RECEIVER
-    // ================================================================
+    /**
+     * Start foreground with a "preparing" notification immediately
+     * This is required when started via startForegroundService()
+     */
+    private fun startInitialForeground() {
+        Log.d(TAG, "Starting initial foreground notification")
+
+        val notification = NotificationHelper.buildPreparingNotification(this)
+
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(
+                    NotificationHelper.NOTIFICATION_ID_DOWNLOAD,
+                    notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+                )
+            } else {
+                startForeground(NotificationHelper.NOTIFICATION_ID_DOWNLOAD, notification)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error starting foreground", e)
+        }
+    }
+
+    /**
+     * Start a timeout - if no work arrives within the timeout, stop the service
+     */
+    private fun startIdleTimeout() {
+        idleTimeoutJob?.cancel()
+        idleTimeoutJob = serviceScope.launch {
+            delay(IDLE_TIMEOUT_MS)
+
+            if (!hasReceivedWork.get() && !_downloadState.value.isActive && downloadQueue.isEmpty()) {
+                Log.d(TAG, "Idle timeout reached, stopping service")
+                withContext(Dispatchers.Main) {
+                    safeStopSelf()
+                }
+            }
+        }
+    }
+
+    private fun cancelIdleTimeout() {
+        idleTimeoutJob?.cancel()
+        idleTimeoutJob = null
+    }
+
+    private fun safeStopSelf() {
+        try {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error stopping foreground", e)
+        }
+        stopSelf()
+    }
 
     @SuppressLint("UnspecifiedRegisterReceiverFlag")
     private fun registerActionReceiver() {
@@ -104,10 +198,14 @@ class DownloadService : Service() {
             addAction(NotificationHelper.ACTION_DOWNLOAD_CANCEL)
         }
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(actionReceiver, filter, RECEIVER_NOT_EXPORTED)
-        } else {
-            registerReceiver(actionReceiver, filter)
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                registerReceiver(actionReceiver, filter, RECEIVER_NOT_EXPORTED)
+            } else {
+                registerReceiver(actionReceiver, filter)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to register receiver", e)
         }
     }
 
@@ -115,111 +213,332 @@ class DownloadService : Service() {
         try {
             unregisterReceiver(actionReceiver)
         } catch (e: Exception) {
-            // Receiver not registered
+            Log.w(TAG, "Receiver not registered")
         }
     }
 
-    // ================================================================
-    // WAKE LOCK
-    // ================================================================
-
     private fun acquireWakeLock() {
-        val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
-        wakeLock = powerManager.newWakeLock(
-            PowerManager.PARTIAL_WAKE_LOCK,
-            "Novery:DownloadWakeLock"
-        ).apply {
-            acquire(60 * 60 * 1000L) // 1 hour max
+        if (wakeLock?.isHeld == true) return
+
+        try {
+            val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+            wakeLock = powerManager.newWakeLock(
+                PowerManager.PARTIAL_WAKE_LOCK,
+                "Novery:DownloadWakeLock"
+            ).apply {
+                acquire(2 * 60 * 60 * 1000L) // 2 hours max
+            }
+            Log.d(TAG, "WakeLock acquired")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to acquire WakeLock", e)
         }
     }
 
     private fun releaseWakeLock() {
-        wakeLock?.let {
-            if (it.isHeld) {
-                it.release()
+        try {
+            wakeLock?.let {
+                if (it.isHeld) {
+                    it.release()
+                    Log.d(TAG, "WakeLock released")
+                }
             }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error releasing WakeLock", e)
         }
         wakeLock = null
     }
 
     // ================================================================
-    // DOWNLOAD CONTROL
+    // QUEUE MANAGEMENT
     // ================================================================
 
     /**
-     * Start a new download
+     * Start or queue a download request
      */
     fun startDownload(request: DownloadRequest) {
-        if (_downloadState.value.isActive) {
-            // Already downloading - queue or reject
-            return
+        Log.d(TAG, "startDownload: ${request.novelName} (${request.totalChapters} chapters)")
+
+        // Mark that we've received work
+        hasReceivedWork.set(true)
+        cancelIdleTimeout()
+
+        serviceScope.launch {
+            stateMutex.withLock {
+                if (_downloadState.value.isActive) {
+                    // Add to queue based on priority
+                    addToQueue(request)
+                    updateQueueState()
+                    Log.d(TAG, "Added to queue. Queue size: ${downloadQueue.size}")
+                } else {
+                    beginDownload(request)
+                }
+            }
         }
-
-        currentRequest = request
-        pausedAtIndex = 0
-
-        _downloadState.value = DownloadState(
-            isActive = true,
-            isPaused = false,
-            novelName = request.novelName,
-            novelUrl = request.novelUrl,
-            currentChapterName = "Starting...",
-            currentProgress = 0,
-            totalChapters = request.totalChapters
-        )
-
-        startForegroundNotification()
-        executeDownload(0)
     }
 
     /**
-     * Pause the current download
+     * Add to queue with priority support
      */
-    @RequiresPermission(Manifest.permission.POST_NOTIFICATIONS)
-    fun pauseDownload() {
-        if (!_downloadState.value.isActive) return
-
-        downloadJob?.cancel()
-        _downloadState.value = _downloadState.value.copy(isPaused = true)
-        updateNotification()
+    private fun addToQueue(request: DownloadRequest) {
+        when (request.priority) {
+            DownloadPriority.HIGH -> downloadQueue.addFirst(request)
+            DownloadPriority.NORMAL -> downloadQueue.addLast(request)
+            DownloadPriority.LOW -> downloadQueue.addLast(request)
+        }
     }
 
     /**
-     * Resume a paused download
+     * Queue multiple downloads at once
      */
-    @RequiresPermission(Manifest.permission.POST_NOTIFICATIONS)
-    fun resumeDownload() {
-        if (!_downloadState.value.isPaused) return
+    fun queueDownloads(requests: List<DownloadRequest>) {
+        if (requests.isEmpty()) return
 
-        _downloadState.value = _downloadState.value.copy(isPaused = false)
-        updateNotification()
-        executeDownload(pausedAtIndex)
+        Log.d(TAG, "queueDownloads: ${requests.size} requests")
+
+        // Mark that we've received work
+        hasReceivedWork.set(true)
+        cancelIdleTimeout()
+
+        serviceScope.launch {
+            stateMutex.withLock {
+                // Sort by priority
+                val sorted = requests.sortedByDescending { it.priority }
+
+                if (!_downloadState.value.isActive) {
+                    // Start first one immediately
+                    val first = sorted.firstOrNull()
+                    if (first != null) {
+                        // Add rest to queue
+                        sorted.drop(1).forEach { addToQueue(it) }
+                        beginDownload(first)
+                    }
+                } else {
+                    // All go to queue
+                    sorted.forEach { addToQueue(it) }
+                    updateQueueState()
+                }
+            }
+        }
     }
 
     /**
-     * Cancel the current download
+     * Remove a specific item from the queue
      */
-    fun cancelDownload() {
-        downloadJob?.cancel()
+    fun removeFromQueue(novelUrl: String) {
+        downloadQueue.removeIf { it.novelUrl == novelUrl }
+        updateQueueState()
+    }
 
-        _downloadState.value = DownloadState()
-        currentRequest = null
+    /**
+     * Clear the entire queue
+     */
+    fun clearQueue() {
+        downloadQueue.clear()
+        updateQueueState()
+    }
 
-        NotificationHelper.cancelNotification(this, NotificationHelper.NOTIFICATION_ID_DOWNLOAD)
-        stopForeground(STOP_FOREGROUND_REMOVE)
-        stopSelf()
+    /**
+     * Get current queue as list
+     */
+    fun getQueue(): List<QueuedDownload> {
+        return downloadQueue.map { it.toQueuedDownload() }
+    }
+
+    fun getQueueSize(): Int = downloadQueue.size
+
+    /**
+     * Update state with current queue info
+     */
+    private fun updateQueueState() {
+        val queuedDownloads = downloadQueue.map { it.toQueuedDownload() }
+        val totalQueuedChapters = downloadQueue.sumOf { it.totalChapters }
+
+        _downloadState.update {
+            it.copy(
+                queuedDownloads = queuedDownloads,
+                totalQueuedChapters = totalQueuedChapters
+            )
+        }
     }
 
     // ================================================================
     // DOWNLOAD EXECUTION
     // ================================================================
 
+    private fun beginDownload(request: DownloadRequest) {
+        Log.d(TAG, "beginDownload: ${request.novelName}")
+
+        currentRequest = request
+        pausedAtIndex = 0
+        failedChapters.clear()
+        speedHistory.clear()
+        lastSpeedCalculationTime = System.currentTimeMillis()
+        lastBytesDownloaded = 0
+        lastNotificationUpdateTime = 0
+        cachedCoverBitmap = null
+
+        // Set initial state
+        _downloadState.value = DownloadState(
+            isActive = true,
+            isPaused = false,
+            novelName = request.novelName,
+            novelUrl = request.novelUrl,
+            novelCoverUrl = request.novelCoverUrl,
+            currentChapterName = "Starting...",
+            currentProgress = 0,
+            totalChapters = request.totalChapters,
+            startTimeMillis = System.currentTimeMillis(),
+            queuedDownloads = downloadQueue.map { it.toQueuedDownload() },
+            totalQueuedChapters = downloadQueue.sumOf { it.totalChapters }
+        )
+
+        acquireWakeLock()
+        startPeriodicNotificationUpdates()
+
+        serviceScope.launch {
+            // Preload cover
+            preloadCoverImage(request.novelCoverUrl)
+
+            // Update notification with actual download info
+            withContext(Dispatchers.Main) {
+                updateDownloadNotification()
+            }
+
+            // Execute download
+            executeDownload(0)
+        }
+    }
+
+    private fun startPeriodicNotificationUpdates() {
+        notificationJob?.cancel()
+        notificationJob = serviceScope.launch(Dispatchers.Main) {
+            while (isActive) {
+                val state = _downloadState.value
+                if (state.isActive && !state.isPaused) {
+                    updateNotificationIfNeeded(force = false)
+                }
+                delay(1000)
+            }
+        }
+    }
+
+    private fun stopPeriodicNotificationUpdates() {
+        notificationJob?.cancel()
+        notificationJob = null
+    }
+
+    private suspend fun preloadCoverImage(coverUrl: String?) {
+        if (coverUrl.isNullOrBlank()) return
+
+        try {
+            val bitmap = NotificationImageLoader.loadImage(
+                context = this@DownloadService,
+                imageUrl = coverUrl,
+                rounded = true
+            )
+            cachedCoverBitmap = bitmap
+            _downloadState.update { it.copy(novelCoverBitmap = bitmap) }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to load cover image", e)
+        }
+    }
+
+    private fun processNextInQueue() {
+        Log.d(TAG, "processNextInQueue, queue size: ${downloadQueue.size}")
+
+        stopPeriodicNotificationUpdates()
+
+        val nextRequest = downloadQueue.poll()
+        if (nextRequest != null) {
+            beginDownload(nextRequest)
+        } else {
+            // All done
+            Log.d(TAG, "Download queue empty, stopping service")
+            cachedCoverBitmap = null
+            releaseWakeLock()
+
+            // Reset state
+            _downloadState.value = DownloadState()
+            currentRequest = null
+
+            safeStopSelf()
+        }
+    }
+
+    // ================================================================
+    // PAUSE / RESUME / CANCEL
+    // ================================================================
+
+    @RequiresPermission(Manifest.permission.POST_NOTIFICATIONS)
+    fun pauseDownload() {
+        if (!_downloadState.value.isActive || _downloadState.value.isPaused) return
+
+        Log.d(TAG, "pauseDownload")
+        downloadJob?.cancel()
+        _downloadState.update { it.copy(isPaused = true) }
+
+        serviceScope.launch(Dispatchers.Main) {
+            updateNotificationIfNeeded(force = true)
+        }
+    }
+
+    @RequiresPermission(Manifest.permission.POST_NOTIFICATIONS)
+    fun resumeDownload() {
+        if (!_downloadState.value.isPaused) return
+
+        Log.d(TAG, "resumeDownload from index $pausedAtIndex")
+
+        _downloadState.update {
+            it.copy(
+                isPaused = false,
+                startTimeMillis = System.currentTimeMillis()
+            )
+        }
+
+        serviceScope.launch(Dispatchers.Main) {
+            updateNotificationIfNeeded(force = true)
+        }
+
+        executeDownload(pausedAtIndex)
+    }
+
+    fun cancelDownload() {
+        Log.d(TAG, "cancelDownload")
+
+        downloadJob?.cancel()
+        stopPeriodicNotificationUpdates()
+        downloadQueue.clear()
+
+        _downloadState.value = DownloadState()
+        currentRequest = null
+        cachedCoverBitmap = null
+
+        try {
+            NotificationHelper.cancelNotification(this, NotificationHelper.NOTIFICATION_ID_DOWNLOAD)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error cancelling notification", e)
+        }
+
+        releaseWakeLock()
+        safeStopSelf()
+    }
+
+    fun skipCurrentChapter() {
+        pausedAtIndex++
+        if (_downloadState.value.isPaused) {
+            resumeDownload()
+        }
+    }
+
+    // ================================================================
+    // DOWNLOAD LOGIC
+    // ================================================================
+
     private fun executeDownload(startIndex: Int) {
         val request = currentRequest ?: return
 
-        downloadJob = serviceScope.launch @androidx.annotation.RequiresPermission(android.Manifest.permission.POST_NOTIFICATIONS) {
+        downloadJob = serviceScope.launch {
             try {
-                // Get provider
                 val provider = novelRepository.getProvider(request.providerName)
                 if (provider == null) {
                     onDownloadError("Provider not found: ${request.providerName}")
@@ -227,7 +546,12 @@ class DownloadService : Service() {
                 }
 
                 // Get already downloaded chapters
-                downloadedChapterUrls = offlineRepository.getDownloadedChapterUrls(request.novelUrl)
+                downloadedChapterUrls = try {
+                    offlineRepository.getDownloadedChapterUrls(request.novelUrl)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error getting downloaded URLs", e)
+                    emptySet()
+                }
 
                 // Save novel metadata
                 val novel = Novel(
@@ -236,192 +560,435 @@ class DownloadService : Service() {
                     posterUrl = request.novelCoverUrl,
                     apiName = request.providerName
                 )
-                offlineRepository.saveNovelMetadata(novel)
+
+                try {
+                    offlineRepository.saveNovelMetadata(novel)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error saving novel metadata", e)
+                }
 
                 var successCount = _downloadState.value.successCount
                 var failedCount = _downloadState.value.failedCount
+                var skippedCount = _downloadState.value.skippedCount
+                var totalBytes = _downloadState.value.bytesDownloaded
 
                 for (index in startIndex until request.chapterUrls.size) {
-                    // Check if cancelled or paused
+                    // Check if coroutine is still active
                     if (!isActive) {
                         pausedAtIndex = index
                         return@launch
                     }
 
+                    // Check if paused
                     if (_downloadState.value.isPaused) {
                         pausedAtIndex = index
                         return@launch
                     }
 
-                    val chapterUrl = request.chapterUrls[index]
-                    val chapterName = request.chapterNames[index]
+                    val chapterUrl = request.chapterUrls.getOrNull(index) ?: continue
+                    val chapterName = request.chapterNames.getOrNull(index) ?: "Chapter ${index + 1}"
 
-                    // Update state
-                    _downloadState.value = _downloadState.value.copy(
-                        currentChapterName = chapterName,
-                        currentProgress = index + 1
+                    // Update state - processing
+                    updateProgress(
+                        chapterName = chapterName,
+                        progress = index,
+                        successCount = successCount,
+                        failedCount = failedCount,
+                        skippedCount = skippedCount,
+                        bytesDownloaded = totalBytes,
+                        isProcessing = true
                     )
-                    updateNotification()
 
                     // Skip if already downloaded
                     if (downloadedChapterUrls.contains(chapterUrl)) {
-                        successCount++
-                        _downloadState.value = _downloadState.value.copy(successCount = successCount)
+                        skippedCount++
+                        updateProgress(
+                            chapterName = chapterName,
+                            progress = index + 1,
+                            successCount = successCount,
+                            failedCount = failedCount,
+                            skippedCount = skippedCount,
+                            bytesDownloaded = totalBytes,
+                            isProcessing = false
+                        )
                         continue
                     }
 
-                    // Download chapter
-                    try {
-                        val content = provider.loadChapterContent(chapterUrl)
-
-                        if (content != null) {
-                            offlineRepository.saveChapter(
-                                chapterUrl = chapterUrl,
-                                novelUrl = request.novelUrl,
-                                title = chapterName,
-                                content = content
-                            )
-                            successCount++
-                        } else {
-                            failedCount++
-                        }
-                    } catch (e: Exception) {
-                        failedCount++
-                        e.printStackTrace()
-                    }
-
-                    _downloadState.value = _downloadState.value.copy(
-                        successCount = successCount,
-                        failedCount = failedCount
+                    // Download with retry
+                    val result = downloadChapterWithRetry(
+                        chapterUrl = chapterUrl,
+                        chapterName = chapterName,
+                        novelUrl = request.novelUrl,
+                        provider = provider,
+                        maxRetries = if (request.retryOnFailure) request.maxRetries else 0
                     )
 
-                    // Small delay to avoid rate limiting
-                    delay(250)
+                    when (result) {
+                        is ChapterDownloadResult.Success -> {
+                            successCount++
+                            totalBytes += result.bytesDownloaded
+                        }
+                        is ChapterDownloadResult.Failed -> {
+                            failedCount++
+                            failedChapters.add(index to chapterUrl)
+                        }
+                        is ChapterDownloadResult.Skipped -> {
+                            skippedCount++
+                        }
+                    }
+
+                    // Update state - completed
+                    updateProgress(
+                        chapterName = chapterName,
+                        progress = index + 1,
+                        successCount = successCount,
+                        failedCount = failedCount,
+                        skippedCount = skippedCount,
+                        bytesDownloaded = totalBytes,
+                        isProcessing = false
+                    )
+
+                    // Adaptive delay
+                    delay(getAdaptiveDelay(failedCount))
                 }
 
                 // Download complete
-                onDownloadComplete(successCount, failedCount)
+                onDownloadComplete(
+                    DownloadResult(
+                        novelUrl = request.novelUrl,
+                        novelName = request.novelName,
+                        novelCoverUrl = request.novelCoverUrl,
+                        successCount = successCount,
+                        failedCount = failedCount,
+                        skippedCount = skippedCount,
+                        totalChapters = request.totalChapters,
+                        elapsedTimeMs = System.currentTimeMillis() - _downloadState.value.startTimeMillis,
+                        bytesDownloaded = totalBytes
+                    )
+                )
 
+            } catch (e: CancellationException) {
+                Log.d(TAG, "Download cancelled")
+                throw e
             } catch (e: Exception) {
+                Log.e(TAG, "Download error", e)
                 if (isActive) {
-                    onDownloadError(e.message ?: "Download failed")
+                    onDownloadError(e.message ?: "Download failed unexpectedly")
                 }
             }
         }
     }
 
-    private fun onDownloadComplete(successCount: Int, failedCount: Int) {
-        val request = currentRequest ?: return
+    private suspend fun downloadChapterWithRetry(
+        chapterUrl: String,
+        chapterName: String,
+        novelUrl: String,
+        provider: com.emptycastle.novery.provider.MainProvider,
+        maxRetries: Int
+    ): ChapterDownloadResult {
+        var lastError: String? = null
+        var retryCount = 0
 
-        // Show completion notification
-        val notification = NotificationHelper.buildDownloadCompleteNotification(
-            context = this,
-            novelName = request.novelName,
-            chaptersDownloaded = successCount,
-            totalChapters = request.totalChapters
+        while (retryCount <= maxRetries) {
+            try {
+                val content = withContext(Dispatchers.IO) {
+                    provider.loadChapterContent(chapterUrl)
+                }
+
+                if (!content.isNullOrBlank()) {
+                    offlineRepository.saveChapter(
+                        chapterUrl = chapterUrl,
+                        novelUrl = novelUrl,
+                        title = chapterName,
+                        content = content
+                    )
+                    return ChapterDownloadResult.Success(
+                        chapterUrl = chapterUrl,
+                        bytesDownloaded = content.length.toLong() * 2 // UTF-16
+                    )
+                } else {
+                    lastError = "Empty content received"
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                lastError = e.message ?: "Unknown error"
+
+                if (!isRetryableError(e)) {
+                    return ChapterDownloadResult.Failed(
+                        chapterUrl = chapterUrl,
+                        error = lastError,
+                        retryable = false
+                    )
+                }
+            }
+
+            if (retryCount < maxRetries) {
+                val delayMs = (1000L * (1 shl retryCount)).coerceAtMost(30000L)
+                _downloadState.update { it.copy(retryCount = retryCount + 1) }
+                delay(delayMs)
+            }
+
+            retryCount++
+        }
+
+        return ChapterDownloadResult.Failed(
+            chapterUrl = chapterUrl,
+            error = lastError ?: "Max retries exceeded",
+            retryable = true
         )
+    }
 
-        NotificationHelper.getNotificationManager(this).notify(
-            NotificationHelper.NOTIFICATION_ID_DOWNLOAD_COMPLETE,
-            notification
-        )
+    private fun isRetryableError(e: Exception): Boolean {
+        val message = e.message?.lowercase() ?: ""
+        return when {
+            e is java.net.SocketTimeoutException -> true
+            e is java.net.UnknownHostException -> true
+            e is java.io.IOException -> true
+            message.contains("timeout") -> true
+            message.contains("connection") -> true
+            message.contains("reset") -> true
+            message.contains("429") -> true
+            message.contains("503") -> true
+            else -> false
+        }
+    }
 
-        // Reset state
-        _downloadState.value = DownloadState()
-        currentRequest = null
+    private fun getAdaptiveDelay(failedCount: Int): Long {
+        return when {
+            failedCount > 10 -> 1000L
+            failedCount > 5 -> 500L
+            failedCount > 2 -> 350L
+            else -> 200L
+        }
+    }
 
-        // Stop service
-        stopForeground(STOP_FOREGROUND_REMOVE)
-        stopSelf()
+    // ================================================================
+    // STATE UPDATES
+    // ================================================================
+
+    private suspend fun updateProgress(
+        chapterName: String,
+        progress: Int,
+        successCount: Int,
+        failedCount: Int,
+        skippedCount: Int,
+        bytesDownloaded: Long,
+        isProcessing: Boolean = false
+    ) {
+        stateMutex.withLock {
+            val now = System.currentTimeMillis()
+            val timeDiff = now - lastSpeedCalculationTime
+
+            val currentSpeed = if (timeDiff > 500) {
+                val bytesDiff = bytesDownloaded - lastBytesDownloaded
+                val speed = (bytesDiff * 1000 / timeDiff.coerceAtLeast(1))
+
+                lastSpeedCalculationTime = now
+                lastBytesDownloaded = bytesDownloaded
+
+                speedHistory.add(speed)
+                if (speedHistory.size > maxSpeedHistorySize) {
+                    speedHistory.removeAt(0)
+                }
+
+                speedHistory.average().toLong()
+            } else {
+                _downloadState.value.downloadSpeed
+            }
+
+            _downloadState.update {
+                it.copy(
+                    currentChapterName = if (isProcessing) "Downloading: $chapterName" else chapterName,
+                    currentProgress = progress,
+                    successCount = successCount,
+                    failedCount = failedCount,
+                    skippedCount = skippedCount,
+                    bytesDownloaded = bytesDownloaded,
+                    downloadSpeed = currentSpeed,
+                    retryCount = 0,
+                    novelCoverBitmap = cachedCoverBitmap
+                )
+            }
+        }
+
+        // Update notification
+        if (shouldUpdateNotification(progress)) {
+            withContext(Dispatchers.Main) {
+                updateNotificationIfNeeded(force = true)
+            }
+        }
+    }
+
+    private fun shouldUpdateNotification(progress: Int): Boolean {
+        val total = _downloadState.value.totalChapters
+        if (total == 0) return false
+
+        // Always update on first, last, and milestones
+        if (progress == 0 || progress == 1 || progress == total) return true
+
+        val percentComplete = (progress * 100) / total
+        val previousPercent = ((progress - 1) * 100) / total
+
+        return when {
+            total <= 20 -> true
+            total <= 50 -> progress % 2 == 0
+            total <= 100 -> progress % 5 == 0 || percentComplete / 5 > previousPercent / 5
+            else -> progress % 10 == 0 || percentComplete / 5 > previousPercent / 5
+        }
+    }
+
+    // ================================================================
+    // COMPLETION HANDLERS
+    // ================================================================
+
+    @RequiresPermission(Manifest.permission.POST_NOTIFICATIONS)
+    private fun onDownloadComplete(result: DownloadResult) {
+        Log.d(TAG, "onDownloadComplete: ${result.novelName}, success=${result.successCount}")
+
+        stopPeriodicNotificationUpdates()
+
+        serviceScope.launch {
+            try {
+                val notification = NotificationHelper.buildDownloadCompleteNotification(
+                    context = this@DownloadService,
+                    novelName = result.novelName,
+                    novelCoverUrl = result.novelCoverUrl,
+                    chaptersDownloaded = result.successCount,
+                    totalChapters = result.totalChapters,
+                    failedCount = result.failedCount,
+                    elapsedTimeMs = result.elapsedTimeMs,
+                    queueRemaining = downloadQueue.size
+                )
+
+                // Use a unique notification ID for each novel
+                val notificationId = NotificationHelper.NOTIFICATION_ID_DOWNLOAD_COMPLETE +
+                        (result.novelUrl.hashCode() and 0x7FFFFFFF) % 1000
+
+                NotificationHelper.getNotificationManager(this@DownloadService).notify(
+                    notificationId,
+                    notification
+                )
+            } catch (e: Exception) {
+                Log.e(TAG, "Error showing completion notification", e)
+            }
+
+            // Reset current state
+            _downloadState.value = DownloadState(
+                queuedDownloads = downloadQueue.map { it.toQueuedDownload() },
+                totalQueuedChapters = downloadQueue.sumOf { it.totalChapters }
+            )
+            currentRequest = null
+            cachedCoverBitmap = null
+
+            // Process next in queue
+            processNextInQueue()
+        }
     }
 
     private fun onDownloadError(message: String) {
+        Log.e(TAG, "onDownloadError: $message")
+
+        stopPeriodicNotificationUpdates()
         val request = currentRequest
 
-        _downloadState.value = _downloadState.value.copy(
-            isActive = false,
-            error = message
-        )
-
-        // Show error notification
-        if (request != null) {
-            val notification = NotificationHelper.buildDownloadErrorNotification(
-                context = this,
-                novelName = request.novelName,
-                errorMessage = message
-            )
-
-            NotificationHelper.getNotificationManager(this).notify(
-                NotificationHelper.NOTIFICATION_ID_DOWNLOAD_COMPLETE,
-                notification
+        _downloadState.update {
+            it.copy(
+                isActive = false,
+                error = message
             )
         }
 
+        if (request != null) {
+            serviceScope.launch {
+                try {
+                    val notification = NotificationHelper.buildDownloadErrorNotification(
+                        context = this@DownloadService,
+                        novelName = request.novelName,
+                        novelCoverUrl = request.novelCoverUrl,
+                        errorMessage = message,
+                        chaptersCompleted = _downloadState.value.successCount,
+                        totalChapters = request.totalChapters
+                    )
+
+                    NotificationHelper.getNotificationManager(this@DownloadService).notify(
+                        NotificationHelper.NOTIFICATION_ID_DOWNLOAD_COMPLETE,
+                        notification
+                    )
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error showing error notification", e)
+                }
+            }
+        }
+
         currentRequest = null
-        stopForeground(STOP_FOREGROUND_REMOVE)
-        stopSelf()
+        cachedCoverBitmap = null
+        processNextInQueue()
     }
 
     // ================================================================
-    // NOTIFICATIONS
+    // NOTIFICATION
     // ================================================================
 
-    private fun startForegroundNotification() {
+    private fun updateDownloadNotification() {
         val state = _downloadState.value
 
         val notification = NotificationHelper.buildDownloadProgressNotification(
             context = this,
-            novelName = state.novelName,
-            chapterName = state.currentChapterName,
-            progress = state.currentProgress,
-            total = state.totalChapters,
-            isPaused = state.isPaused
+            state = state,
+            coverBitmap = cachedCoverBitmap
         )
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(
+        try {
+            NotificationManagerCompat.from(this).notify(
                 NotificationHelper.NOTIFICATION_ID_DOWNLOAD,
-                notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+                notification
             )
-        } else {
-            startForeground(NotificationHelper.NOTIFICATION_ID_DOWNLOAD, notification)
+        } catch (e: SecurityException) {
+            Log.e(TAG, "Notification permission not granted")
         }
     }
 
     @RequiresPermission(Manifest.permission.POST_NOTIFICATIONS)
-    private fun updateNotification() {
+    private fun updateNotificationIfNeeded(force: Boolean) {
+        val now = System.currentTimeMillis()
+
+        if (!force && (now - lastNotificationUpdateTime) < minNotificationUpdateInterval) {
+            return
+        }
+
+        lastNotificationUpdateTime = now
+
         val state = _downloadState.value
+        if (!state.isActive && !state.isPaused) return
 
         val notification = NotificationHelper.buildDownloadProgressNotification(
             context = this,
-            novelName = state.novelName,
-            chapterName = state.currentChapterName,
-            progress = state.currentProgress,
-            total = state.totalChapters,
-            isPaused = state.isPaused
+            state = state,
+            coverBitmap = cachedCoverBitmap
         )
 
-        NotificationManagerCompat.from(this).notify(
-            NotificationHelper.NOTIFICATION_ID_DOWNLOAD,
-            notification
-        )
+        try {
+            NotificationManagerCompat.from(this).notify(
+                NotificationHelper.NOTIFICATION_ID_DOWNLOAD,
+                notification
+            )
+        } catch (e: SecurityException) {
+            Log.e(TAG, "Notification permission not granted")
+        }
     }
 
-    // ================================================================
-    // COMPANION
-    // ================================================================
-
     companion object {
-        /**
-         * Start the download service
-         */
         fun start(context: Context) {
             val intent = Intent(context, DownloadService::class.java)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(intent)
-            } else {
-                context.startService(intent)
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    context.startForegroundService(intent)
+                } else {
+                    context.startService(intent)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error starting service", e)
             }
         }
     }

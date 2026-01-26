@@ -2,4 +2,13 @@
     <string name="app_name">Novery</string>
     <string name="tts_channel_name">Text-to-Speech</string>
     <string name="tts_channel_description">Controls for TTS playback</string>
+
+    <!-- Download Notification Strings -->
+    <string name="download_channel_name">Download Progress</string>
+    <string name="download_channel_description">Shows chapter download progress</string>
+    <string name="download_complete_channel_name">Download Complete</string>
+    <string name="download_complete_channel_description">Notifies when downloads complete or fail</string>
+    <string name="notification_preparing_title">Preparing download</string>
+    <string name="notification_preparing_text">Please wait…</string>
+    
 </resources>

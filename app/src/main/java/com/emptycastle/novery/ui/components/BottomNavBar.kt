@@ -23,13 +23,13 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.LibraryBooks
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.outlined.Explore
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.LibraryBooks
+import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.Search
-import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -57,7 +57,7 @@ data class BottomNavItem(
 )
 
 /**
- * Available navigation items (including Settings)
+ * Available navigation items
  */
 val bottomNavItems = listOf(
     BottomNavItem(
@@ -85,15 +85,15 @@ val bottomNavItems = listOf(
         unselectedIcon = Icons.Outlined.History
     ),
     BottomNavItem(
-        route = "settings",
-        label = "Settings",
-        selectedIcon = Icons.Filled.Settings,
-        unselectedIcon = Icons.Outlined.Settings
+        route = "profile",
+        label = "Profile",
+        selectedIcon = Icons.Filled.Person,
+        unselectedIcon = Icons.Outlined.Person
     )
 )
 
 /**
- * Custom bottom navigation bar with density support
+ * Custom bottom navigation bar
  */
 @Composable
 fun NoveryBottomNavBar(
@@ -102,6 +102,9 @@ fun NoveryBottomNavBar(
     modifier: Modifier = Modifier
 ) {
     val dimensions = NoveryTheme.dimensions
+
+    // Map tab routes to simple routes for comparison
+    val normalizedSelectedRoute = selectedRoute.removePrefix("tab_")
 
     Surface(
         modifier = modifier.fillMaxWidth(),
@@ -123,7 +126,7 @@ fun NoveryBottomNavBar(
             bottomNavItems.forEach { item ->
                 BottomNavItemView(
                     item = item,
-                    isSelected = item.route == selectedRoute,
+                    isSelected = item.route == normalizedSelectedRoute,
                     showLabel = dimensions.showBottomBarLabels,
                     iconSize = dimensions.bottomBarIconSize,
                     onClick = { onItemSelected(item.route) }
@@ -144,13 +147,19 @@ private fun BottomNavItemView(
     val interactionSource = remember { MutableInteractionSource() }
 
     val iconColor by animateColorAsState(
-        targetValue = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+        targetValue = if (isSelected)
+            MaterialTheme.colorScheme.primary
+        else
+            MaterialTheme.colorScheme.onSurfaceVariant,
         animationSpec = spring(stiffness = Spring.StiffnessLow),
         label = "iconColor"
     )
 
     val backgroundColor by animateColorAsState(
-        targetValue = if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.1f) else Color.Transparent,
+        targetValue = if (isSelected)
+            MaterialTheme.colorScheme.primary.copy(alpha = 0.1f)
+        else
+            Color.Transparent,
         animationSpec = spring(stiffness = Spring.StiffnessLow),
         label = "backgroundColor"
     )
@@ -166,7 +175,6 @@ private fun BottomNavItemView(
             .padding(horizontal = 8.dp, vertical = 6.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // Icon with background pill
         Box(
             modifier = Modifier
                 .clip(RoundedCornerShape(12.dp))
@@ -182,7 +190,6 @@ private fun BottomNavItemView(
             )
         }
 
-        // Label
         if (showLabel) {
             Spacer(modifier = Modifier.height(2.dp))
             Text(
@@ -212,7 +219,6 @@ fun NoveryBottomNavBarWithInsets(
             onItemSelected = onItemSelected
         )
 
-        // Space for navigation bar
         Spacer(
             modifier = Modifier
                 .fillMaxWidth()

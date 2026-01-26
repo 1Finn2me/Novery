@@ -2,7 +2,6 @@ package com.emptycastle.novery.domain.model
 
 /**
  * Represents a novel in search results or catalog listings.
- * Equivalent to SearchResponse in React.
  */
 data class Novel(
     val name: String,
