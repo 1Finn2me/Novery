@@ -1,3 +1,5 @@
+// com/emptycastle/novery/ui/screens/details/components/SelectionModeOverlay.kt
+// Improved visual design while keeping functionality
 package com.emptycastle.novery.ui.screens.details.components
 
 import androidx.compose.animation.AnimatedContent
@@ -61,7 +63,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.scale
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -86,8 +87,6 @@ data class SelectionState(
     val hasSelection: Boolean get() = selectedCount > 0
     val allSelected: Boolean get() = selectedCount == totalCount && totalCount > 0
     val selectionRatio: Float get() = if (totalCount > 0) selectedCount.toFloat() / totalCount else 0f
-
-    // Determines which read action to show
     val showMarkAsRead: Boolean get() = selectedUnreadCount >= selectedReadCount
     val canMarkRead: Boolean get() = selectedUnreadCount > 0
     val canMarkUnread: Boolean get() = selectedReadCount > 0
@@ -157,7 +156,7 @@ fun SelectionModeOverlay(
             ) + fadeOut(),
             modifier = Modifier.align(Alignment.BottomCenter)
         ) {
-            CompactBottomBar(
+            SelectionBottomBar(
                 selectionState = selectionState,
                 callbacks = callbacks
             )
@@ -166,7 +165,7 @@ fun SelectionModeOverlay(
 }
 
 // ================================================================
-// TOP BAR (Unchanged - User said it's perfect)
+// TOP BAR
 // ================================================================
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -177,14 +176,11 @@ private fun SelectionTopBar(
     modifier: Modifier = Modifier
 ) {
     Surface(
-        modifier = modifier
-            .fillMaxWidth()
-            .shadow(
-                elevation = 8.dp,
-                shape = RoundedCornerShape(bottomStart = 24.dp, bottomEnd = 24.dp)
-            ),
+        modifier = modifier.fillMaxWidth(),
         color = MaterialTheme.colorScheme.primaryContainer,
-        shape = RoundedCornerShape(bottomStart = 24.dp, bottomEnd = 24.dp)
+        shape = RoundedCornerShape(bottomStart = 20.dp, bottomEnd = 20.dp),
+        shadowElevation = 8.dp,
+        tonalElevation = 2.dp
     ) {
         Column(
             modifier = Modifier
@@ -194,14 +190,15 @@ private fun SelectionTopBar(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 8.dp, vertical = 12.dp),
+                    .padding(horizontal = 12.dp, vertical = 12.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
+                    // Close button
                     Surface(
                         onClick = callbacks.onCancel,
                         shape = CircleShape,
@@ -221,13 +218,15 @@ private fun SelectionTopBar(
                         }
                     }
 
+                    // Selection counter
                     SelectionCounterPill(
                         selectedCount = selectionState.selectedCount,
                         totalCount = selectionState.totalCount
                     )
                 }
 
-                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                // Quick actions
+                Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
                     TopBarIconButton(
                         onClick = callbacks.onSelectAll,
                         enabled = !selectionState.allSelected,
@@ -249,6 +248,7 @@ private fun SelectionTopBar(
                 }
             }
 
+            // Quick filter chips
             AnimatedVisibility(
                 visible = selectionState.totalCount > 0,
                 enter = expandVertically() + fadeIn(),
@@ -256,14 +256,14 @@ private fun SelectionTopBar(
             ) {
                 Column {
                     HorizontalDivider(
-                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.1f),
+                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.08f),
                         modifier = Modifier.padding(horizontal = 16.dp)
                     )
 
                     FlowRow(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
@@ -289,6 +289,7 @@ private fun SelectionTopBar(
                 }
             }
 
+            // Progress indicator
             if (selectionState.hasSelection) {
                 LinearProgressIndicator(
                     progress = { selectionState.selectionRatio },
@@ -296,7 +297,7 @@ private fun SelectionTopBar(
                         .fillMaxWidth()
                         .height(3.dp),
                     color = MaterialTheme.colorScheme.primary,
-                    trackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
+                    trackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
                     strokeCap = StrokeCap.Round
                 )
             }
@@ -310,14 +311,13 @@ private fun SelectionCounterPill(
     totalCount: Int
 ) {
     Surface(
-        shape = RoundedCornerShape(20.dp),
-        color = MaterialTheme.colorScheme.primary,
-        modifier = Modifier.height(40.dp)
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.primary
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 16.dp),
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             AnimatedContent(
                 targetState = selectedCount,
@@ -337,7 +337,7 @@ private fun SelectionCounterPill(
 
             Text(
                 text = "/ $totalCount",
-                style = MaterialTheme.typography.bodyMedium,
+                style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.7f)
             )
         }
@@ -365,7 +365,7 @@ private fun TopBarIconButton(
         enabled = enabled,
         interactionSource = interactionSource,
         modifier = Modifier
-            .size(40.dp)
+            .size(38.dp)
             .scale(scale),
         colors = IconButtonDefaults.iconButtonColors(
             contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
@@ -375,7 +375,7 @@ private fun TopBarIconButton(
         Icon(
             imageVector = icon,
             contentDescription = contentDescription,
-            modifier = Modifier.size(22.dp)
+            modifier = Modifier.size(20.dp)
         )
     }
 }
@@ -401,7 +401,7 @@ private fun QuickFilterChip(
         targetValue = if (isSelected) {
             MaterialTheme.colorScheme.primary
         } else {
-            MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.1f)
+            MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.08f)
         },
         label = "chip_bg"
     )
@@ -418,35 +418,35 @@ private fun QuickFilterChip(
     Surface(
         onClick = onClick,
         interactionSource = interactionSource,
-        shape = RoundedCornerShape(12.dp),
+        shape = RoundedCornerShape(10.dp),
         color = backgroundColor,
         modifier = Modifier.scale(scale)
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
+            horizontalArrangement = Arrangement.spacedBy(5.dp)
         ) {
             if (icon != null) {
                 Icon(
                     imageVector = icon,
                     contentDescription = null,
-                    modifier = Modifier.size(16.dp),
+                    modifier = Modifier.size(14.dp),
                     tint = contentColor
                 )
             }
 
             Text(
                 text = label,
-                style = MaterialTheme.typography.labelMedium,
+                style = MaterialTheme.typography.labelSmall,
                 fontWeight = FontWeight.Medium,
                 color = contentColor
             )
 
             Surface(
                 shape = CircleShape,
-                color = contentColor.copy(alpha = 0.2f),
-                modifier = Modifier.size(20.dp)
+                color = contentColor.copy(alpha = 0.15f),
+                modifier = Modifier.size(18.dp)
             ) {
                 Box(
                     contentAlignment = Alignment.Center,
@@ -455,7 +455,7 @@ private fun QuickFilterChip(
                     Text(
                         text = if (count > 99) "99" else count.toString(),
                         style = MaterialTheme.typography.labelSmall,
-                        fontSize = 10.sp,
+                        fontSize = 9.sp,
                         fontWeight = FontWeight.Bold,
                         color = contentColor
                     )
@@ -466,31 +466,28 @@ private fun QuickFilterChip(
 }
 
 // ================================================================
-// COMPACT BOTTOM BAR (New Design)
+// BOTTOM BAR
 // ================================================================
 
 @Composable
-private fun CompactBottomBar(
+private fun SelectionBottomBar(
     selectionState: SelectionState,
     callbacks: SelectionCallbacks,
     modifier: Modifier = Modifier
 ) {
     Surface(
-        modifier = modifier
-            .fillMaxWidth()
-            .shadow(
-                elevation = 12.dp,
-                shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)
-            ),
-        color = MaterialTheme.colorScheme.surfaceContainer,
-        shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)
+        modifier = modifier.fillMaxWidth(),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp),
+        shadowElevation = 12.dp,
+        tonalElevation = 2.dp
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .navigationBarsPadding()
-                .padding(horizontal = 16.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+                .padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             // Status indicators row
             StatusIndicatorsRow(selectionState = selectionState)
@@ -554,7 +551,7 @@ private fun StatusIndicator(
     isActive: Boolean
 ) {
     val alpha by animateFloatAsState(
-        targetValue = if (isActive) 1f else 0.4f,
+        targetValue = if (isActive) 1f else 0.35f,
         animationSpec = tween(200),
         label = "indicator_alpha"
     )
@@ -565,12 +562,12 @@ private fun StatusIndicator(
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp)
+            horizontalArrangement = Arrangement.spacedBy(3.dp)
         ) {
             Icon(
                 imageVector = icon,
                 contentDescription = null,
-                modifier = Modifier.size(14.dp),
+                modifier = Modifier.size(13.dp),
                 tint = color.copy(alpha = alpha)
             )
 
@@ -610,7 +607,7 @@ private fun ActionButtonsRow(
         verticalAlignment = Alignment.CenterVertically
     ) {
         // Download
-        CompactActionButton(
+        ActionButton(
             icon = Icons.Rounded.Download,
             label = "Download",
             enabled = selectionState.selectedNotDownloadedCount > 0 && !selectionState.isDownloadActive,
@@ -618,7 +615,7 @@ private fun ActionButtonsRow(
             onClick = callbacks.onDownload
         )
 
-        // Mark Read/Unread (Transformable)
+        // Mark Read/Unread
         ReadStatusButton(
             showMarkAsRead = selectionState.showMarkAsRead,
             canMarkRead = selectionState.canMarkRead,
@@ -628,7 +625,7 @@ private fun ActionButtonsRow(
         )
 
         // Mark as Last Read
-        CompactActionButton(
+        ActionButton(
             icon = Icons.Rounded.Bookmark,
             label = "Last Read",
             enabled = selectionState.selectedCount == 1,
@@ -637,7 +634,7 @@ private fun ActionButtonsRow(
         )
 
         // Delete
-        CompactActionButton(
+        ActionButton(
             icon = Icons.Rounded.Delete,
             label = "Delete",
             enabled = selectionState.selectedDownloadedCount > 0,
@@ -648,7 +645,7 @@ private fun ActionButtonsRow(
 }
 
 @Composable
-private fun CompactActionButton(
+private fun ActionButton(
     icon: ImageVector,
     label: String,
     enabled: Boolean,
@@ -659,19 +656,19 @@ private fun CompactActionButton(
     val isPressed by interactionSource.collectIsPressedAsState()
 
     val scale by animateFloatAsState(
-        targetValue = if (isPressed && enabled) 0.9f else 1f,
+        targetValue = if (isPressed && enabled) 0.92f else 1f,
         animationSpec = spring(stiffness = Spring.StiffnessMedium),
         label = "action_scale"
     )
 
     val backgroundColor by animateColorAsState(
-        targetValue = if (enabled) color.copy(alpha = 0.12f) else Color.Transparent,
+        targetValue = if (enabled) color.copy(alpha = 0.1f) else Color.Transparent,
         animationSpec = tween(150),
         label = "action_bg"
     )
 
     val contentColor by animateColorAsState(
-        targetValue = if (enabled) color else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f),
+        targetValue = if (enabled) color else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.28f),
         animationSpec = tween(150),
         label = "action_content"
     )
@@ -680,25 +677,26 @@ private fun CompactActionButton(
         onClick = onClick,
         enabled = enabled,
         interactionSource = interactionSource,
-        shape = RoundedCornerShape(14.dp),
+        shape = RoundedCornerShape(12.dp),
         color = backgroundColor,
         modifier = Modifier.scale(scale)
     ) {
         Column(
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             Icon(
                 imageVector = icon,
                 contentDescription = label,
-                modifier = Modifier.size(24.dp),
+                modifier = Modifier.size(22.dp),
                 tint = contentColor
             )
 
             Text(
                 text = label,
                 style = MaterialTheme.typography.labelSmall,
+                fontSize = 10.sp,
                 fontWeight = FontWeight.Medium,
                 color = contentColor
             )
@@ -723,19 +721,19 @@ private fun ReadStatusButton(
     val color = if (showMarkAsRead) DetailsColors.Success else MaterialTheme.colorScheme.secondary
 
     val scale by animateFloatAsState(
-        targetValue = if (isPressed && enabled) 0.9f else 1f,
+        targetValue = if (isPressed && enabled) 0.92f else 1f,
         animationSpec = spring(stiffness = Spring.StiffnessMedium),
         label = "read_scale"
     )
 
     val backgroundColor by animateColorAsState(
-        targetValue = if (enabled) color.copy(alpha = 0.12f) else Color.Transparent,
+        targetValue = if (enabled) color.copy(alpha = 0.1f) else Color.Transparent,
         animationSpec = tween(150),
         label = "read_bg"
     )
 
     val contentColor by animateColorAsState(
-        targetValue = if (enabled) color else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f),
+        targetValue = if (enabled) color else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.28f),
         animationSpec = tween(150),
         label = "read_content"
     )
@@ -744,12 +742,12 @@ private fun ReadStatusButton(
         onClick = { if (showMarkAsRead) onMarkAsRead() else onMarkAsUnread() },
         enabled = enabled,
         interactionSource = interactionSource,
-        shape = RoundedCornerShape(14.dp),
+        shape = RoundedCornerShape(12.dp),
         color = backgroundColor,
         modifier = Modifier.scale(scale)
     ) {
         Column(
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
@@ -763,7 +761,7 @@ private fun ReadStatusButton(
                 Icon(
                     imageVector = if (isRead) Icons.Rounded.Visibility else Icons.Rounded.VisibilityOff,
                     contentDescription = label,
-                    modifier = Modifier.size(24.dp),
+                    modifier = Modifier.size(22.dp),
                     tint = contentColor
                 )
             }
@@ -778,6 +776,7 @@ private fun ReadStatusButton(
                 Text(
                     text = text,
                     style = MaterialTheme.typography.labelSmall,
+                    fontSize = 10.sp,
                     fontWeight = FontWeight.Medium,
                     color = contentColor
                 )

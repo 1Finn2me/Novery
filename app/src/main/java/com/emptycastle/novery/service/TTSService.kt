@@ -41,37 +41,34 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * Foreground service for background TTS playback.
+ * High-performance TTS Service with sentence pre-queuing for gapless playback.
  */
 class TTSService : Service(), TextToSpeech.OnInitListener {
-
-    //region Companion Object
 
     companion object {
         private const val TAG = "TTSService"
 
-        // Intent actions
+        private const val QUEUE_AHEAD_COUNT = 3
+        private const val MIN_QUEUE_THRESHOLD = 1
+
         const val ACTION_START = "com.emptycastle.novery.ACTION_TTS_START"
         const val ACTION_STOP = "com.emptycastle.novery.ACTION_TTS_STOP"
         const val ACTION_SET_SLEEP_TIMER = "com.emptycastle.novery.ACTION_SET_SLEEP_TIMER"
         const val ACTION_CANCEL_SLEEP_TIMER = "com.emptycastle.novery.ACTION_CANCEL_SLEEP_TIMER"
 
-        // Extras
         const val EXTRA_SLEEP_TIMER_MINUTES = "sleep_timer_minutes"
 
-        // Static state accessible from manager
         private val _isRunning = AtomicBoolean(false)
         private val _serviceState = MutableStateFlow<ServiceState>(ServiceState.Stopped)
 
-        val isRunning: Boolean
-            get() = _isRunning.get()
-
-        val serviceState: StateFlow<ServiceState>
-            get() = _serviceState.asStateFlow()
+        val isRunning: Boolean get() = _isRunning.get()
+        val serviceState: StateFlow<ServiceState> get() = _serviceState.asStateFlow()
 
         fun start(context: Context) {
             if (_isRunning.get()) return
@@ -115,10 +112,6 @@ class TTSService : Service(), TextToSpeech.OnInitListener {
         }
     }
 
-    //endregion
-
-    //region Service State
-
     sealed class ServiceState {
         object Stopped : ServiceState()
         object Starting : ServiceState()
@@ -128,90 +121,75 @@ class TTSService : Service(), TextToSpeech.OnInitListener {
         data class SleepTimerActive(val remainingMinutes: Int) : ServiceState()
     }
 
-    //endregion
-
-    //region Private State
-
     private val binder = TTSBinder()
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
-    // TTS Engine
     private var tts: TextToSpeech? = null
     private var ttsInitialized = false
-    private var pendingPlay = false
+    private var pendingPlayRequest: PendingPlayRequest? = null
 
-    // Audio
     private var audioManager: AudioManager? = null
     private var audioFocusRequest: AudioFocusRequest? = null
     private var hasAudioFocus = false
     private var wasPlayingBeforeFocusLoss = false
     private var wasPlayingBeforePhoneCall = false
 
-    // Wake Lock
     private var wakeLock: PowerManager.WakeLock? = null
-
-    // Sleep Timer
     private var sleepTimerJob: Job? = null
 
-    // Content
     private var currentContent: TTSContent? = null
-    private var currentSegmentIndex = 0
-    private var speechRate = 1.0f
     private var coverBitmap: Bitmap? = null
+    private var speechRate = 1.0f
+    private var pitch = 1.0f
+    private var useSystemVoice = false // Flag to use system default voice
 
-    // State - using StateFlow instead of callbacks
+    private val currentSentenceIndex = AtomicInteger(0)
+    private val queuedUtterances = ConcurrentHashMap<String, Int>()
+    private var highestQueuedIndex = -1
+    private var isPlaying = false
+    private var isPausedByUser = false
+
     private val _playbackState = MutableStateFlow(TTSPlaybackState())
     val playbackState: StateFlow<TTSPlaybackState> = _playbackState.asStateFlow()
 
-    // Events for segment changes and completion - using SharedFlow
     private val _segmentChangedEvent = MutableSharedFlow<Int>(extraBufferCapacity = 64)
     val segmentChangedEvent: SharedFlow<Int> = _segmentChangedEvent.asSharedFlow()
 
     private val _playbackCompleteEvent = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
     val playbackCompleteEvent: SharedFlow<Unit> = _playbackCompleteEvent.asSharedFlow()
 
-    // Phone state listener for API < 31
     @Suppress("DEPRECATION")
     private var phoneStateListener: PhoneStateListener? = null
 
-    // Telephony callback for API >= 31
     @RequiresApi(Build.VERSION_CODES.S)
     private var telephonyCallback: TelephonyCallback? = null
 
-    // Broadcast receivers
     private var actionReceiver: BroadcastReceiver? = null
     private var headphoneReceiver: BroadcastReceiver? = null
     private var bluetoothReceiver: BroadcastReceiver? = null
 
-    //endregion
-
-    //region Binder
+    private data class PendingPlayRequest(
+        val content: TTSContent,
+        val startIndex: Int,
+        val cover: Bitmap?
+    )
 
     inner class TTSBinder : Binder() {
         fun getService(): TTSService = this@TTSService
-
         fun isPlaying(): Boolean = _playbackState.value.isPlaying
-
         fun setSleepTimer(minutes: Int) = handleSetSleepTimer(minutes)
-
         fun cancelSleepTimer() = handleCancelSleepTimer()
-
         fun getSleepTimerRemaining(): Int? {
             val state = _serviceState.value
             return if (state is ServiceState.SleepTimerActive) state.remainingMinutes else null
         }
     }
 
-    //endregion
-
-    //region Lifecycle
-
     override fun onCreate() {
         super.onCreate()
         _isRunning.set(true)
 
         audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
-
         tts = TextToSpeech(this, this)
 
         registerActionReceiver()
@@ -224,7 +202,7 @@ class TTSService : Service(), TextToSpeech.OnInitListener {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
-            ACTION_START -> { /* Service started, waiting for content */ }
+            ACTION_START -> { }
             ACTION_STOP -> handleStop()
             ACTION_SET_SLEEP_TIMER -> {
                 val minutes = intent.getIntExtra(EXTRA_SLEEP_TIMER_MINUTES, 0)
@@ -250,30 +228,28 @@ class TTSService : Service(), TextToSpeech.OnInitListener {
         super.onTaskRemoved(rootIntent)
     }
 
-    //endregion
-
-    //region TTS Initialization
-
     override fun onInit(status: Int) {
         if (status == TextToSpeech.SUCCESS) {
             val result = tts?.setLanguage(Locale.US)
-
             if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
                 tts?.setLanguage(Locale.getDefault())
             }
 
             tts?.setSpeechRate(speechRate)
+            tts?.setPitch(pitch)
 
-            // Apply saved voice preference
-            applySavedVoice()
+            // Only apply saved voice if not using system voice
+            if (!useSystemVoice) {
+                applySavedVoice()
+            }
 
             setupUtteranceListener()
 
             ttsInitialized = true
 
-            if (pendingPlay) {
-                pendingPlay = false
-                speakCurrentSegment()
+            pendingPlayRequest?.let { request ->
+                startPlaybackInternal(request.content, request.startIndex, request.cover)
+                pendingPlayRequest = null
             }
         } else {
             _playbackState.value = _playbackState.value.copy(
@@ -282,7 +258,10 @@ class TTSService : Service(), TextToSpeech.OnInitListener {
             _serviceState.value = ServiceState.Error("TTS initialization failed")
         }
     }
+
     private fun applySavedVoice() {
+        if (useSystemVoice) return // Don't apply if using system voice
+
         val selectedVoice = VoiceManager.selectedVoice.value
         if (selectedVoice != null) {
             val voice = tts?.voices?.find { it.name == selectedVoice.id }
@@ -292,51 +271,471 @@ class TTSService : Service(), TextToSpeech.OnInitListener {
         }
     }
 
-    // a method to change voice while playing:
+    /**
+     * Set whether to use system default voice or app-selected voice
+     */
+    fun setUseSystemVoice(useSystem: Boolean) {
+        useSystemVoice = useSystem
+
+        if (useSystem) {
+            // Reset to system default voice by setting language (which uses default voice)
+            tts?.let { engine ->
+                val currentLocale = engine.voice?.locale ?: Locale.getDefault()
+                engine.setLanguage(currentLocale)
+            }
+        } else {
+            // Apply the saved voice from VoiceManager
+            applySavedVoice()
+        }
+
+        // If playing, restart from current position to apply voice change
+        if (isPlaying && !isPausedByUser) {
+            val currentIndex = currentSentenceIndex.get()
+            queueSentences(currentIndex, clearExisting = true)
+        }
+    }
+
+    fun isUsingSystemVoice(): Boolean = useSystemVoice
+
     fun setVoice(voiceId: String): Boolean {
+        if (useSystemVoice) return false // Don't change voice if using system voice
+
         val voice = tts?.voices?.find { it.name == voiceId }
         if (voice != null) {
             tts?.voice = voice
+
+            // If playing, restart from current position to apply new voice
+            if (isPlaying && !isPausedByUser) {
+                val currentIndex = currentSentenceIndex.get()
+                queueSentences(currentIndex, clearExisting = true)
+            }
             return true
         }
         return false
     }
 
+    fun setSpeechRate(rate: Float) {
+        speechRate = rate.coerceIn(0.5f, 3.0f)
+        tts?.setSpeechRate(speechRate)
+        _playbackState.value = _playbackState.value.copy(speechRate = speechRate)
+
+        TTSNotifications.updateSpeechRate(speechRate)
+        updateNotification()
+    }
+
+    fun getSpeechRate(): Float = speechRate
+
+    fun setPitch(pitchValue: Float) {
+        pitch = pitchValue.coerceIn(0.5f, 2.0f)
+        tts?.setPitch(pitch)
+
+        // If playing, restart from current position to apply new pitch
+        if (isPlaying && !isPausedByUser) {
+            val currentIndex = currentSentenceIndex.get()
+            queueSentences(currentIndex, clearExisting = true)
+        }
+    }
+
+    fun getPitch(): Float = pitch
 
     private fun setupUtteranceListener() {
         tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+
             override fun onStart(utteranceId: String?) {
-                // Utterance started
+                val sentenceIndex = extractSentenceIndex(utteranceId) ?: return
+
+                serviceScope.launch(Dispatchers.Main) {
+                    currentSentenceIndex.set(sentenceIndex)
+                    updatePlaybackStateForSentence(sentenceIndex)
+                    _segmentChangedEvent.emit(sentenceIndex)
+                }
             }
 
             override fun onDone(utteranceId: String?) {
+                val completedIndex = extractSentenceIndex(utteranceId) ?: return
+
                 serviceScope.launch(Dispatchers.Main) {
-                    onUtteranceComplete()
+                    onUtteranceComplete(completedIndex)
                 }
             }
 
             @Deprecated("Deprecated in Java")
             override fun onError(utteranceId: String?) {
+                val index = extractSentenceIndex(utteranceId) ?: return
                 serviceScope.launch(Dispatchers.Main) {
-                    onUtteranceComplete()
+                    onUtteranceComplete(index)
                 }
             }
 
             override fun onError(utteranceId: String?, errorCode: Int) {
+                val index = extractSentenceIndex(utteranceId) ?: return
                 serviceScope.launch(Dispatchers.Main) {
-                    handleTTSError(errorCode)
+                    handleTTSError(errorCode, index)
                 }
             }
 
+            override fun onStop(utteranceId: String?, interrupted: Boolean) {
+                utteranceId?.let { queuedUtterances.remove(it) }
+            }
+
             override fun onRangeStart(utteranceId: String?, start: Int, end: Int, frame: Int) {
-                // Could be used for word highlighting
             }
         })
     }
 
-    //endregion
+    private fun extractSentenceIndex(utteranceId: String?): Int? {
+        return utteranceId?.removePrefix("s_")?.toIntOrNull()
+    }
 
-    //region Broadcast Receivers
+    private fun onUtteranceComplete(completedIndex: Int) {
+        val utteranceId = "s_$completedIndex"
+        queuedUtterances.remove(utteranceId)
+
+        val content = currentContent ?: return
+
+        if (completedIndex >= content.totalSegments - 1) {
+            onPlaybackComplete()
+            return
+        }
+
+        val queueSize = queuedUtterances.size
+        if (queueSize < MIN_QUEUE_THRESHOLD && isPlaying && !isPausedByUser) {
+            refillQueue()
+        }
+    }
+
+    private fun handleTTSError(errorCode: Int, sentenceIndex: Int) {
+        val errorMessage = when (errorCode) {
+            TextToSpeech.ERROR_SYNTHESIS -> "Synthesis error"
+            TextToSpeech.ERROR_SERVICE -> "TTS service error"
+            TextToSpeech.ERROR_OUTPUT -> "Output error"
+            TextToSpeech.ERROR_NETWORK -> "Network error"
+            TextToSpeech.ERROR_NETWORK_TIMEOUT -> "Network timeout"
+            TextToSpeech.ERROR_INVALID_REQUEST -> "Invalid request"
+            TextToSpeech.ERROR_NOT_INSTALLED_YET -> "TTS not installed"
+            else -> "Unknown TTS error"
+        }
+
+        _playbackState.value = _playbackState.value.copy(error = errorMessage)
+        onUtteranceComplete(sentenceIndex)
+    }
+
+    private fun queueSentences(fromIndex: Int, clearExisting: Boolean = true) {
+        val content = currentContent ?: return
+        val engine = tts ?: return
+
+        if (clearExisting) {
+            engine.stop()
+            queuedUtterances.clear()
+            highestQueuedIndex = fromIndex - 1
+        }
+
+        val endIndex = (fromIndex + QUEUE_AHEAD_COUNT).coerceAtMost(content.totalSegments)
+
+        for (i in fromIndex until endIndex) {
+            if (i <= highestQueuedIndex) continue
+            queueSentence(i, isFirst = (i == fromIndex && clearExisting))
+        }
+    }
+
+    private fun queueSentence(index: Int, isFirst: Boolean = false): Boolean {
+        val content = currentContent ?: return false
+        val engine = tts ?: return false
+
+        if (index >= content.totalSegments) return false
+
+        val segment = content.getSegment(index) ?: return false
+        val text = segment.text
+        val cleanText = cleanTextForSpeech(text)
+
+        if (cleanText.isBlank()) {
+            return queueSentence(index + 1, isFirst)
+        }
+
+        val utteranceId = "s_$index"
+        val mode = if (isFirst) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD
+
+        val params = Bundle().apply {
+            putString(TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID, utteranceId)
+        }
+
+        val result = engine.speak(cleanText, mode, params, utteranceId)
+
+        if (result == TextToSpeech.SUCCESS) {
+            queuedUtterances[utteranceId] = index
+            highestQueuedIndex = maxOf(highestQueuedIndex, index)
+
+            // Enqueue a silent utterance to represent the parser-provided pause
+            val pauseMs = segment.pauseAfterMs.coerceAtLeast(0)
+            if (pauseMs > 0) {
+                // Use a separate utterance id for pauses (ignored by index extraction)
+                val pauseId = "p_$index"
+                engine.playSilentUtterance(pauseMs.toLong(), TextToSpeech.QUEUE_ADD, pauseId)
+            }
+
+            return true
+        }
+
+        return false
+    }
+
+    private fun refillQueue() {
+        val content = currentContent ?: return
+
+        val nextToQueue = highestQueuedIndex + 1
+        if (nextToQueue >= content.totalSegments) return
+
+        val currentQueueSize = queuedUtterances.size
+        val toQueue = QUEUE_AHEAD_COUNT - currentQueueSize
+
+        for (i in 0 until toQueue) {
+            val index = nextToQueue + i
+            if (index >= content.totalSegments) break
+            queueSentence(index, isFirst = false)
+        }
+    }
+
+    fun startPlayback(content: TTSContent, startIndex: Int = 0, cover: Bitmap? = null) {
+        if (content.segments.isEmpty()) return
+
+        if (!ttsInitialized) {
+            pendingPlayRequest = PendingPlayRequest(content, startIndex, cover)
+            return
+        }
+
+        startPlaybackInternal(content, startIndex, cover)
+    }
+
+    private fun startPlaybackInternal(content: TTSContent, startIndex: Int, cover: Bitmap?) {
+        currentContent = content
+        coverBitmap = cover
+
+        val validStartIndex = startIndex.coerceIn(0, content.totalSegments - 1)
+        currentSentenceIndex.set(validStartIndex)
+
+        _playbackState.value = TTSPlaybackState(
+            isActive = true,
+            isPlaying = true,
+            isPaused = false,
+            novelName = content.novelName,
+            chapterName = content.chapterName,
+            currentSegmentIndex = validStartIndex,
+            totalSegments = content.totalSegments,
+            currentText = content.getSegment(validStartIndex)?.text ?: "",
+            speechRate = speechRate
+        )
+
+        if (!requestAudioFocus()) {
+            _playbackState.value = _playbackState.value.copy(
+                error = "Could not obtain audio focus"
+            )
+            return
+        }
+
+        acquireWakeLock()
+        isPlaying = true
+        isPausedByUser = false
+
+        // Apply current settings
+        tts?.setSpeechRate(speechRate)
+        tts?.setPitch(pitch)
+
+        TTSNotifications.updateSpeechRate(speechRate)
+
+        val currentServiceState = _serviceState.value
+        if (currentServiceState is ServiceState.SleepTimerActive) {
+            TTSNotifications.updateSleepTimer(currentServiceState.remainingMinutes)
+        } else {
+            TTSNotifications.updateSleepTimer(null)
+        }
+
+        TTSNotifications.initializeMediaSession(this, content, this)
+        startForegroundWithNotification()
+        _serviceState.value = ServiceState.Running
+
+        queueSentences(validStartIndex, clearExisting = true)
+    }
+
+    fun updateContent(content: TTSContent, keepSegmentIndex: Boolean = false) {
+        currentContent = content
+
+        val newIndex = if (keepSegmentIndex) {
+            currentSentenceIndex.get().coerceIn(0, content.totalSegments - 1)
+        } else {
+            0
+        }
+        currentSentenceIndex.set(newIndex)
+
+        _playbackState.value = _playbackState.value.copy(
+            novelName = content.novelName,
+            chapterName = content.chapterName,
+            totalSegments = content.totalSegments,
+            currentSegmentIndex = newIndex,
+            currentText = content.getSegment(newIndex)?.text ?: ""
+        )
+
+        TTSNotifications.updateMetadata(content, coverBitmap)
+        updateNotification()
+
+        if (isPlaying && !isPausedByUser) {
+            queueSentences(newIndex, clearExisting = true)
+        }
+    }
+
+    fun togglePlayPause() {
+        if (_playbackState.value.isPlaying) {
+            pause()
+        } else {
+            resume()
+        }
+    }
+
+    fun resume() {
+        if (!_playbackState.value.isActive) return
+        if (_playbackState.value.isPlaying) return
+        if (!requestAudioFocus()) return
+
+        isPausedByUser = false
+        isPlaying = true
+
+        _playbackState.value = _playbackState.value.copy(
+            isPlaying = true,
+            isPaused = false
+        )
+
+        _serviceState.value = if (sleepTimerJob?.isActive == true) {
+            _serviceState.value
+        } else {
+            ServiceState.Running
+        }
+
+        acquireWakeLock()
+        updateNotification()
+
+        queueSentences(currentSentenceIndex.get(), clearExisting = true)
+    }
+
+    fun pause() {
+        isPausedByUser = true
+        isPlaying = false
+
+        tts?.stop()
+        queuedUtterances.clear()
+
+        _playbackState.value = _playbackState.value.copy(
+            isPlaying = false,
+            isPaused = true
+        )
+
+        _serviceState.value = ServiceState.Paused
+
+        releaseWakeLock()
+        updateNotification()
+    }
+
+    fun stop() {
+        handleStop()
+    }
+
+    private fun handleStop() {
+        isPlaying = false
+        isPausedByUser = false
+
+        tts?.stop()
+        queuedUtterances.clear()
+
+        abandonAudioFocus()
+        releaseWakeLock()
+
+        sleepTimerJob?.cancel()
+        sleepTimerJob = null
+
+        _playbackState.value = TTSPlaybackState()
+        _serviceState.value = ServiceState.Stopped
+
+        currentContent = null
+        currentSentenceIndex.set(0)
+        highestQueuedIndex = -1
+
+        serviceScope.launch {
+            _playbackCompleteEvent.emit(Unit)
+        }
+
+        TTSNotifications.cancelNotification(this)
+        TTSNotifications.releaseMediaSession()
+
+        stopForegroundCompat()
+        stopSelf()
+    }
+
+    fun next() {
+        val content = currentContent ?: return
+        val current = currentSentenceIndex.get()
+
+        if (current < content.totalSegments - 1) {
+            seekToSegment(current + 1)
+        }
+    }
+
+    fun previous() {
+        val current = currentSentenceIndex.get()
+        if (current > 0) {
+            seekToSegment(current - 1)
+        }
+    }
+
+    fun seekToSegment(index: Int) {
+        val content = currentContent ?: return
+
+        if (index !in 0 until content.totalSegments) return
+
+        currentSentenceIndex.set(index)
+        updatePlaybackStateForSentence(index)
+
+        serviceScope.launch {
+            _segmentChangedEvent.emit(index)
+        }
+
+        if (isPlaying && !isPausedByUser) {
+            queueSentences(index, clearExisting = true)
+        }
+    }
+
+    private fun updatePlaybackStateForSentence(index: Int) {
+        val content = currentContent ?: return
+
+        _playbackState.value = _playbackState.value.copy(
+            currentSegmentIndex = index,
+            currentText = content.getSegment(index)?.text ?: ""
+        )
+
+        updateNotification()
+    }
+
+    private fun onPlaybackComplete() {
+        isPlaying = false
+
+        _playbackState.value = _playbackState.value.copy(
+            isPlaying = false,
+            isPaused = false
+        )
+
+        releaseWakeLock()
+        updateNotification()
+
+        serviceScope.launch {
+            _playbackCompleteEvent.emit(Unit)
+        }
+    }
+
+    private fun cleanTextForSpeech(text: String): String {
+        return text
+            .replace(Regex("<[^>]*>"), " ")
+            .replace(Regex("https?://\\S+"), "")
+            .replace(Regex("\\s+"), " ")
+            .replace(Regex("[*#@~`|]"), "")
+            .trim()
+    }
 
     private fun registerActionReceiver() {
         actionReceiver = object : BroadcastReceiver() {
@@ -476,9 +875,7 @@ class TTSService : Service(), TextToSpeech.OnInitListener {
             receiver?.let {
                 try {
                     unregisterReceiver(it)
-                } catch (e: Exception) {
-                    // Not registered
-                }
+                } catch (e: Exception) { }
             }
         }
         actionReceiver = null
@@ -502,10 +899,6 @@ class TTSService : Service(), TextToSpeech.OnInitListener {
             phoneStateListener = null
         }
     }
-
-    //endregion
-
-    //region Audio Focus
 
     private val audioFocusChangeListener = AudioManager.OnAudioFocusChangeListener { focusChange ->
         when (focusChange) {
@@ -569,10 +962,6 @@ class TTSService : Service(), TextToSpeech.OnInitListener {
         hasAudioFocus = false
     }
 
-    //endregion
-
-    //region Wake Lock
-
     @SuppressLint("WakelockTimeout")
     private fun acquireWakeLock() {
         if (wakeLock != null) return
@@ -592,10 +981,6 @@ class TTSService : Service(), TextToSpeech.OnInitListener {
         }
         wakeLock = null
     }
-
-    //endregion
-
-    //region Sleep Timer
 
     private fun handleSetSleepTimer(minutes: Int) {
         if (minutes <= 0) {
@@ -636,315 +1021,6 @@ class TTSService : Service(), TextToSpeech.OnInitListener {
             updateNotification()
         }
     }
-
-    //endregion
-
-    //region Playback Control
-
-    fun startPlayback(content: TTSContent, startIndex: Int = 0, cover: Bitmap? = null) {
-        currentContent = content
-        currentSegmentIndex = startIndex.coerceIn(0, content.totalSegments - 1)
-        coverBitmap = cover
-
-        _playbackState.value = TTSPlaybackState(
-            isActive = true,
-            isPlaying = true,
-            isPaused = false,
-            novelName = content.novelName,
-            chapterName = content.chapterName,
-            currentSegmentIndex = currentSegmentIndex,
-            totalSegments = content.totalSegments,
-            currentText = content.getSegment(currentSegmentIndex) ?: "",
-            speechRate = speechRate
-        )
-
-        if (!requestAudioFocus()) {
-            _playbackState.value = _playbackState.value.copy(
-                error = "Could not obtain audio focus"
-            )
-            return
-        }
-
-        acquireWakeLock()
-
-        TTSNotifications.updateSpeechRate(speechRate)
-
-        val currentServiceState = _serviceState.value
-        if (currentServiceState is ServiceState.SleepTimerActive) {
-            TTSNotifications.updateSleepTimer(currentServiceState.remainingMinutes)
-        } else {
-            TTSNotifications.updateSleepTimer(null)
-        }
-
-        TTSNotifications.initializeMediaSession(this, content, this)
-
-        startForegroundWithNotification()
-
-        _serviceState.value = ServiceState.Running
-
-        if (ttsInitialized) {
-            speakCurrentSegment()
-        } else {
-            pendingPlay = true
-        }
-    }
-
-    fun updateContent(content: TTSContent, keepSegmentIndex: Boolean = false) {
-        currentContent = content
-
-        if (!keepSegmentIndex) {
-            currentSegmentIndex = 0
-        } else {
-            currentSegmentIndex = currentSegmentIndex.coerceIn(0, content.totalSegments - 1)
-        }
-
-        _playbackState.value = _playbackState.value.copy(
-            novelName = content.novelName,
-            chapterName = content.chapterName,
-            totalSegments = content.totalSegments,
-            currentSegmentIndex = currentSegmentIndex,
-            currentText = content.getSegment(currentSegmentIndex) ?: ""
-        )
-
-        TTSNotifications.updateMetadata(content, coverBitmap)
-        updateNotification()
-    }
-
-    fun togglePlayPause() {
-        if (_playbackState.value.isPlaying) {
-            pause()
-        } else {
-            resume()
-        }
-    }
-
-    fun resume() {
-        if (!_playbackState.value.isActive) return
-        if (_playbackState.value.isPlaying) return
-
-        if (!requestAudioFocus()) return
-
-        _playbackState.value = _playbackState.value.copy(
-            isPlaying = true,
-            isPaused = false
-        )
-
-        _serviceState.value = if (sleepTimerJob?.isActive == true) {
-            _serviceState.value
-        } else {
-            ServiceState.Running
-        }
-
-        acquireWakeLock()
-        updateNotification()
-        speakCurrentSegment()
-    }
-
-    fun pause() {
-        tts?.stop()
-
-        _playbackState.value = _playbackState.value.copy(
-            isPlaying = false,
-            isPaused = true
-        )
-
-        _serviceState.value = ServiceState.Paused
-
-        releaseWakeLock()
-        updateNotification()
-    }
-
-    fun stop() {
-        handleStop()
-    }
-
-    private fun handleStop() {
-        tts?.stop()
-        abandonAudioFocus()
-        releaseWakeLock()
-
-        sleepTimerJob?.cancel()
-        sleepTimerJob = null
-
-        _playbackState.value = TTSPlaybackState()
-        _serviceState.value = ServiceState.Stopped
-
-        currentContent = null
-        currentSegmentIndex = 0
-
-        // Emit completion event
-        serviceScope.launch {
-            _playbackCompleteEvent.emit(Unit)
-        }
-
-        TTSNotifications.cancelNotification(this)
-        TTSNotifications.releaseMediaSession()
-
-        stopForegroundCompat()
-        stopSelf()
-    }
-
-    fun next() {
-        val content = currentContent ?: return
-
-        if (currentSegmentIndex < content.totalSegments - 1) {
-            tts?.stop()
-            currentSegmentIndex++
-            updateSegmentState()
-            emitSegmentChanged()
-
-            if (_playbackState.value.isPlaying) {
-                speakCurrentSegment()
-            }
-        }
-    }
-
-    fun previous() {
-        if (currentSegmentIndex > 0) {
-            tts?.stop()
-            currentSegmentIndex--
-            updateSegmentState()
-            emitSegmentChanged()
-
-            if (_playbackState.value.isPlaying) {
-                speakCurrentSegment()
-            }
-        }
-    }
-
-    fun seekToSegment(index: Int) {
-        val content = currentContent ?: return
-
-        if (index in 0 until content.totalSegments) {
-            tts?.stop()
-            currentSegmentIndex = index
-            updateSegmentState()
-            emitSegmentChanged()
-
-            if (_playbackState.value.isPlaying) {
-                speakCurrentSegment()
-            }
-        }
-    }
-
-    fun setSpeechRate(rate: Float) {
-        speechRate = rate.coerceIn(0.5f, 2.0f)
-        tts?.setSpeechRate(speechRate)
-        _playbackState.value = _playbackState.value.copy(speechRate = speechRate)
-
-        TTSNotifications.updateSpeechRate(speechRate)
-        updateNotification()
-    }
-
-    fun getSpeechRate(): Float = speechRate
-
-    //endregion
-
-    //region Private Helpers
-
-    private fun speakCurrentSegment() {
-        val content = currentContent ?: return
-        val text = content.getSegment(currentSegmentIndex)
-
-        if (text.isNullOrBlank()) {
-            onUtteranceComplete()
-            return
-        }
-
-        val cleanText = cleanTextForSpeech(text)
-
-        if (cleanText.isBlank()) {
-            onUtteranceComplete()
-            return
-        }
-
-        val params = Bundle().apply {
-            putString(TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID, "segment_$currentSegmentIndex")
-        }
-
-        tts?.speak(cleanText, TextToSpeech.QUEUE_FLUSH, params, "segment_$currentSegmentIndex")
-
-        TTSNotifications.updatePlaybackState(
-            TTSStatus.PLAYING,
-            currentSegmentIndex,
-            content.totalSegments
-        )
-    }
-
-    private fun onUtteranceComplete() {
-        val content = currentContent ?: return
-
-        if (currentSegmentIndex < content.totalSegments - 1) {
-            currentSegmentIndex++
-            updateSegmentState()
-            emitSegmentChanged()
-            speakCurrentSegment()
-        } else {
-            // Reached end
-            _playbackState.value = _playbackState.value.copy(
-                isPlaying = false,
-                isPaused = false
-            )
-
-            releaseWakeLock()
-            updateNotification()
-
-            // Emit completion event
-            serviceScope.launch {
-                _playbackCompleteEvent.emit(Unit)
-            }
-        }
-    }
-
-    /**
-     * Emit segment changed event via SharedFlow
-     */
-    private fun emitSegmentChanged() {
-        serviceScope.launch {
-            _segmentChangedEvent.emit(currentSegmentIndex)
-        }
-    }
-
-    private fun handleTTSError(errorCode: Int) {
-        val errorMessage = when (errorCode) {
-            TextToSpeech.ERROR_SYNTHESIS -> "Synthesis error"
-            TextToSpeech.ERROR_SERVICE -> "TTS service error"
-            TextToSpeech.ERROR_OUTPUT -> "Output error"
-            TextToSpeech.ERROR_NETWORK -> "Network error"
-            TextToSpeech.ERROR_NETWORK_TIMEOUT -> "Network timeout"
-            TextToSpeech.ERROR_INVALID_REQUEST -> "Invalid request"
-            TextToSpeech.ERROR_NOT_INSTALLED_YET -> "TTS not installed"
-            else -> "Unknown TTS error"
-        }
-
-        _playbackState.value = _playbackState.value.copy(error = errorMessage)
-
-        onUtteranceComplete()
-    }
-
-    private fun updateSegmentState() {
-        val content = currentContent ?: return
-
-        _playbackState.value = _playbackState.value.copy(
-            currentSegmentIndex = currentSegmentIndex,
-            currentText = content.getSegment(currentSegmentIndex) ?: ""
-        )
-
-        updateNotification()
-    }
-
-    private fun cleanTextForSpeech(text: String): String {
-        return text
-            .replace(Regex("<[^>]*>"), " ")
-            .replace(Regex("https?://\\S+"), "")
-            .replace(Regex("\\s+"), " ")
-            .replace(Regex("[*#@~`|]"), "")
-            .trim()
-    }
-
-    //endregion
-
-    //region Notifications
 
     private fun startForegroundWithNotification() {
         val content = currentContent ?: return
@@ -999,10 +1075,6 @@ class TTSService : Service(), TextToSpeech.OnInitListener {
         }
     }
 
-    //endregion
-
-    //region Cleanup
-
     private fun cleanup() {
         _isRunning.set(false)
         _serviceState.value = ServiceState.Stopped
@@ -1020,9 +1092,9 @@ class TTSService : Service(), TextToSpeech.OnInitListener {
         tts?.shutdown()
         tts = null
 
+        queuedUtterances.clear()
+
         TTSNotifications.releaseMediaSession()
         TTSNotifications.cancelNotification(this)
     }
-
-    //endregion
 }

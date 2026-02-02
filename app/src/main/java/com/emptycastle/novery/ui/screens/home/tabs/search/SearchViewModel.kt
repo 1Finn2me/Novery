@@ -14,10 +14,12 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import com.emptycastle.novery.provider.MainProvider
 
 class SearchViewModel : ViewModel() {
 
     private val novelRepository = RepositoryProvider.getNovelRepository()
+    private val preferencesManager = RepositoryProvider.getPreferencesManager()
 
     private val _uiState = MutableStateFlow(SearchUiState())
     val uiState: StateFlow<SearchUiState> = _uiState.asStateFlow()
@@ -27,9 +29,23 @@ class SearchViewModel : ViewModel() {
     val actionSheetState: StateFlow<ActionSheetState> = actionSheetManager.state
 
     init {
+        // Initial provider list + live updates when preferences or registry changes
         viewModelScope.launch {
-            val providers = novelRepository.getProviders().map { it.name }
-            _uiState.update { it.copy(providers = providers) }
+            // Update on preferences change
+            launch {
+                preferencesManager.appSettings.collect {
+                    val providers = novelRepository.getProviders().map { it.name }
+                    _uiState.update { it.copy(providers = providers) }
+                }
+            }
+
+            // Update when providers are registered/unregistered
+            launch {
+                MainProvider.providersState().collect {
+                    val providers = novelRepository.getProviders().map { it.name }
+                    _uiState.update { it.copy(providers = providers) }
+                }
+            }
         }
     }
 

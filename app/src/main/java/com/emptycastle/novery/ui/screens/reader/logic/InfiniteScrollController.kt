@@ -60,8 +60,9 @@ class InfiniteScrollController(
             val nextToLoad = maxLoadedIndex + 1
 
             if (nextToLoad < totalChapters && nextToLoad !in loadedChapterIndices) {
+                // Use the current visible chapter index for unload calculations to avoid removing chapters the user is currently viewing
                 val chaptersToUnload = calculateChaptersToUnload(
-                    currentChapterIndex = nextToLoad,
+                    currentChapterIndex = lastVisibleChapterIndex,
                     loadedChapterIndices = loadedChapterIndices
                 )
 
@@ -92,8 +93,9 @@ class InfiniteScrollController(
             val prevToLoad = minLoadedIndex - 1
 
             if (prevToLoad >= 0 && prevToLoad !in loadedChapterIndices) {
+                // Use the current visible chapter index for unload calculations to avoid removing chapters the user is currently viewing
                 val chaptersToUnload = calculateChaptersToUnload(
-                    currentChapterIndex = prevToLoad,
+                    currentChapterIndex = firstVisibleChapterIndex,
                     loadedChapterIndices = loadedChapterIndices
                 )
 

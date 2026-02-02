@@ -71,15 +71,40 @@ data class TargetScrollPosition(
 // LOADED CHAPTER
 // =============================================================================
 
+/**
+ * Represents a loaded chapter with its content.
+ * Content items are stored in their original HTML order.
+ */
 data class LoadedChapter(
     val chapter: Chapter,
     val chapterIndex: Int,
-    val segments: List<ContentSegment>,
+    val contentItems: List<ChapterContentItem> = emptyList(), // Ordered content (text + images)
     val isLoading: Boolean = false,
-    val error: String? = null,
     val isFromCache: Boolean = false,
-    val wordCount: Int = 0
+    val error: String? = null
 ) {
+    /**
+     * Get only text segments (for TTS and word count)
+     */
+    val segments: List<ContentSegment>
+        get() = contentItems
+            .filterIsInstance<ChapterContentItem.Text>()
+            .map { it.segment }
+
+    /**
+     * Get only images
+     */
+    val images: List<ContentImage>
+        get() = contentItems
+            .filterIsInstance<ChapterContentItem.Image>()
+            .map { it.image }
+
+    /**
+     * Total content item count (text + images)
+     */
+    val contentCount: Int
+        get() = contentItems.size
+
     val totalSentences: Int get() = segments.sumOf { it.sentenceCount }
 
     val displayItemCount: Int get() = when {
@@ -114,9 +139,9 @@ data class TTSSettingsState(
     val voiceId: String? = null,
     val autoScroll: Boolean = true,
     val highlightSentence: Boolean = true,
-    val pauseOnCalls: Boolean = true
+    val pauseOnCalls: Boolean = true,
+    val useSystemVoice: Boolean = false
 )
-
 // =============================================================================
 // MAIN UI STATE
 // =============================================================================
@@ -124,6 +149,7 @@ data class TTSSettingsState(
 data class ReaderUiState(
     // Loading & Error
     val isLoading: Boolean = true,
+    val isContentReady: Boolean = false,  // NEW: Indicates content is fully ready to display
     val error: String? = null,
 
     // Chapters
@@ -138,6 +164,13 @@ data class ReaderUiState(
     val currentChapterName: String = "",
     val previousChapter: Chapter? = null,
     val nextChapter: Chapter? = null,
+
+    // Chapter progress tracking
+    val currentChapterWordCount: Int = 0,
+    val currentChapterSegmentCount: Int = 0,
+    val currentChapterFirstSegmentIndex: Int = 0,
+    val currentChapterLastSegmentIndex: Int = 0,
+    val pendingScrollReset: Boolean = false,
 
     // Scroll State
     val targetScrollPosition: TargetScrollPosition? = null,
@@ -175,6 +208,8 @@ data class ReaderUiState(
     // TTS State
     val isTTSActive: Boolean = false,
     val ttsStatus: TTSStatus = TTSStatus.STOPPED,
+    val currentSentenceInChapter: Int = 0,
+    val totalSentencesInChapter: Int = 0,
     val currentSegmentIndex: Int = -1,
     val currentTTSChapterIndex: Int = -1,
     val ttsPosition: TTSPosition = TTSPosition(),
@@ -183,7 +218,11 @@ data class ReaderUiState(
     val currentGlobalSentenceIndex: Int = 0,
     val ttsSettings: TTSSettingsState = TTSSettingsState()
 ) {
-    val savedScrollPosition: TargetScrollPosition? get() = targetScrollPosition
+    // Computed property to determine if we should show loading overlay
+    val shouldShowLoadingOverlay: Boolean
+        get() = isLoading || !isContentReady || pendingScrollReset
+
+val savedScrollPosition: TargetScrollPosition? get() = targetScrollPosition
 
     fun getAllSegments(): List<ReaderDisplayItem.Segment> {
         return displayItems.filterIsInstance<ReaderDisplayItem.Segment>()

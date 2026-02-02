@@ -3,6 +3,7 @@ package com.emptycastle.novery.ui.screens.reader
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.util.Log
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
@@ -16,8 +17,10 @@ import com.emptycastle.novery.domain.model.Novel
 import com.emptycastle.novery.domain.model.ReaderSettings
 import com.emptycastle.novery.domain.model.ReaderTheme
 import com.emptycastle.novery.domain.model.TextAlign
+import com.emptycastle.novery.domain.model.VolumeKeyDirection
 import com.emptycastle.novery.provider.MainProvider
 import com.emptycastle.novery.service.TTSContent
+import com.emptycastle.novery.service.TTSSegment
 import com.emptycastle.novery.service.TTSServiceManager
 import com.emptycastle.novery.service.TTSStatus
 import com.emptycastle.novery.tts.TTSManager
@@ -28,6 +31,7 @@ import com.emptycastle.novery.ui.screens.reader.logic.ChapterLoader
 import com.emptycastle.novery.ui.screens.reader.logic.InfiniteScrollController
 import com.emptycastle.novery.ui.screens.reader.logic.ProgressManager
 import com.emptycastle.novery.ui.screens.reader.logic.ScrollAction
+import com.emptycastle.novery.ui.screens.reader.model.ChapterContentItem
 import com.emptycastle.novery.ui.screens.reader.model.ContentSegment
 import com.emptycastle.novery.ui.screens.reader.model.ReaderDisplayItem
 import com.emptycastle.novery.ui.screens.reader.model.ReaderUiState
@@ -38,11 +42,16 @@ import com.emptycastle.novery.ui.screens.reader.model.TTSPosition
 import com.emptycastle.novery.ui.screens.reader.model.TTSSettingsState
 import com.emptycastle.novery.ui.screens.reader.model.TargetScrollPosition
 import com.emptycastle.novery.util.ReadingTimeTracker
+import com.emptycastle.novery.util.VolumeKeyEvent
+import com.emptycastle.novery.util.VolumeKeyManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -50,6 +59,8 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.net.URL
+
+private const val TAG = "ReaderViewModel"
 
 private suspend fun loadCoverBitmap(coverUrl: String?): Bitmap? {
     if (coverUrl.isNullOrBlank()) return null
@@ -77,7 +88,8 @@ private data class TTSSentenceInfo(
     val displayItemIndex: Int,
     val segmentIndexInChapter: Int,
     val sentenceIndexInSegment: Int,
-    val chapterIndex: Int
+    val chapterIndex: Int,
+    val pauseAfterMs: Int
 )
 
 // =============================================================================
@@ -123,6 +135,18 @@ class ReaderViewModel : ViewModel() {
 
     private var isInitialLoadComplete = false
 
+    // Flag to control scroll restoration behavior
+    private var shouldRestoreScrollPosition = true
+
+    // Load generation to prevent stale updates from affecting the UI
+    private var currentLoadGeneration = 0L
+
+    // Flag to completely block infinite scroll during initial load
+    private var blockInfiniteScrollUntilStable = true
+
+    // The chapter index that was explicitly requested by the user
+    private var requestedChapterIndex = -1
+
     // TTS
     private val ttsEngine by lazy { TTSManager.getEngine() }
     private var appContext: Context? = null
@@ -130,6 +154,10 @@ class ReaderViewModel : ViewModel() {
 
     // Reading time tracking
     private var readingTimeTracker: ReadingTimeTracker? = null
+
+    // Volume key navigation
+    private val _volumeScrollAction = MutableSharedFlow<Boolean>(extraBufferCapacity = 1)
+    val volumeScrollAction: SharedFlow<Boolean> = _volumeScrollAction.asSharedFlow()
 
     // =========================================================================
     // INITIALIZATION
@@ -143,12 +171,14 @@ class ReaderViewModel : ViewModel() {
         loadTTSSettings()
         observeSettings()
         observeTTSState()
+        observeVolumeKeys()
     }
 
     private fun observeSettings() {
         viewModelScope.launch {
             preferencesManager.readerSettings.collect { settings ->
                 _uiState.update { it.copy(settings = settings) }
+                VolumeKeyManager.setVolumeKeyNavigationEnabled(settings.volumeKeyNavigation)
             }
         }
 
@@ -188,6 +218,39 @@ class ReaderViewModel : ViewModel() {
                 clearTTSHighlight()
             }
         }
+    }
+
+    // =========================================================================
+    // VOLUME KEY NAVIGATION
+    // =========================================================================
+
+    private fun observeVolumeKeys() {
+        viewModelScope.launch {
+            VolumeKeyManager.volumeKeyEvents.collect { event ->
+                handleVolumeKeyEvent(event)
+            }
+        }
+    }
+
+    private fun handleVolumeKeyEvent(event: VolumeKeyEvent) {
+        val settings = _uiState.value.settings
+        if (!settings.volumeKeyNavigation) return
+
+        val goForward = when (settings.volumeKeyDirection) {
+            VolumeKeyDirection.NATURAL -> event == VolumeKeyEvent.VOLUME_DOWN
+            VolumeKeyDirection.INVERTED -> event == VolumeKeyEvent.VOLUME_UP
+        }
+
+        _volumeScrollAction.tryEmit(goForward)
+    }
+
+    fun onReaderEnter() {
+        VolumeKeyManager.setReaderActive(true)
+        VolumeKeyManager.setVolumeKeyNavigationEnabled(_uiState.value.settings.volumeKeyNavigation)
+    }
+
+    fun onReaderExit() {
+        VolumeKeyManager.setReaderActive(false)
     }
 
     // =========================================================================
@@ -258,9 +321,40 @@ class ReaderViewModel : ViewModel() {
             voiceId = preferencesManager.getTtsVoice(),
             autoScroll = preferencesManager.getTtsAutoScroll(),
             highlightSentence = preferencesManager.getTtsHighlightSentence(),
-            pauseOnCalls = preferencesManager.getTtsPauseOnCalls()
+            pauseOnCalls = preferencesManager.getTtsPauseOnCalls(),
+            useSystemVoice = preferencesManager.getTtsUseSystemVoice()
         )
         _uiState.update { it.copy(ttsSettings = settings) }
+    }
+
+    private fun calculateChapterTTSProgress(globalSentenceIndex: Int): Pair<Int, Int> {
+        if (ttsSentenceList.isEmpty() || globalSentenceIndex < 0) {
+            return Pair(0, 0)
+        }
+
+        val currentSentenceInfo = ttsSentenceList.getOrNull(globalSentenceIndex)
+            ?: return Pair(0, 0)
+
+        val currentChapter = currentSentenceInfo.chapterIndex
+
+        val chapterSentences = ttsSentenceList.filter { it.chapterIndex == currentChapter }
+        val totalInChapter = chapterSentences.size
+
+        val positionInChapter = chapterSentences.indexOfFirst {
+            it.displayItemIndex == currentSentenceInfo.displayItemIndex &&
+                    it.sentenceIndexInSegment == currentSentenceInfo.sentenceIndexInSegment
+        }
+
+        return Pair(
+            (positionInChapter + 1).coerceAtLeast(1),
+            totalInChapter
+        )
+    }
+
+    fun updateTTSUseSystemVoice(useSystem: Boolean) {
+        preferencesManager.setTtsUseSystemVoice(useSystem)
+        _uiState.update { it.copy(ttsSettings = it.ttsSettings.copy(useSystemVoice = useSystem)) }
+        TTSServiceManager.setUseSystemVoice(useSystem)
     }
 
     fun updateTTSSpeed(speed: Float) {
@@ -274,10 +368,12 @@ class ReaderViewModel : ViewModel() {
         val clampedPitch = pitch.coerceIn(0.5f, 2.0f)
         preferencesManager.setTtsPitch(clampedPitch)
         _uiState.update { it.copy(ttsSettings = it.ttsSettings.copy(pitch = clampedPitch)) }
+        TTSServiceManager.setPitch(clampedPitch)
     }
 
     fun updateTTSVoice(voice: VoiceInfo) {
         VoiceManager.selectVoice(voice.id)
+        TTSServiceManager.setVoice(voice.id)
         preferencesManager.setTtsVoice(voice.id)
         _uiState.update { it.copy(ttsSettings = it.ttsSettings.copy(voiceId = voice.id)) }
     }
@@ -309,6 +405,12 @@ class ReaderViewModel : ViewModel() {
         novelUrl: String,
         providerName: String
     ) {
+        // Increment load generation to invalidate any pending/stale operations
+        currentLoadGeneration++
+        val thisLoadGeneration = currentLoadGeneration
+
+        Log.d(TAG, "loadChapter called: url=$chapterUrl, generation=$thisLoadGeneration")
+
         currentNovelUrl = novelUrl
         currentProvider = novelRepository.getProvider(providerName)
 
@@ -320,34 +422,60 @@ class ReaderViewModel : ViewModel() {
         chapterLoader.configure(provider)
         stopTTS()
 
+        // Cancel any pending loads to prevent race conditions
+        preloadJob?.cancel()
+        savePositionJob?.cancel()
+
+        // Block infinite scroll until we're stable
+        blockInfiniteScrollUntilStable = true
         isInitialLoadComplete = false
         _scrollRestorationState.value = ScrollRestorationState()
 
+        // Immediately show loading state and clear old content
+        _uiState.update {
+            it.copy(
+                isLoading = true,
+                isContentReady = false,
+                pendingScrollReset = true,
+                error = null,
+                currentChapterUrl = chapterUrl,
+                loadedChapters = emptyMap(),
+                displayItems = emptyList(),
+                targetScrollPosition = null,
+                hasRestoredScroll = false,
+                currentScrollIndex = 0,
+                currentScrollOffset = 0,
+                currentSegmentIndex = -1,
+                isTTSActive = false,
+                ttsPosition = TTSPosition(),
+                currentSentenceHighlight = null
+            )
+        }
+
         viewModelScope.launch {
-            _uiState.update {
-                it.copy(
-                    isLoading = true,
-                    error = null,
-                    currentChapterUrl = chapterUrl,
-                    loadedChapters = emptyMap(),
-                    displayItems = emptyList(),
-                    targetScrollPosition = null,
-                    hasRestoredScroll = false,
-                    currentScrollIndex = 0,
-                    currentScrollOffset = 0,
-                    currentSegmentIndex = -1,
-                    isTTSActive = false,
-                    ttsPosition = TTSPosition(),
-                    currentSentenceHighlight = null
-                )
+            // Check if this load is still valid
+            if (currentLoadGeneration != thisLoadGeneration) {
+                Log.d(TAG, "Load generation mismatch, aborting: $thisLoadGeneration vs $currentLoadGeneration")
+                return@launch
             }
 
             val detailsResult = novelRepository.loadNovelDetails(provider, novelUrl)
+
+            // Check again after async operation
+            if (currentLoadGeneration != thisLoadGeneration) {
+                Log.d(TAG, "Load generation mismatch after details load, aborting")
+                return@launch
+            }
 
             detailsResult.onSuccess { details ->
                 val allChapters = details.chapters
                 val chapterIndex = allChapters.indexOfFirst { it.url == chapterUrl }
                     .takeIf { it >= 0 } ?: 0
+
+                Log.d(TAG, "Found chapter at index: $chapterIndex")
+
+                // Store the requested chapter index
+                requestedChapterIndex = chapterIndex
 
                 _uiState.update {
                     it.copy(
@@ -359,46 +487,113 @@ class ReaderViewModel : ViewModel() {
                     )
                 }
 
-                startInitialLoad(chapterIndex)
+                // Determine if we should restore scroll position
+                // Only restore if this is the same chapter as the last-read chapter
+                val existingReadingPos = libraryRepository.getReadingPosition(novelUrl)
+                shouldRestoreScrollPosition = existingReadingPos?.chapterUrl == chapterUrl
+
+                if (!shouldRestoreScrollPosition) {
+                    // Mark restoration as complete so we open at the start
+                    _scrollRestorationState.value = ScrollRestorationState(
+                        pendingPosition = null,
+                        isWaitingForChapter = false,
+                        restorationAttempts = 0,
+                        lastAttemptTime = 0,
+                        hasSuccessfullyRestored = true
+                    )
+                    _uiState.update {
+                        it.copy(
+                            // Set targetScrollPosition to 0 so UI knows where to scroll
+                            targetScrollPosition = TargetScrollPosition(displayIndex = 0, offsetPixels = 0)
+                        )
+                    }
+
+                    // Update library to reflect the new last-read chapter at start
+                    val requestedChapter = allChapters.getOrNull(chapterIndex)
+                    if (requestedChapter != null) {
+                        libraryRepository.updateReadingPosition(
+                            novelUrl = novelUrl,
+                            chapterUrl = requestedChapter.url,
+                            chapterName = requestedChapter.name,
+                            scrollIndex = 0,
+                            scrollOffset = 0
+                        )
+                    }
+                }
+
+                startInitialLoad(chapterIndex, thisLoadGeneration)
             }.onFailure { error ->
                 _uiState.update {
                     it.copy(
                         error = error.message ?: "Failed to load novel details",
-                        isLoading = false
+                        isLoading = false,
+                        isContentReady = true,
+                        pendingScrollReset = false
                     )
                 }
             }
         }
     }
 
-    private fun startInitialLoad(chapterIndex: Int) {
+    private fun startInitialLoad(chapterIndex: Int, loadGeneration: Long) {
         preloadJob?.cancel()
         preloadJob = viewModelScope.launch {
+            // Verify load generation is still current
+            if (currentLoadGeneration != loadGeneration) {
+                Log.d(TAG, "startInitialLoad: generation mismatch, aborting")
+                return@launch
+            }
+
             _uiState.update { it.copy(isPreloading = true) }
 
-            loadChapterContent(chapterIndex, isInitialLoad = true)
+            loadChapterContent(chapterIndex, isInitialLoad = true, loadGeneration = loadGeneration)
+
+            // Verify again after loading
+            if (currentLoadGeneration != loadGeneration) {
+                Log.d(TAG, "startInitialLoad: generation mismatch after content load, aborting")
+                return@launch
+            }
 
             val state = _uiState.value
 
-            if (state.infiniteScrollEnabled) {
-                // Wait for scroll restoration before preloading
-                awaitScrollRestoration()
+            // Wait for scroll restoration before showing content
+            awaitScrollRestoration()
 
-                // Preload adjacent chapters
-                val chaptersToPreload = infiniteScrollController.getChaptersToPreload(
-                    currentChapterIndex = chapterIndex,
-                    loadedChapterIndices = _uiState.value.loadedChapters.keys,
-                    totalChapters = state.allChapters.size,
-                    isEnabled = true
+            // Verify again
+            if (currentLoadGeneration != loadGeneration) {
+                return@launch
+            }
+
+            // Now content is ready to be shown
+            _uiState.update {
+                it.copy(
+                    isLoading = false,
+                    isContentReady = true
                 )
+            }
 
-                for (preloadIndex in chaptersToPreload) {
-                    loadChapterContent(preloadIndex, isInitialLoad = false)
+            // Preload next chapter in background if infinite scroll is enabled
+            if (state.infiniteScrollEnabled) {
+                val nextChapterIndex = chapterIndex + 1
+                if (nextChapterIndex < state.allChapters.size) {
+                    loadChapterContent(nextChapterIndex, isInitialLoad = false, loadGeneration = loadGeneration)
                 }
+            }
+
+            // Verify one more time
+            if (currentLoadGeneration != loadGeneration) {
+                return@launch
             }
 
             isInitialLoadComplete = true
             _uiState.update { it.copy(isPreloading = false) }
+
+            // Allow infinite scroll after a short delay to let the UI stabilize
+            delay(300)
+            if (currentLoadGeneration == loadGeneration) {
+                blockInfiniteScrollUntilStable = false
+                Log.d(TAG, "Infinite scroll enabled, generation: $loadGeneration")
+            }
         }
     }
 
@@ -413,9 +608,16 @@ class ReaderViewModel : ViewModel() {
 
     private suspend fun loadChapterContent(
         chapterIndex: Int,
-        isInitialLoad: Boolean = false
+        isInitialLoad: Boolean = false,
+        loadGeneration: Long = currentLoadGeneration
     ) {
         loadingMutex.withLock {
+            // Verify load generation
+            if (currentLoadGeneration != loadGeneration) {
+                Log.d(TAG, "loadChapterContent: generation mismatch, aborting chapter $chapterIndex")
+                return
+            }
+
             val state = _uiState.value
             val allChapters = state.allChapters
 
@@ -423,6 +625,8 @@ class ReaderViewModel : ViewModel() {
             if (state.loadedChapters.containsKey(chapterIndex)) return
 
             val chapter = allChapters[chapterIndex]
+
+            Log.d(TAG, "Loading chapter content: index=$chapterIndex, name=${chapter.name}")
 
             val isBeforeCurrentChapter = chapterIndex < state.currentChapterIndex
             val itemCountBefore = state.displayItems.size
@@ -437,10 +641,15 @@ class ReaderViewModel : ViewModel() {
             // Load the actual content
             when (val result = chapterLoader.loadChapter(chapter, chapterIndex)) {
                 is ChapterLoadResult.Success -> {
+                    // Verify generation again after network call
+                    if (currentLoadGeneration != loadGeneration) {
+                        Log.d(TAG, "loadChapterContent: generation mismatch after load, aborting")
+                        return
+                    }
+
                     _uiState.update {
                         it.copy(
                             loadedChapters = it.loadedChapters + (chapterIndex to result.loadedChapter),
-                            isLoading = if (chapterIndex == it.initialChapterIndex) false else it.isLoading,
                             currentChapterName = if (chapterIndex == it.currentChapterIndex) chapter.name else it.currentChapterName,
                             isOfflineMode = result.loadedChapter.isFromCache && it.isOfflineMode
                         )
@@ -466,17 +675,31 @@ class ReaderViewModel : ViewModel() {
                 }
 
                 is ChapterLoadResult.Error -> {
+                    if (currentLoadGeneration != loadGeneration) {
+                        return
+                    }
+
                     val errorChapter = chapterLoader.createErrorChapter(chapter, chapterIndex, result.message)
 
                     _uiState.update {
                         it.copy(
                             loadedChapters = it.loadedChapters + (chapterIndex to errorChapter),
-                            isLoading = if (chapterIndex == it.initialChapterIndex) false else it.isLoading,
                             error = if (chapterIndex == it.initialChapterIndex) result.message else it.error
                         )
                     }
 
                     rebuildDisplayItems()
+
+                    // If initial chapter failed, mark content as ready so error can be shown
+                    if (chapterIndex == _uiState.value.initialChapterIndex) {
+                        _uiState.update {
+                            it.copy(
+                                isLoading = false,
+                                isContentReady = true,
+                                pendingScrollReset = false
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -506,7 +729,8 @@ class ReaderViewModel : ViewModel() {
             return
         }
 
-        if (isInitialLoad && !restorationState.hasSuccessfullyRestored) {
+        // Only attempt to restore scroll if this is an initial load AND we should restore
+        if (isInitialLoad && !restorationState.hasSuccessfullyRestored && shouldRestoreScrollPosition) {
             val chapter = state.allChapters.getOrNull(chapterIndex) ?: return
             val savedPosition = progressManager.loadPosition(chapter.url, chapterIndex)
 
@@ -524,6 +748,12 @@ class ReaderViewModel : ViewModel() {
                 }
                 _uiState.update { it.copy(hasRestoredScroll = true) }
             }
+        } else if (isInitialLoad && !restorationState.hasSuccessfullyRestored) {
+            // We're not restoring scroll, mark as complete
+            _scrollRestorationState.update {
+                it.copy(hasSuccessfullyRestored = true)
+            }
+            _uiState.update { it.copy(hasRestoredScroll = true) }
         }
     }
 
@@ -592,11 +822,17 @@ class ReaderViewModel : ViewModel() {
         val items = mutableListOf<ReaderDisplayItem>()
         var globalSegmentIndex = 0
 
+        val chapterWordCounts = mutableMapOf<Int, Int>()
+
         val sortedIndices = loadedChapters.keys.sorted()
 
         for (chapterIndex in sortedIndices) {
             val loadedChapter = loadedChapters[chapterIndex] ?: continue
             val chapter = loadedChapter.chapter
+
+            var chapterWordCount = 0
+            var segmentIndexInChapter = 0
+            var imageIndexInChapter = 0
 
             items.add(
                 ReaderDisplayItem.ChapterHeader(
@@ -617,17 +853,38 @@ class ReaderViewModel : ViewModel() {
                 }
 
                 else -> {
-                    loadedChapter.segments.forEachIndexed { segmentIndex, segment ->
-                        items.add(
-                            ReaderDisplayItem.Segment(
-                                chapterIndex = chapterIndex,
-                                chapterUrl = chapter.url,
-                                segment = segment,
-                                segmentIndexInChapter = segmentIndex,
-                                globalSegmentIndex = globalSegmentIndex
-                            )
-                        )
-                        globalSegmentIndex++
+                    loadedChapter.contentItems.forEachIndexed { orderInChapter, contentItem ->
+                        when (contentItem) {
+                            is ChapterContentItem.Text -> {
+                                val segment = contentItem.segment
+                                items.add(
+                                    ReaderDisplayItem.Segment(
+                                        chapterIndex = chapterIndex,
+                                        chapterUrl = chapter.url,
+                                        segment = segment,
+                                        segmentIndexInChapter = segmentIndexInChapter,
+                                        globalSegmentIndex = globalSegmentIndex,
+                                        orderInChapter = orderInChapter
+                                    )
+                                )
+                                globalSegmentIndex++
+                                segmentIndexInChapter++
+                                chapterWordCount += segment.text.split("\\s+".toRegex()).size
+                            }
+
+                            is ChapterContentItem.Image -> {
+                                items.add(
+                                    ReaderDisplayItem.Image(
+                                        chapterIndex = chapterIndex,
+                                        chapterUrl = chapter.url,
+                                        image = contentItem.image,
+                                        imageIndexInChapter = imageIndexInChapter,
+                                        orderInChapter = orderInChapter
+                                    )
+                                )
+                                imageIndexInChapter++
+                            }
+                        }
                     }
 
                     items.add(
@@ -641,14 +898,19 @@ class ReaderViewModel : ViewModel() {
                     )
                 }
             }
+
+            chapterWordCounts[chapterIndex] = chapterWordCount
         }
+
+        val currentChapterWordCount = chapterWordCounts[state.currentChapterIndex] ?: 0
 
         _uiState.update {
             it.copy(
                 displayItems = items,
                 totalTTSSentences = items
                     .filterIsInstance<ReaderDisplayItem.Segment>()
-                    .sumOf { seg -> seg.segment.sentenceCount }
+                    .sumOf { seg -> seg.segment.sentenceCount },
+                currentChapterWordCount = currentChapterWordCount
             )
         }
 
@@ -659,6 +921,10 @@ class ReaderViewModel : ViewModel() {
         val state = _uiState.value
         val sentences = mutableListOf<TTSSentenceInfo>()
 
+        val previousTTSPosition = state.ttsPosition
+        val wasTTSActive = state.isTTSActive
+        val previousSentenceText = state.currentSentenceHighlight?.sentence?.text
+
         state.displayItems.forEachIndexed { displayIndex, item ->
             if (item is ReaderDisplayItem.Segment) {
                 item.segment.sentences.forEachIndexed { sentenceIndex, sentence ->
@@ -668,7 +934,8 @@ class ReaderViewModel : ViewModel() {
                             displayItemIndex = displayIndex,
                             segmentIndexInChapter = item.segmentIndexInChapter,
                             sentenceIndexInSegment = sentenceIndex,
-                            chapterIndex = item.chapterIndex
+                            chapterIndex = item.chapterIndex,
+                            pauseAfterMs = sentence.pauseAfterMs
                         )
                     )
                 }
@@ -676,6 +943,84 @@ class ReaderViewModel : ViewModel() {
         }
 
         ttsSentenceList = sentences
+
+        val ttsContent = TTSContent(
+            novelName = state.currentChapterName.split(" - ").firstOrNull() ?: "Novel",
+            novelUrl = currentNovelUrl ?: "",
+            chapterName = state.currentChapterName,
+            chapterUrl = state.currentChapterUrl,
+            segments = sentences.map { TTSSegment(it.text, it.pauseAfterMs) }
+        )
+
+        if (previousTTSPosition.segmentIndex >= 0 || previousTTSPosition.globalSentenceIndex > 0) {
+            var mappedIndex = sentences.indexOfFirst { info ->
+                info.displayItemIndex == previousTTSPosition.segmentIndex &&
+                        info.sentenceIndexInSegment == previousTTSPosition.sentenceIndexInSegment
+            }
+
+            if (mappedIndex < 0 && !previousSentenceText.isNullOrBlank()) {
+                mappedIndex = sentences.indexOfFirst { info ->
+                    info.text == previousSentenceText
+                }
+            }
+
+            if (mappedIndex < 0) {
+                val ttsChapter = state.currentTTSChapterIndex
+                if (ttsChapter >= 0) {
+                    mappedIndex = sentences.indexOfFirst { info ->
+                        info.chapterIndex == ttsChapter
+                    }
+                }
+            }
+
+            if (mappedIndex >= 0) {
+                val (currentInChapter, totalInChapter) = calculateChapterTTSProgress(mappedIndex)
+                _uiState.update {
+                    it.copy(
+                        currentGlobalSentenceIndex = mappedIndex,
+                        currentSentenceInChapter = currentInChapter,
+                        totalSentencesInChapter = totalInChapter,
+                        totalTTSSentences = sentences.size
+                    )
+                }
+
+                if (TTSServiceManager.isActive()) {
+                    TTSServiceManager.updateContent(ttsContent, keepSegmentIndex = true)
+                    TTSServiceManager.seekToSegment(mappedIndex)
+                }
+            } else {
+                if (wasTTSActive) {
+                    if (sentences.isNotEmpty()) {
+                        val fallbackIndex = previousTTSPosition.globalSentenceIndex
+                            .coerceIn(0, sentences.size - 1)
+
+                        _uiState.update {
+                            val (currentInChapter, totalInChapter) = calculateChapterTTSProgress(fallbackIndex)
+                            it.copy(
+                                currentGlobalSentenceIndex = fallbackIndex,
+                                currentSentenceInChapter = currentInChapter,
+                                totalSentencesInChapter = totalInChapter,
+                                totalTTSSentences = sentences.size
+                            )
+                        }
+
+                        if (TTSServiceManager.isActive()) {
+                            TTSServiceManager.updateContent(ttsContent, keepSegmentIndex = true)
+                            TTSServiceManager.seekToSegment(fallbackIndex)
+                        }
+                    } else {
+                        stopTTS()
+                    }
+                } else {
+                    _uiState.update { it.copy(totalTTSSentences = sentences.size) }
+                }
+            }
+        } else {
+            _uiState.update { it.copy(totalTTSSentences = sentences.size) }
+            if (TTSServiceManager.isActive()) {
+                TTSServiceManager.updateContent(ttsContent, keepSegmentIndex = true)
+            }
+        }
     }
 
     // =========================================================================
@@ -683,7 +1028,10 @@ class ReaderViewModel : ViewModel() {
     // =========================================================================
 
     fun onApproachingEnd(lastVisibleChapterIndex: Int) {
-        if (!isInitialLoadComplete) return
+        if (!isInitialLoadComplete || blockInfiniteScrollUntilStable) {
+            Log.d(TAG, "onApproachingEnd blocked: isInitialLoadComplete=$isInitialLoadComplete, blocked=$blockInfiniteScrollUntilStable")
+            return
+        }
 
         val state = _uiState.value
         val action = infiniteScrollController.onApproachingEnd(
@@ -697,7 +1045,10 @@ class ReaderViewModel : ViewModel() {
     }
 
     fun onApproachingBeginning(firstVisibleChapterIndex: Int) {
-        if (!isInitialLoadComplete) return
+        if (!isInitialLoadComplete || blockInfiniteScrollUntilStable) {
+            Log.d(TAG, "onApproachingBeginning blocked: isInitialLoadComplete=$isInitialLoadComplete, blocked=$blockInfiniteScrollUntilStable")
+            return
+        }
 
         val state = _uiState.value
         val action = infiniteScrollController.onApproachingBeginning(
@@ -711,45 +1062,67 @@ class ReaderViewModel : ViewModel() {
 
     private fun handleScrollAction(action: ScrollAction) {
         when (action) {
-            is ScrollAction.None -> { /* No action needed */ }
+            is ScrollAction.None -> { }
 
             is ScrollAction.LoadNext -> {
                 viewModelScope.launch {
-                    unloadChapters(action.chaptersToUnload)
                     loadChapterContent(action.chapterIndex)
+                    unloadChapters(action.chaptersToUnload)
                 }
             }
 
             is ScrollAction.LoadPrevious -> {
                 viewModelScope.launch {
-                    unloadChapters(action.chaptersToUnload)
                     loadChapterContent(action.chapterIndex)
+                    unloadChapters(action.chaptersToUnload)
                 }
             }
         }
     }
 
     private fun unloadChapters(chaptersToUnload: Set<Int>) {
+        val state = _uiState.value
         if (chaptersToUnload.isEmpty()) return
+
+        val protected = listOf(
+            state.currentChapterIndex,
+            state.currentTTSChapterIndex,
+            requestedChapterIndex
+        ).filter { it >= 0 }.toSet()
+
+        val finalToUnload = chaptersToUnload - protected
+        if (finalToUnload.isEmpty()) return
 
         _uiState.update {
             val updatedLoadedChapters = it.loadedChapters.toMutableMap()
-            chaptersToUnload.forEach { index -> updatedLoadedChapters.remove(index) }
+            finalToUnload.forEach { index -> updatedLoadedChapters.remove(index) }
             it.copy(loadedChapters = updatedLoadedChapters)
         }
+
         rebuildDisplayItems()
     }
 
     fun updateCurrentChapter(chapterIndex: Int, chapterUrl: String, chapterName: String) {
+        if (!isInitialLoadComplete || blockInfiniteScrollUntilStable) {
+            Log.d(TAG, "updateCurrentChapter blocked during initial load: chapterIndex=$chapterIndex")
+            return
+        }
+
         val state = _uiState.value
         if (state.currentChapterIndex != chapterIndex) {
+            val loadedChapter = state.loadedChapters[chapterIndex]
+            val wordCount = loadedChapter?.segments?.sumOf { segment ->
+                segment.text.split("\\s+".toRegex()).size
+            } ?: 0
+
             _uiState.update {
                 it.copy(
                     currentChapterIndex = chapterIndex,
                     currentChapterUrl = chapterUrl,
                     currentChapterName = chapterName,
                     previousChapter = it.allChapters.getOrNull(chapterIndex - 1),
-                    nextChapter = it.allChapters.getOrNull(chapterIndex + 1)
+                    nextChapter = it.allChapters.getOrNull(chapterIndex + 1),
+                    currentChapterWordCount = wordCount
                 )
             }
 
@@ -767,6 +1140,10 @@ class ReaderViewModel : ViewModel() {
                 currentScrollIndex = firstVisibleItemIndex,
                 currentScrollOffset = firstVisibleItemOffset
             )
+        }
+
+        if (!isInitialLoadComplete || blockInfiniteScrollUntilStable) {
+            return
         }
 
         savePositionJob?.cancel()
@@ -792,11 +1169,23 @@ class ReaderViewModel : ViewModel() {
         }
     }
 
+    // Confirm scroll reset is complete (called from UI after scroll is positioned)
+    fun confirmScrollReset() {
+        _uiState.update {
+            it.copy(
+                pendingScrollReset = false,
+                hasRestoredScroll = true,
+                targetScrollPosition = null
+            )
+        }
+    }
+
     fun markScrollRestored() {
         _uiState.update {
             it.copy(
                 targetScrollPosition = null,
-                hasRestoredScroll = true
+                hasRestoredScroll = true,
+                pendingScrollReset = false
             )
         }
     }
@@ -868,8 +1257,6 @@ class ReaderViewModel : ViewModel() {
         val provider = currentProvider ?: return
         loadChapter(previous.url, novelUrl, provider.name)
     }
-
-
 
     fun navigateToNext() {
         saveCurrentPosition()
@@ -947,10 +1334,8 @@ class ReaderViewModel : ViewModel() {
         viewModelScope.launch {
             val isCurrentlyBookmarked = state.isCurrentChapterBookmarked
             if (isCurrentlyBookmarked) {
-                // Remove bookmark
                 bookmarkRepository.removeBookmark(novelUrl, chapterUrl)
             } else {
-                // Add bookmark
                 bookmarkRepository.addBookmark(
                     novelUrl = novelUrl,
                     chapterUrl = chapterUrl,
@@ -1028,6 +1413,8 @@ class ReaderViewModel : ViewModel() {
             0
         }
 
+        val (currentInChapter, totalInChapter) = calculateChapterTTSProgress(startSentenceIndex)
+
         viewModelScope.launch {
             val novelUrl = currentNovelUrl ?: ""
             val novelDetails = offlineRepository.getNovelDetails(novelUrl)
@@ -1043,7 +1430,7 @@ class ReaderViewModel : ViewModel() {
                 novelUrl = novelUrl,
                 chapterName = state.currentChapterName,
                 chapterUrl = state.currentChapterUrl,
-                segments = ttsSentenceList.map { it.text },
+                segments = ttsSentenceList.map { TTSSegment(it.text, it.pauseAfterMs) },
                 coverUrl = coverUrl
             )
 
@@ -1053,6 +1440,8 @@ class ReaderViewModel : ViewModel() {
                 it.copy(
                     isTTSActive = true,
                     currentGlobalSentenceIndex = startSentenceIndex,
+                    currentSentenceInChapter = currentInChapter,
+                    totalSentencesInChapter = totalInChapter,
                     totalTTSSentences = ttsSentenceList.size
                 )
             }
@@ -1108,15 +1497,19 @@ class ReaderViewModel : ViewModel() {
                     sentence = sentence
                 )
 
+                val (currentInChapter, totalInChapter) = calculateChapterTTSProgress(sentenceIndex)
+
                 _uiState.update {
                     it.copy(
                         currentSegmentIndex = sentenceInfo.displayItemIndex,
                         currentSentenceHighlight = highlight,
                         currentGlobalSentenceIndex = sentenceIndex,
+                        currentSentenceInChapter = currentInChapter,
+                        totalSentencesInChapter = totalInChapter,
                         ttsPosition = TTSPosition(
                             segmentIndex = sentenceInfo.displayItemIndex,
                             sentenceIndexInSegment = sentenceInfo.sentenceIndexInSegment,
-                            globalSentenceIndex = sentenceIndex
+                            globalSentenceIndex = sentenceIndex,
                         )
                     )
                 }
@@ -1235,7 +1628,6 @@ class ReaderViewModel : ViewModel() {
         }
     }
 
-
     // =========================================================================
     // CLEANUP
     // =========================================================================
@@ -1246,5 +1638,6 @@ class ReaderViewModel : ViewModel() {
         savePositionJob?.cancel()
         preloadJob?.cancel()
         readingTimeTracker?.stopTracking()
+        onReaderExit()
     }
 }

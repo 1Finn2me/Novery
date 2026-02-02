@@ -139,10 +139,12 @@ abstract class MainProvider {
 
     companion object {
         private val providers = mutableListOf<MainProvider>()
+        private val providersFlow = kotlinx.coroutines.flow.MutableStateFlow<List<MainProvider>>(providers.toList())
 
         fun register(provider: MainProvider) {
             if (providers.none { it.name == provider.name }) {
                 providers.add(provider)
+                providersFlow.value = providers.toList()
             }
         }
 
@@ -151,6 +153,8 @@ abstract class MainProvider {
         fun getProvider(name: String): MainProvider? {
             return providers.find { it.name == name }
         }
+
+        fun providersState(): kotlinx.coroutines.flow.StateFlow<List<MainProvider>> = providersFlow
     }
 }
 

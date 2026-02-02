@@ -57,11 +57,23 @@ class NovelRepository(
     // PROVIDER ACCESS
     // ================================================================
 
-    fun getProviders(): List<MainProvider> = MainProvider.getProviders()
+    fun getProviders(): List<MainProvider> {
+        val registered = MainProvider.getProviders()
+        val prefs = RepositoryProvider.getPreferencesManager().appSettings.value
+        val order = if (prefs.providerOrder.isEmpty()) registered.map { it.name } else prefs.providerOrder
+        val disabled = prefs.disabledProviders
+
+        val map = registered.associateBy { it.name }
+        val ordered = order.mapNotNull { map[it] }
+        // Append any providers missing from the saved order
+        val remaining = registered.filter { it.name !in order }
+        val combined = ordered + remaining
+        return combined.filter { it.name !in disabled }
+    }
 
     fun getProvider(name: String): MainProvider? = MainProvider.getProvider(name)
 
-    fun getDefaultProvider(): MainProvider? = MainProvider.getProviders().firstOrNull()
+    fun getDefaultProvider(): MainProvider? = getProviders().firstOrNull()
 
     /**
      * Check if provider supports reviews

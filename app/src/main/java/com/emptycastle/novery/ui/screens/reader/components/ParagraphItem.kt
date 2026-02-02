@@ -1,7 +1,7 @@
 package com.emptycastle.novery.ui.screens.reader.components
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.ClickableText
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
@@ -31,12 +32,21 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.ParagraphStyle
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.Hyphens
+import androidx.compose.ui.text.style.LineBreak
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.style.TextIndent
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.emptycastle.novery.domain.model.ReaderSettings
@@ -44,8 +54,6 @@ import com.emptycastle.novery.ui.components.GhostButton
 import com.emptycastle.novery.ui.screens.reader.model.ReaderDisplayItem
 import com.emptycastle.novery.ui.screens.reader.model.SentenceHighlight
 import com.emptycastle.novery.ui.screens.reader.theme.ReaderColors
-import com.emptycastle.novery.ui.screens.reader.theme.ReaderDefaults
-import com.emptycastle.novery.ui.theme.Orange500
 import com.emptycastle.novery.ui.theme.Zinc600
 import com.emptycastle.novery.ui.theme.Zinc800
 
@@ -57,13 +65,17 @@ import com.emptycastle.novery.ui.theme.Zinc800
 fun ChapterHeaderItem(
     item: ReaderDisplayItem.ChapterHeader,
     colors: ReaderColors,
-    fontFamily: FontFamily
+    fontFamily: FontFamily,
+    horizontalPadding: Dp,
+    largerTouchTargets: Boolean = false
 ) {
+    val verticalPadding = if (largerTouchTargets) 32.dp else 24.dp
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = ReaderDefaults.ContentHorizontalPadding)
-            .padding(top = 24.dp, bottom = 32.dp),
+            .padding(horizontal = horizontalPadding)
+            .padding(top = verticalPadding, bottom = verticalPadding + 8.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Row(
@@ -118,26 +130,28 @@ fun ChapterHeaderItem(
 }
 
 // =============================================================================
-// SEGMENT / PARAGRAPH
+// SEGMENT / PARAGRAPH WITH CLICKABLE LINKS
 // =============================================================================
 
 @Composable
 fun SegmentItem(
     item: ReaderDisplayItem.Segment,
     displayIndex: Int,
-    isSegmentActive: Boolean,
     currentSentenceHighlight: SentenceHighlight?,
     isTTSActive: Boolean,
     highlightEnabled: Boolean,
     settings: ReaderSettings,
     fontFamily: FontFamily,
-    fontWeight: FontWeight = FontWeight.Normal,
+    fontWeight: FontWeight,
     textAlign: TextAlign,
     textColor: Color,
     highlightColor: Color,
-    onClick: () -> Unit,
-    onSentenceClick: (Int) -> Unit
+    horizontalPadding: Dp,
+    paragraphSpacing: Dp,
+    linkColor: Color = Color(0xFF1976D2), // Default link color
+    onLinkClick: ((String) -> Unit)? = null
 ) {
+    val context = LocalContext.current
     val segment = item.segment
 
     val hasSentenceHighlight = isTTSActive &&
@@ -145,20 +159,105 @@ fun SegmentItem(
             currentSentenceHighlight != null &&
             currentSentenceHighlight.segmentDisplayIndex == displayIndex
 
-    val annotatedText = remember(segment.text, hasSentenceHighlight, currentSentenceHighlight) {
-        buildAnnotatedString {
-            append(segment.text)
+    val firstLineIndent = if (settings.paragraphIndent > 0f) {
+        (settings.fontSize * settings.paragraphIndent).sp
+    } else {
+        0.sp
+    }
 
+    val letterSpacingSp = (settings.letterSpacing * settings.fontSize).sp
+
+    // Use styled text from segment, applying word spacing if needed
+    val baseStyledText = segment.styledText
+
+    // Apply word spacing to the styled text
+    val processedStyledText = remember(baseStyledText, settings.wordSpacing) {
+        if (settings.wordSpacing != 1.0f) {
+            applyWordSpacingToAnnotatedString(baseStyledText, settings.wordSpacing)
+        } else {
+            baseStyledText
+        }
+    }
+
+    // Hyphenation
+    val hyphens = remember(settings.hyphenation, settings.textAlign) {
+        if (settings.hyphenation &&
+            settings.textAlign == com.emptycastle.novery.domain.model.TextAlign.JUSTIFY
+        ) {
+            Hyphens.Auto
+        } else {
+            Hyphens.None
+        }
+    }
+
+    val lineBreak = remember(settings.textAlign) {
+        when (settings.textAlign) {
+            com.emptycastle.novery.domain.model.TextAlign.JUSTIFY -> LineBreak.Paragraph
+            else -> LineBreak.Simple
+        }
+    }
+
+    // Build final annotated string with link styling and TTS highlight
+    val annotatedText = remember(
+        processedStyledText,
+        hasSentenceHighlight,
+        currentSentenceHighlight,
+        firstLineIndent,
+        hyphens,
+        lineBreak,
+        textColor,
+        linkColor
+    ) {
+        buildAnnotatedString {
+            // Apply paragraph style
+            withStyle(
+                ParagraphStyle(
+                    textIndent = if (firstLineIndent.value > 0) {
+                        TextIndent(firstLine = firstLineIndent)
+                    } else {
+                        TextIndent.None
+                    },
+                    hyphens = hyphens,
+                    lineBreak = lineBreak
+                )
+            ) {
+                append(processedStyledText)
+            }
+
+            // Apply link color to all URL annotations
+            processedStyledText.getStringAnnotations("URL", 0, processedStyledText.length)
+                .forEach { annotation ->
+                    addStyle(
+                        style = SpanStyle(
+                            color = linkColor,
+                            textDecoration = TextDecoration.Underline
+                        ),
+                        start = annotation.start,
+                        end = annotation.end
+                    )
+                }
+
+            // Apply TTS highlight if active
             if (hasSentenceHighlight && currentSentenceHighlight != null) {
                 val sentence = currentSentenceHighlight.sentence
-                val start = sentence.startIndex.coerceIn(0, segment.text.length)
-                val end = sentence.endIndex.coerceIn(0, segment.text.length)
+                val adjustedStart = if (settings.wordSpacing != 1.0f) {
+                    adjustIndexForWordSpacing(segment.text, sentence.startIndex, settings.wordSpacing)
+                } else {
+                    sentence.startIndex
+                }
+                val adjustedEnd = if (settings.wordSpacing != 1.0f) {
+                    adjustIndexForWordSpacing(segment.text, sentence.endIndex, settings.wordSpacing)
+                } else {
+                    sentence.endIndex
+                }
+
+                val textLength = processedStyledText.length
+                val start = adjustedStart.coerceIn(0, textLength)
+                val end = adjustedEnd.coerceIn(0, textLength)
 
                 if (start < end) {
                     addStyle(
-                        style = SpanStyle(
-                            background = highlightColor
-                        ),
+                        style = SpanStyle(background = highlightColor),
                         start = start,
                         end = end
                     )
@@ -167,42 +266,154 @@ fun SegmentItem(
         }
     }
 
+    // Check if text contains links
+    val hasLinks = remember(processedStyledText) {
+        processedStyledText.getStringAnnotations("URL", 0, processedStyledText.length).isNotEmpty()
+    }
+
+    // Extra vertical padding for larger touch targets
+    val extraPadding = if (settings.largerTouchTargets) 4.dp else 0.dp
+
+    val textStyle = MaterialTheme.typography.bodyLarge.copy(
+        fontSize = settings.fontSize.sp,
+        fontFamily = fontFamily,
+        fontWeight = fontWeight,
+        lineHeight = (settings.fontSize * settings.lineHeight).sp,
+        letterSpacing = letterSpacingSp,
+        color = textColor,
+        textAlign = textAlign
+    )
+
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = ReaderDefaults.ContentHorizontalPadding)
-            .padding(vertical = ReaderDefaults.SegmentSpacing / 2)
-            .clip(RoundedCornerShape(ReaderDefaults.CornerRadius))
-            .background(
-                if (isSegmentActive && !hasSentenceHighlight) {
-                    Orange500.copy(alpha = ReaderDefaults.ActiveSegmentBackgroundAlpha)
-                } else {
-                    Color.Transparent
+            .padding(horizontal = horizontalPadding)
+            .padding(vertical = paragraphSpacing / 2 + extraPadding)
+    ) {
+        if (hasLinks) {
+            // Use ClickableText for segments with links
+            ClickableText(
+                text = annotatedText,
+                style = textStyle,
+                onClick = { offset ->
+                    // Check if click is on a link
+                    annotatedText.getStringAnnotations(
+                        tag = "URL",
+                        start = offset,
+                        end = offset
+                    ).firstOrNull()?.let { annotation ->
+                        val url = annotation.item
+                        if (onLinkClick != null) {
+                            onLinkClick(url)
+                        } else {
+                            // Default: open in browser
+                            try {
+                                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+                                context.startActivity(intent)
+                            } catch (e: Exception) {
+                                // Handle invalid URL or no browser available
+                            }
+                        }
+                    }
                 }
             )
-            .then(
-                if (isSegmentActive && !hasSentenceHighlight) {
-                    Modifier.border(
-                        width = ReaderDefaults.ActiveSegmentBorderWidth,
-                        color = Orange500.copy(alpha = ReaderDefaults.ActiveSegmentBorderAlpha),
-                        shape = RoundedCornerShape(ReaderDefaults.CornerRadius)
-                    )
-                } else Modifier
+        } else {
+            // Use regular Text for segments without links (better performance)
+            Text(
+                text = annotatedText,
+                style = textStyle
             )
-            .clickable(onClick = onClick)
-            .padding(8.dp)
-    ) {
-        Text(
-            text = annotatedText,
-            style = MaterialTheme.typography.bodyLarge.copy(
-                fontSize = settings.fontSize.sp,
-                fontFamily = fontFamily,
-                lineHeight = (settings.fontSize * settings.lineHeight).sp
-            ),
-            color = textColor,
-            textAlign = textAlign
-        )
+        }
     }
+}
+
+/**
+ * Apply word spacing to an AnnotatedString while preserving styles
+ */
+private fun applyWordSpacingToAnnotatedString(
+    annotatedString: AnnotatedString,
+    multiplier: Float
+): AnnotatedString {
+    if (multiplier == 1.0f) return annotatedString
+
+    val extraSpaces = when {
+        multiplier <= 0.9f -> ""
+        multiplier <= 1.0f -> ""
+        multiplier <= 1.2f -> "\u200A" // Hair space
+        multiplier <= 1.5f -> "\u2009" // Thin space
+        multiplier <= 1.8f -> "\u2009\u200A"
+        else -> "\u2009\u2009"
+    }
+
+    if (extraSpaces.isEmpty()) return annotatedString
+
+    return buildAnnotatedString {
+        val originalText = annotatedString.text
+        val newTextBuilder = StringBuilder()
+
+        // Build new text with extra spaces
+        for (i in originalText.indices) {
+            val char = originalText[i]
+            newTextBuilder.append(char)
+            if (char == ' ' && i < originalText.length - 1) {
+                newTextBuilder.append(extraSpaces)
+            }
+        }
+
+        val newText = newTextBuilder.toString()
+        append(newText)
+
+        // Re-apply span styles with adjusted indices
+        annotatedString.spanStyles.forEach { spanStyle ->
+            val originalStart = spanStyle.start
+            val originalEnd = spanStyle.end
+
+            val spacesBeforeStart = originalText.substring(0, originalStart.coerceAtMost(originalText.length)).count { it == ' ' }
+            val spacesBeforeEnd = originalText.substring(0, originalEnd.coerceAtMost(originalText.length)).count { it == ' ' }
+
+            val extraCharsPerSpace = extraSpaces.length
+            val newStart = originalStart + (spacesBeforeStart * extraCharsPerSpace)
+            val newEnd = originalEnd + (spacesBeforeEnd * extraCharsPerSpace)
+
+            if (newStart < newText.length && newEnd <= newText.length && newStart < newEnd) {
+                addStyle(spanStyle.item, newStart, newEnd)
+            }
+        }
+
+        // Re-apply string annotations (for URLs)
+        annotatedString.getStringAnnotations(0, annotatedString.length).forEach { annotation ->
+            val originalStart = annotation.start
+            val originalEnd = annotation.end
+
+            val spacesBeforeStart = originalText.substring(0, originalStart.coerceAtMost(originalText.length)).count { it == ' ' }
+            val spacesBeforeEnd = originalText.substring(0, originalEnd.coerceAtMost(originalText.length)).count { it == ' ' }
+
+            val extraCharsPerSpace = extraSpaces.length
+            val newStart = originalStart + (spacesBeforeStart * extraCharsPerSpace)
+            val newEnd = originalEnd + (spacesBeforeEnd * extraCharsPerSpace)
+
+            if (newStart < newText.length && newEnd <= newText.length && newStart < newEnd) {
+                addStringAnnotation(annotation.tag, annotation.item, newStart, newEnd)
+            }
+        }
+    }
+}
+
+private fun adjustIndexForWordSpacing(originalText: String, index: Int, multiplier: Float): Int {
+    if (multiplier == 1.0f) return index
+
+    val spacesBefore = originalText.substring(0, index.coerceAtMost(originalText.length))
+        .count { it == ' ' }
+
+    val extraCharsPerSpace = when {
+        multiplier <= 1.0f -> 0
+        multiplier <= 1.2f -> 1
+        multiplier <= 1.5f -> 1
+        multiplier <= 1.8f -> 2
+        else -> 2
+    }
+
+    return index + (spacesBefore * extraCharsPerSpace)
 }
 
 // =============================================================================
@@ -214,15 +425,20 @@ fun ChapterDividerItem(
     item: ReaderDisplayItem.ChapterDivider,
     colors: ReaderColors,
     infiniteScrollEnabled: Boolean,
+    horizontalPadding: Dp,
+    largerTouchTargets: Boolean = false,
     onPrevious: () -> Unit,
     onNext: () -> Unit,
     onBackToDetails: () -> Unit
 ) {
+    val buttonHeight = if (largerTouchTargets) 64.dp else 56.dp
+    val iconSize = if (largerTouchTargets) 24.dp else 20.dp
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = ReaderDefaults.ChapterDividerVerticalPadding)
-            .padding(horizontal = ReaderDefaults.ContentHorizontalPadding),
+            .padding(vertical = 48.dp)
+            .padding(horizontal = horizontalPadding),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         HorizontalDivider(
@@ -270,7 +486,9 @@ fun ChapterDividerItem(
                     isPrimary = false,
                     colors = colors,
                     onClick = onPrevious,
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier.weight(1f),
+                    height = buttonHeight,
+                    iconSize = iconSize
                 )
 
                 ChapterNavButton(
@@ -280,7 +498,9 @@ fun ChapterDividerItem(
                     isPrimary = true,
                     colors = colors,
                     onClick = onNext,
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier.weight(1f),
+                    height = buttonHeight,
+                    iconSize = iconSize
                 )
             }
 
@@ -324,7 +544,9 @@ fun ChapterNavButton(
     isPrimary: Boolean,
     colors: ReaderColors,
     onClick: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    height: Dp = 56.dp,
+    iconSize: Dp = 20.dp
 ) {
     val backgroundColor = when {
         !enabled -> Zinc800.copy(alpha = 0.5f)
@@ -340,7 +562,7 @@ fun ChapterNavButton(
 
     Surface(
         modifier = modifier
-            .height(56.dp)
+            .height(height)
             .clip(RoundedCornerShape(12.dp))
             .clickable(enabled = enabled, onClick = onClick),
         color = backgroundColor,
@@ -358,7 +580,7 @@ fun ChapterNavButton(
                     imageVector = icon,
                     contentDescription = null,
                     tint = contentColor,
-                    modifier = Modifier.size(20.dp)
+                    modifier = Modifier.size(iconSize)
                 )
                 Spacer(modifier = Modifier.width(8.dp))
             }
@@ -376,7 +598,7 @@ fun ChapterNavButton(
                     imageVector = icon,
                     contentDescription = null,
                     tint = contentColor,
-                    modifier = Modifier.size(20.dp)
+                    modifier = Modifier.size(iconSize)
                 )
             }
         }

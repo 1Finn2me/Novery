@@ -9,13 +9,30 @@ import org.jsoup.safety.Safelist
 object HtmlUtils {
 
     /**
-     * Sanitize HTML content, removing potentially dangerous elements.
+     * Sanitize HTML content, removing potentially dangerous elements
+     * while preserving formatting and images.
      */
     fun sanitize(html: String): String {
         val safelist = Safelist.relaxed()
+            // Preserve structural elements
             .addTags("span", "div", "p", "br", "hr")
+            // Preserve formatting elements
+            .addTags("b", "strong", "i", "em", "u", "s", "del", "strike", "sub", "sup")
+            // Preserve images
+            .addTags("img")
+            // Preserve links
+            .addTags("a")
+            // Allow style and class attributes for custom styling
             .addAttributes(":all", "style", "class")
-            .removeTags("script", "iframe", "form", "input")
+            // Allow image attributes
+            .addAttributes("img", "src", "alt", "title", "width", "height")
+            // Allow link attributes
+            .addAttributes("a", "href", "title")
+            // Remove dangerous elements
+            .removeTags("script", "iframe", "form", "input", "object", "embed")
+            // Allow protocol-relative and data URLs for images
+            .addProtocols("img", "src", "http", "https", "data")
+            .addProtocols("a", "href", "http", "https")
 
         return Jsoup.clean(html, safelist)
     }
@@ -80,5 +97,15 @@ object HtmlUtils {
         text = text.replace(Regex("\\s+"), " ").trim()
 
         return text
+    }
+
+    /**
+     * Extract all image URLs from HTML content
+     */
+    fun extractImageUrls(html: String): List<String> {
+        val document = Jsoup.parse(html)
+        return document.select("img[src]").mapNotNull { element ->
+            element.attr("src").takeIf { it.isNotBlank() }
+        }
     }
 }

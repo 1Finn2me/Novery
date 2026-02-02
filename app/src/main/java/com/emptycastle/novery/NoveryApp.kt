@@ -9,6 +9,7 @@ import com.emptycastle.novery.provider.LibReadProvider
 import com.emptycastle.novery.provider.MainProvider
 import com.emptycastle.novery.provider.NovelBinProvider
 import com.emptycastle.novery.provider.NovelFireProvider
+import com.emptycastle.novery.provider.NovelsOnlineProvider
 import com.emptycastle.novery.provider.RoyalRoadProvider
 import com.emptycastle.novery.provider.WebnovelProvider
 import com.emptycastle.novery.service.NotificationHelper
@@ -67,5 +68,6 @@ class NoveryApp : Application() {
         MainProvider.register(NovelBinProvider())
         MainProvider.register(LibReadProvider())
         MainProvider.register(RoyalRoadProvider())
+        MainProvider.register(NovelsOnlineProvider())
     }
 }

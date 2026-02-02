@@ -174,6 +174,18 @@ fun NoveryNavGraph(
                     navController.navigate(
                         NavRoutes.Reader.createRoute(chapterUrl, nUrl, provider)
                     )
+                },
+                // Navigate to related novel's details
+                onNovelClick = { relatedNovelUrl, relatedProviderName ->
+                    navController.navigate(
+                        NavRoutes.Details.createRoute(relatedNovelUrl, relatedProviderName)
+                    )
+                },
+                // Navigate to WebView with novel URL
+                onOpenInWebView = { provider, url ->
+                    navController.navigate(
+                        NavRoutes.ProviderWebView.createRoute(provider, url)
+                    )
                 }
             )
         }

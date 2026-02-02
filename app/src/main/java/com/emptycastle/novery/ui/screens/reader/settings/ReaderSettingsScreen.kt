@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -42,8 +43,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.FormatAlignLeft
 import androidx.compose.material.icons.automirrored.filled.FormatAlignRight
+import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.filled.AccessibilityNew
+import androidx.compose.material.icons.filled.Animation
 import androidx.compose.material.icons.filled.Brightness4
 import androidx.compose.material.icons.filled.Brightness6
 import androidx.compose.material.icons.filled.BrightnessAuto
@@ -59,22 +62,31 @@ import androidx.compose.material.icons.filled.FormatLineSpacing
 import androidx.compose.material.icons.filled.FormatSize
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.RestartAlt
+import androidx.compose.material.icons.filled.ScreenRotation
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SpaceBar
 import androidx.compose.material.icons.filled.Speed
+import androidx.compose.material.icons.filled.Swipe
 import androidx.compose.material.icons.filled.TextDecrease
 import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material.icons.filled.TextIncrease
+import androidx.compose.material.icons.filled.Timer
+import androidx.compose.material.icons.filled.TouchApp
 import androidx.compose.material.icons.filled.ViewColumn
 import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material.icons.filled.WbSunny
 import androidx.compose.material.icons.outlined.Brightness4
+import androidx.compose.material.icons.outlined.Gesture
 import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.SpaceBar
 import androidx.compose.material.icons.outlined.TextFields
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.Badge
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
@@ -121,10 +133,17 @@ import com.emptycastle.novery.data.repository.RepositoryProvider
 import com.emptycastle.novery.domain.model.FontCategory
 import com.emptycastle.novery.domain.model.FontFamily
 import com.emptycastle.novery.domain.model.MaxWidth
+import com.emptycastle.novery.domain.model.PageAnimation
 import com.emptycastle.novery.domain.model.ProgressStyle
 import com.emptycastle.novery.domain.model.ReaderSettings
 import com.emptycastle.novery.domain.model.ReaderTheme
+import com.emptycastle.novery.domain.model.ReadingDirection
+import com.emptycastle.novery.domain.model.ScreenOrientation
+import com.emptycastle.novery.domain.model.ScrollMode
+import com.emptycastle.novery.domain.model.TapAction
+import com.emptycastle.novery.domain.model.TapZoneConfig
 import com.emptycastle.novery.domain.model.ThemeCategory
+import com.emptycastle.novery.domain.model.VolumeKeyDirection
 import com.emptycastle.novery.ui.screens.reader.theme.ReaderColors
 import com.emptycastle.novery.domain.model.FontWeight as ReaderFontWeight
 import com.emptycastle.novery.domain.model.TextAlign as ReaderTextAlign
@@ -140,6 +159,7 @@ enum class SettingsTab(
     APPEARANCE("Theme", Icons.Outlined.Palette),
     TYPOGRAPHY("Text", Icons.Outlined.TextFields),
     LAYOUT("Layout", Icons.Outlined.SpaceBar),
+    READING("Reading", Icons.Outlined.Gesture),
     ADVANCED("More", Icons.Outlined.Tune)
 }
 
@@ -162,6 +182,11 @@ fun ReaderSettingsScreen(
     var selectedTab by remember { mutableStateOf(SettingsTab.APPEARANCE) }
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
 
+    // Count modified settings
+    val modifiedCount = remember(settings) {
+        countModifiedSettings(settings, ReaderSettings.DEFAULT)
+    }
+
     Scaffold(
         modifier = Modifier
             .fillMaxSize()
@@ -170,10 +195,19 @@ fun ReaderSettingsScreen(
         topBar = {
             TopAppBar(
                 title = {
-                    Text(
-                        text = "Reader Settings",
-                        color = colors.text
-                    )
+                    Column {
+                        Text(
+                            text = "Reader Settings",
+                            color = colors.text
+                        )
+                        if (modifiedCount > 0) {
+                            Text(
+                                text = "$modifiedCount changes from default",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = colors.textSecondary
+                            )
+                        }
+                    }
                 },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
@@ -225,6 +259,15 @@ fun ReaderSettingsScreen(
 
             HorizontalDivider(color = colors.divider.copy(alpha = 0.5f))
 
+            // Live Preview Card (collapsible)
+            var showPreview by remember { mutableStateOf(true) }
+            LivePreviewSection(
+                settings = settings,
+                colors = colors,
+                isExpanded = showPreview,
+                onToggle = { showPreview = !showPreview }
+            )
+
             // Content
             val scrollState = rememberScrollState()
 
@@ -255,12 +298,145 @@ fun ReaderSettingsScreen(
                             colors = colors,
                             onSettingsChange = { preferencesManager.updateReaderSettings(it) }
                         )
+                        SettingsTab.READING -> ReadingSettings(
+                            settings = settings,
+                            colors = colors,
+                            onSettingsChange = { preferencesManager.updateReaderSettings(it) }
+                        )
                         SettingsTab.ADVANCED -> AdvancedSettings(
                             settings = settings,
                             colors = colors,
                             onSettingsChange = { preferencesManager.updateReaderSettings(it) }
                         )
                     }
+                }
+            }
+        }
+    }
+}
+
+private fun countModifiedSettings(current: ReaderSettings, default: ReaderSettings): Int {
+    var count = 0
+    if (current.fontSize != default.fontSize) count++
+    if (current.fontFamily != default.fontFamily) count++
+    if (current.fontWeight != default.fontWeight) count++
+    if (current.lineHeight != default.lineHeight) count++
+    if (current.letterSpacing != default.letterSpacing) count++
+    if (current.wordSpacing != default.wordSpacing) count++
+    if (current.textAlign != default.textAlign) count++
+    if (current.hyphenation != default.hyphenation) count++
+    if (current.maxWidth != default.maxWidth) count++
+    if (current.marginHorizontal != default.marginHorizontal) count++
+    if (current.marginVertical != default.marginVertical) count++
+    if (current.paragraphSpacing != default.paragraphSpacing) count++
+    if (current.paragraphIndent != default.paragraphIndent) count++
+    if (current.theme != default.theme) count++
+    if (current.brightness != default.brightness) count++
+    if (current.warmthFilter != default.warmthFilter) count++
+    if (current.scrollMode != default.scrollMode) count++
+    if (current.pageAnimation != default.pageAnimation) count++
+    if (current.readingDirection != default.readingDirection) count++
+    if (current.scrollSensitivity != default.scrollSensitivity) count++
+    if (current.volumeKeyNavigation != default.volumeKeyNavigation) count++
+    if (current.volumeKeyDirection != default.volumeKeyDirection) count++
+    if (current.autoHideControlsDelay != default.autoHideControlsDelay) count++
+    if (current.edgeGestures != default.edgeGestures) count++
+    // Add more as needed
+    return count
+}
+
+// =============================================================================
+// LIVE PREVIEW
+// =============================================================================
+
+@Composable
+private fun LivePreviewSection(
+    settings: ReaderSettings,
+    colors: ReaderColors,
+    isExpanded: Boolean,
+    onToggle: () -> Unit
+) {
+    Column {
+        Surface(
+            onClick = onToggle,
+            color = colors.surface.copy(alpha = 0.5f)
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Visibility,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                        tint = colors.iconSecondary
+                    )
+                    Text(
+                        text = "Live Preview",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = colors.textSecondary
+                    )
+                }
+                Icon(
+                    imageVector = if (isExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                    contentDescription = if (isExpanded) "Collapse" else "Expand",
+                    modifier = Modifier.size(20.dp),
+                    tint = colors.iconSecondary
+                )
+            }
+        }
+
+        AnimatedVisibility(
+            visible = isExpanded,
+            enter = expandVertically() + fadeIn(),
+            exit = shrinkVertically() + fadeOut()
+        ) {
+            val previewColors = remember(settings.theme) {
+                ReaderColors.fromTheme(settings.theme)
+            }
+
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                shape = RoundedCornerShape(12.dp),
+                color = previewColors.background,
+                border = BorderStroke(1.dp, colors.border)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 120.dp)
+                        .padding(
+                            horizontal = settings.marginHorizontal.dp,
+                            vertical = settings.marginVertical.dp.coerceAtMost(12.dp)
+                        )
+                ) {
+                    Text(
+                        text = buildString {
+                            append("    ".repeat((settings.paragraphIndent).toInt()))
+                            append("The quick brown fox jumps over the lazy dog. ")
+                            append("This is how your text will appear with the current settings. ")
+                            append("Adjust the options below to customize your reading experience.")
+                        },
+                        fontSize = settings.fontSize.sp,
+                        lineHeight = (settings.fontSize * settings.lineHeight).sp,
+                        letterSpacing = settings.letterSpacing.sp,
+                        textAlign = when (settings.textAlign) {
+                            ReaderTextAlign.LEFT -> TextAlign.Start
+                            ReaderTextAlign.RIGHT -> TextAlign.End
+                            ReaderTextAlign.CENTER -> TextAlign.Center
+                            ReaderTextAlign.JUSTIFY -> TextAlign.Justify
+                        },
+                        color = previewColors.text
+                    )
                 }
             }
         }
@@ -400,17 +576,112 @@ private fun PresetSelector(
     onPresetSelected: (ReaderSettings) -> Unit
 ) {
     val presets = remember { ReaderSettings.getPresets() }
+    var showAllPresets by remember { mutableStateOf(false) }
 
-    LazyRow(
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        // Main presets row
+        LazyRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            val displayedPresets = if (showAllPresets) presets else presets.take(5)
+            items(displayedPresets) { (name, preset) ->
+                PresetChip(
+                    name = name,
+                    isSelected = currentSettings == preset,
+                    colors = colors,
+                    onClick = { onPresetSelected(preset) }
+                )
+            }
+
+            if (!showAllPresets && presets.size > 5) {
+                item {
+                    Surface(
+                        onClick = { showAllPresets = true },
+                        shape = RoundedCornerShape(20.dp),
+                        color = colors.surface,
+                        border = BorderStroke(1.dp, colors.border)
+                    ) {
+                        Text(
+                            text = "+${presets.size - 5} more",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = colors.accent,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                        )
+                    }
+                }
+            }
+        }
+
+        // Preset descriptions
+        AnimatedVisibility(visible = showAllPresets) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                presets.forEach { (name, preset) ->
+                    PresetDetailCard(
+                        name = name,
+                        preset = preset,
+                        isSelected = currentSettings == preset,
+                        colors = colors,
+                        onClick = { onPresetSelected(preset) }
+                    )
+                }
+
+                TextButton(
+                    onClick = { showAllPresets = false },
+                    modifier = Modifier.align(Alignment.CenterHorizontally)
+                ) {
+                    Text("Show less", color = colors.accent)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PresetDetailCard(
+    name: String,
+    preset: ReaderSettings,
+    isSelected: Boolean,
+    colors: ReaderColors,
+    onClick: () -> Unit
+) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(12.dp),
+        color = if (isSelected) colors.accent.copy(alpha = 0.1f) else colors.surface,
+        border = BorderStroke(
+            width = if (isSelected) 2.dp else 1.dp,
+            color = if (isSelected) colors.accent else colors.border
+        )
     ) {
-        items(presets) { (name, preset) ->
-            PresetChip(
-                name = name,
-                isSelected = currentSettings == preset,
-                colors = colors,
-                onClick = { onPresetSelected(preset) }
-            )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = name,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium,
+                    color = if (isSelected) colors.accent else colors.text
+                )
+                Text(
+                    text = "${preset.fontSize}sp · ${preset.fontFamily.displayName} · ${preset.theme.displayName}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colors.textSecondary
+                )
+            }
+
+            if (isSelected) {
+                Icon(
+                    imageVector = Icons.Default.Check,
+                    contentDescription = "Selected",
+                    tint = colors.accent,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
         }
     }
 }
@@ -724,7 +995,7 @@ private fun BrightnessControl(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = if (isSystemBrightness) "Using system brightness" else "Manual brightness",
+                text = if (isSystemBrightness) "Using system brightness" else "${(brightness * 100).toInt()}%",
                 style = MaterialTheme.typography.bodySmall,
                 color = colors.textSecondary
             )
@@ -804,6 +1075,18 @@ private fun WarmthControl(
     onWarmthChange: (Float) -> Unit
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = if (warmth == 0f) "Off" else "${(warmth * 100).toInt()}%",
+                style = MaterialTheme.typography.bodySmall,
+                color = colors.textSecondary
+            )
+        }
+
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
@@ -939,12 +1222,39 @@ private fun TypographySettings(
         SettingSection(
             title = "Letter Spacing",
             icon = Icons.Default.SpaceBar,
-            colors = colors
+            colors = colors,
+            trailing = {
+                Text(
+                    text = "${String.format("%.2f", settings.letterSpacing)}em",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colors.textSecondary
+                )
+            }
         ) {
             LetterSpacingControl(
                 letterSpacing = settings.letterSpacing,
                 colors = colors,
                 onLetterSpacingChange = { onSettingsChange(settings.copy(letterSpacing = it)) }
+            )
+        }
+
+        // Word spacing (NEW)
+        SettingSection(
+            title = "Word Spacing",
+            icon = Icons.Default.SpaceBar,
+            colors = colors,
+            trailing = {
+                Text(
+                    text = "×${String.format("%.1f", settings.wordSpacing)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colors.textSecondary
+                )
+            }
+        ) {
+            WordSpacingControl(
+                wordSpacing = settings.wordSpacing,
+                colors = colors,
+                onWordSpacingChange = { onSettingsChange(settings.copy(wordSpacing = it)) }
             )
         }
 
@@ -960,6 +1270,15 @@ private fun TypographySettings(
                 onAlignChange = { onSettingsChange(settings.copy(textAlign = it)) }
             )
         }
+
+        // Hyphenation
+        SettingSwitch(
+            title = "Enable Hyphenation",
+            subtitle = "Break long words at line ends (best with justified text)",
+            checked = settings.hyphenation,
+            colors = colors,
+            onCheckedChange = { onSettingsChange(settings.copy(hyphenation = it)) }
+        )
     }
 }
 
@@ -1017,19 +1336,29 @@ private fun FontSizeControl(
             }
         }
 
-        // Preview text
-        Surface(
+        // Quick size buttons
+        Row(
             modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(8.dp),
-            color = colors.surface
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Text(
-                text = "The quick brown fox jumps over the lazy dog.",
-                style = MaterialTheme.typography.bodyMedium,
-                fontSize = fontSize.sp,
-                color = colors.text,
-                modifier = Modifier.padding(12.dp)
-            )
+            listOf(14, 16, 18, 20, 24).forEach { size ->
+                val isSelected = fontSize == size
+                Surface(
+                    onClick = { onFontSizeChange(size) },
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(8.dp),
+                    color = if (isSelected) colors.accent else colors.surface,
+                    border = BorderStroke(1.dp, if (isSelected) colors.accent else colors.border)
+                ) {
+                    Text(
+                        text = "$size",
+                        style = MaterialTheme.typography.labelMedium,
+                        textAlign = TextAlign.Center,
+                        color = if (isSelected) colors.onAccent else colors.text,
+                        modifier = Modifier.padding(vertical = 8.dp)
+                    )
+                }
+            }
         }
     }
 }
@@ -1079,6 +1408,16 @@ private fun FontFamilySelector(
                     onClick = { onFontFamilyChange(font) }
                 )
             }
+        }
+
+        // Selected font description
+        if (selectedFamily.description.isNotEmpty()) {
+            Text(
+                text = selectedFamily.description,
+                style = MaterialTheme.typography.bodySmall,
+                color = colors.textSecondary,
+                modifier = Modifier.padding(top = 4.dp)
+            )
         }
     }
 }
@@ -1283,6 +1622,60 @@ private fun LetterSpacingControl(
     }
 }
 
+// NEW: Word Spacing Control
+@Composable
+private fun WordSpacingControl(
+    wordSpacing: Float,
+    colors: ReaderColors,
+    onWordSpacingChange: (Float) -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            listOf(
+                "Tight" to 0.8f,
+                "Normal" to 1.0f,
+                "Wide" to 1.3f,
+                "Extra" to 1.6f
+            ).forEach { (label, value) ->
+                val isSelected = kotlin.math.abs(wordSpacing - value) < 0.1f
+
+                Surface(
+                    onClick = { onWordSpacingChange(value) },
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(8.dp),
+                    color = if (isSelected) colors.accent else colors.surface,
+                    border = BorderStroke(
+                        width = 1.dp,
+                        color = if (isSelected) colors.accent else colors.border
+                    )
+                ) {
+                    Text(
+                        text = label,
+                        style = MaterialTheme.typography.labelSmall,
+                        textAlign = TextAlign.Center,
+                        color = if (isSelected) colors.onAccent else colors.textSecondary,
+                        modifier = Modifier.padding(vertical = 10.dp)
+                    )
+                }
+            }
+        }
+
+        Slider(
+            value = wordSpacing,
+            onValueChange = { onWordSpacingChange((it * 10).toInt() / 10f) },
+            valueRange = ReaderSettings.MIN_WORD_SPACING..ReaderSettings.MAX_WORD_SPACING,
+            colors = SliderDefaults.colors(
+                thumbColor = colors.accent,
+                activeTrackColor = colors.accent,
+                inactiveTrackColor = colors.progressTrack
+            )
+        )
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun TextAlignSelector(
@@ -1402,50 +1795,59 @@ private fun MaxWidthSelector(
     colors: ReaderColors,
     onWidthChange: (MaxWidth) -> Unit
 ) {
-    LazyRow(
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        items(MaxWidth.entries) { width ->
-            val isSelected = selectedWidth == width
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        LazyRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            items(MaxWidth.entries) { width ->
+                val isSelected = selectedWidth == width
 
-            Surface(
-                onClick = { onWidthChange(width) },
-                shape = RoundedCornerShape(12.dp),
-                color = if (isSelected) colors.accent else colors.surface,
-                border = BorderStroke(
-                    width = 1.dp,
-                    color = if (isSelected) colors.accent else colors.border
-                )
-            ) {
-                Column(
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                Surface(
+                    onClick = { onWidthChange(width) },
+                    shape = RoundedCornerShape(12.dp),
+                    color = if (isSelected) colors.accent else colors.surface,
+                    border = BorderStroke(
+                        width = 1.dp,
+                        color = if (isSelected) colors.accent else colors.border
+                    )
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .width(
-                                when (width) {
-                                    MaxWidth.NARROW -> 24.dp
-                                    MaxWidth.MEDIUM -> 32.dp
-                                    MaxWidth.LARGE -> 40.dp
-                                    MaxWidth.EXTRA_LARGE -> 48.dp
-                                    MaxWidth.FULL -> 56.dp
-                                }
-                            )
-                            .height(4.dp)
-                            .clip(RoundedCornerShape(2.dp))
-                            .background(if (isSelected) colors.onAccent else colors.textSecondary)
-                    )
+                    Column(
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .width(
+                                    when (width) {
+                                        MaxWidth.NARROW -> 24.dp
+                                        MaxWidth.MEDIUM -> 32.dp
+                                        MaxWidth.LARGE -> 40.dp
+                                        MaxWidth.EXTRA_LARGE -> 48.dp
+                                        MaxWidth.FULL -> 56.dp
+                                    }
+                                )
+                                .height(4.dp)
+                                .clip(RoundedCornerShape(2.dp))
+                                .background(if (isSelected) colors.onAccent else colors.textSecondary)
+                        )
 
-                    Text(
-                        text = width.displayName,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = if (isSelected) colors.onAccent else colors.textSecondary
-                    )
+                        Text(
+                            text = width.displayName,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (isSelected) colors.onAccent else colors.textSecondary
+                        )
+                    }
                 }
             }
         }
+
+        // Show description of selected width
+        Text(
+            text = selectedWidth.description,
+            style = MaterialTheme.typography.bodySmall,
+            color = colors.textSecondary
+        )
     }
 }
 
@@ -1493,16 +1895,48 @@ private fun ParagraphSpacingControl(
     colors: ReaderColors,
     onSpacingChange: (Float) -> Unit
 ) {
-    Slider(
-        value = spacing,
-        onValueChange = { onSpacingChange((it * 10).toInt() / 10f) },
-        valueRange = ReaderSettings.MIN_PARAGRAPH_SPACING..ReaderSettings.MAX_PARAGRAPH_SPACING,
-        colors = SliderDefaults.colors(
-            thumbColor = colors.accent,
-            activeTrackColor = colors.accent,
-            inactiveTrackColor = colors.progressTrack
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            listOf(
+                "Compact" to 0.5f,
+                "Normal" to 1.0f,
+                "Relaxed" to 1.5f,
+                "Loose" to 2.0f
+            ).forEach { (label, value) ->
+                val isSelected = kotlin.math.abs(spacing - value) < 0.1f
+
+                Surface(
+                    onClick = { onSpacingChange(value) },
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(8.dp),
+                    color = if (isSelected) colors.accent else colors.surface,
+                    border = BorderStroke(1.dp, if (isSelected) colors.accent else colors.border)
+                ) {
+                    Text(
+                        text = label,
+                        style = MaterialTheme.typography.labelSmall,
+                        textAlign = TextAlign.Center,
+                        color = if (isSelected) colors.onAccent else colors.textSecondary,
+                        modifier = Modifier.padding(vertical = 8.dp)
+                    )
+                }
+            }
+        }
+
+        Slider(
+            value = spacing,
+            onValueChange = { onSpacingChange((it * 10).toInt() / 10f) },
+            valueRange = ReaderSettings.MIN_PARAGRAPH_SPACING..ReaderSettings.MAX_PARAGRAPH_SPACING,
+            colors = SliderDefaults.colors(
+                thumbColor = colors.accent,
+                activeTrackColor = colors.accent,
+                inactiveTrackColor = colors.progressTrack
+            )
         )
-    )
+    }
 }
 
 @Composable
@@ -1546,6 +1980,616 @@ private fun ParagraphIndentControl(
 }
 
 // =============================================================================
+// READING SETTINGS (NEW TAB)
+// =============================================================================
+
+@Composable
+private fun ReadingSettings(
+    settings: ReaderSettings,
+    colors: ReaderColors,
+    onSettingsChange: (ReaderSettings) -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(24.dp)) {
+        // Scroll Mode
+        SettingSection(
+            title = "Scroll Mode",
+            icon = Icons.Default.Swipe,
+            colors = colors
+        ) {
+            ScrollModeSelector(
+                selectedMode = settings.scrollMode,
+                colors = colors,
+                onModeChange = { onSettingsChange(settings.copy(scrollMode = it)) }
+            )
+        }
+
+        // Page Animation (only for paged modes)
+        AnimatedVisibility(visible = settings.scrollMode != ScrollMode.CONTINUOUS) {
+            SettingSection(
+                title = "Page Animation",
+                icon = Icons.Default.Animation,
+                colors = colors
+            ) {
+                PageAnimationSelector(
+                    selectedAnimation = settings.pageAnimation,
+                    colors = colors,
+                    onAnimationChange = { onSettingsChange(settings.copy(pageAnimation = it)) }
+                )
+            }
+        }
+
+        // Reading Direction
+        SettingSection(
+            title = "Reading Direction",
+            icon = Icons.Default.ScreenRotation,
+            colors = colors
+        ) {
+            ReadingDirectionSelector(
+                selectedDirection = settings.readingDirection,
+                colors = colors,
+                onDirectionChange = { onSettingsChange(settings.copy(readingDirection = it)) }
+            )
+        }
+
+        // Scroll Sensitivity
+        SettingSection(
+            title = "Scroll Sensitivity",
+            subtitle = "×${String.format("%.1f", settings.scrollSensitivity)}",
+            icon = Icons.Default.Speed,
+            colors = colors
+        ) {
+            ScrollSensitivityControl(
+                sensitivity = settings.scrollSensitivity,
+                colors = colors,
+                onSensitivityChange = { onSettingsChange(settings.copy(scrollSensitivity = it)) }
+            )
+        }
+
+        // Tap Zones
+        SettingSection(
+            title = "Tap Zones",
+            icon = Icons.Default.TouchApp,
+            colors = colors
+        ) {
+            TapZoneSelector(
+                tapZones = settings.tapZones,
+                colors = colors,
+                onTapZonesChange = { onSettingsChange(settings.copy(tapZones = it)) }
+            )
+        }
+
+        // Volume Key Navigation
+        SettingSection(
+            title = "Volume Key Navigation",
+            icon = Icons.Default.VolumeUp,
+            colors = colors
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                SettingSwitch(
+                    title = "Use Volume Keys",
+                    subtitle = "Navigate pages with volume buttons",
+                    checked = settings.volumeKeyNavigation,
+                    colors = colors,
+                    onCheckedChange = { onSettingsChange(settings.copy(volumeKeyNavigation = it)) }
+                )
+
+                AnimatedVisibility(visible = settings.volumeKeyNavigation) {
+                    VolumeKeyDirectionSelector(
+                        selectedDirection = settings.volumeKeyDirection,
+                        colors = colors,
+                        onDirectionChange = { onSettingsChange(settings.copy(volumeKeyDirection = it)) }
+                    )
+                }
+            }
+        }
+
+        // Edge Gestures
+        SettingSwitch(
+            title = "Edge Gestures",
+            subtitle = "Swipe from screen edges for quick actions",
+            checked = settings.edgeGestures,
+            colors = colors,
+            onCheckedChange = { onSettingsChange(settings.copy(edgeGestures = it)) }
+        )
+
+        // Smooth Scroll
+        SettingSwitch(
+            title = "Smooth Scrolling",
+            subtitle = "Enable smooth scroll animations",
+            checked = settings.smoothScroll,
+            colors = colors,
+            onCheckedChange = { onSettingsChange(settings.copy(smoothScroll = it)) }
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ScrollModeSelector(
+    selectedMode: ScrollMode,
+    colors: ReaderColors,
+    onModeChange: (ScrollMode) -> Unit
+) {
+    SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+        ScrollMode.entries.forEachIndexed { index, mode ->
+            SegmentedButton(
+                selected = selectedMode == mode,
+                onClick = { onModeChange(mode) },
+                shape = SegmentedButtonDefaults.itemShape(index, ScrollMode.entries.size),
+                label = {
+                    Text(
+                        text = mode.displayName,
+                        style = MaterialTheme.typography.labelSmall,
+                        maxLines = 1
+                    )
+                },
+                colors = SegmentedButtonDefaults.colors(
+                    activeContainerColor = colors.accent.copy(alpha = 0.15f),
+                    activeContentColor = colors.accent
+                )
+            )
+        }
+    }
+}
+
+@Composable
+private fun PageAnimationSelector(
+    selectedAnimation: PageAnimation,
+    colors: ReaderColors,
+    onAnimationChange: (PageAnimation) -> Unit
+) {
+    LazyRow(
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        items(PageAnimation.entries) { animation ->
+            val isSelected = selectedAnimation == animation
+
+            Surface(
+                onClick = { onAnimationChange(animation) },
+                shape = RoundedCornerShape(12.dp),
+                color = if (isSelected) colors.accent else colors.surface,
+                border = BorderStroke(1.dp, if (isSelected) colors.accent else colors.border)
+            ) {
+                Column(
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Text(
+                        text = animation.displayName,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = if (isSelected) colors.onAccent else colors.text
+                    )
+                    Text(
+                        text = animation.description,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (isSelected) colors.onAccent.copy(alpha = 0.7f) else colors.textSecondary
+                    )
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ReadingDirectionSelector(
+    selectedDirection: ReadingDirection,
+    colors: ReaderColors,
+    onDirectionChange: (ReadingDirection) -> Unit
+) {
+    SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+        ReadingDirection.entries.forEachIndexed { index, direction ->
+            SegmentedButton(
+                selected = selectedDirection == direction,
+                onClick = { onDirectionChange(direction) },
+                shape = SegmentedButtonDefaults.itemShape(index, ReadingDirection.entries.size),
+                label = {
+                    Text(
+                        text = direction.displayName,
+                        style = MaterialTheme.typography.labelSmall,
+                        maxLines = 1
+                    )
+                },
+                colors = SegmentedButtonDefaults.colors(
+                    activeContainerColor = colors.accent.copy(alpha = 0.15f),
+                    activeContentColor = colors.accent
+                )
+            )
+        }
+    }
+}
+
+@Composable
+private fun ScrollSensitivityControl(
+    sensitivity: Float,
+    colors: ReaderColors,
+    onSensitivityChange: (Float) -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            listOf(
+                "Slow" to 0.5f,
+                "Normal" to 1.0f,
+                "Fast" to 1.5f,
+                "Very Fast" to 2.0f
+            ).forEach { (label, value) ->
+                val isSelected = kotlin.math.abs(sensitivity - value) < 0.1f
+
+                Surface(
+                    onClick = { onSensitivityChange(value) },
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(8.dp),
+                    color = if (isSelected) colors.accent else colors.surface,
+                    border = BorderStroke(1.dp, if (isSelected) colors.accent else colors.border)
+                ) {
+                    Text(
+                        text = label,
+                        style = MaterialTheme.typography.labelSmall,
+                        textAlign = TextAlign.Center,
+                        color = if (isSelected) colors.onAccent else colors.textSecondary,
+                        modifier = Modifier.padding(vertical = 8.dp)
+                    )
+                }
+            }
+        }
+
+        Slider(
+            value = sensitivity,
+            onValueChange = { onSensitivityChange((it * 10).toInt() / 10f) },
+            valueRange = 0.5f..2.0f,
+            colors = SliderDefaults.colors(
+                thumbColor = colors.accent,
+                activeTrackColor = colors.accent,
+                inactiveTrackColor = colors.progressTrack
+            )
+        )
+    }
+}
+
+@Composable
+private fun TapZoneSelector(
+    tapZones: TapZoneConfig,
+    colors: ReaderColors,
+    onTapZonesChange: (TapZoneConfig) -> Unit
+) {
+    var showCustomization by remember { mutableStateOf(false) }
+
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        // Preset tap zones
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            listOf(
+                "Default" to TapZoneConfig.DEFAULT,
+                "Kindle" to TapZoneConfig.KINDLE_STYLE,
+                "Simple" to TapZoneConfig.SIMPLE,
+                "Inverted" to TapZoneConfig.INVERTED
+            ).forEach { (label, config) ->
+                val isSelected = tapZones == config
+
+                Surface(
+                    onClick = { onTapZonesChange(config) },
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(8.dp),
+                    color = if (isSelected) colors.accent else colors.surface,
+                    border = BorderStroke(1.dp, if (isSelected) colors.accent else colors.border)
+                ) {
+                    Text(
+                        text = label,
+                        style = MaterialTheme.typography.labelSmall,
+                        textAlign = TextAlign.Center,
+                        color = if (isSelected) colors.onAccent else colors.textSecondary,
+                        modifier = Modifier.padding(vertical = 10.dp)
+                    )
+                }
+            }
+        }
+
+        // Visual tap zone preview
+        TapZonePreview(
+            tapZones = tapZones,
+            colors = colors
+        )
+
+        // Customize button
+        TextButton(
+            onClick = { showCustomization = !showCustomization },
+            modifier = Modifier.align(Alignment.CenterHorizontally)
+        ) {
+            Text(
+                text = if (showCustomization) "Hide Customization" else "Customize Zones",
+                color = colors.accent
+            )
+        }
+
+        // Customization options
+        AnimatedVisibility(visible = showCustomization) {
+            TapZoneCustomization(
+                tapZones = tapZones,
+                colors = colors,
+                onTapZonesChange = onTapZonesChange
+            )
+        }
+    }
+}
+
+@Composable
+private fun TapZonePreview(
+    tapZones: TapZoneConfig,
+    colors: ReaderColors
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .aspectRatio(16f / 9f)
+            .clip(RoundedCornerShape(8.dp))
+            .background(colors.surface)
+            .border(1.dp, colors.border, RoundedCornerShape(8.dp))
+    ) {
+        // Left zone
+        Box(
+            modifier = Modifier
+                .fillMaxWidth(tapZones.horizontalZoneRatio)
+                .fillMaxSize()
+                .background(colors.accent.copy(alpha = 0.2f))
+                .align(Alignment.CenterStart),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = tapZones.leftZoneAction.displayName,
+                style = MaterialTheme.typography.labelSmall,
+                color = colors.textSecondary,
+                textAlign = TextAlign.Center
+            )
+        }
+
+        // Right zone
+        Box(
+            modifier = Modifier
+                .fillMaxWidth(tapZones.horizontalZoneRatio)
+                .fillMaxSize()
+                .background(colors.accent.copy(alpha = 0.2f))
+                .align(Alignment.CenterEnd),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = tapZones.rightZoneAction.displayName,
+                style = MaterialTheme.typography.labelSmall,
+                color = colors.textSecondary,
+                textAlign = TextAlign.Center
+            )
+        }
+
+        // Center zone
+        Box(
+            modifier = Modifier
+                .fillMaxWidth(1f - (tapZones.horizontalZoneRatio * 2))
+                .fillMaxSize()
+                .align(Alignment.Center),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = tapZones.centerZoneAction.displayName,
+                style = MaterialTheme.typography.labelSmall,
+                color = colors.textSecondary,
+                textAlign = TextAlign.Center
+            )
+        }
+    }
+}
+
+@Composable
+private fun TapZoneCustomization(
+    tapZones: TapZoneConfig,
+    colors: ReaderColors,
+    onTapZonesChange: (TapZoneConfig) -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        // Zone size sliders
+        Text(
+            text = "Zone Sizes",
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.Medium,
+            color = colors.text
+        )
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text(
+                text = "Horizontal",
+                style = MaterialTheme.typography.bodySmall,
+                color = colors.textSecondary,
+                modifier = Modifier.width(80.dp)
+            )
+            Slider(
+                value = tapZones.horizontalZoneRatio,
+                onValueChange = {
+                    onTapZonesChange(tapZones.copy(horizontalZoneRatio = it))
+                },
+                valueRange = 0f..0.5f,
+                modifier = Modifier.weight(1f),
+                colors = SliderDefaults.colors(
+                    thumbColor = colors.accent,
+                    activeTrackColor = colors.accent,
+                    inactiveTrackColor = colors.progressTrack
+                )
+            )
+            Text(
+                text = "${(tapZones.horizontalZoneRatio * 100).toInt()}%",
+                style = MaterialTheme.typography.labelSmall,
+                color = colors.textSecondary
+            )
+        }
+
+        HorizontalDivider(color = colors.divider)
+
+        // Zone actions
+        Text(
+            text = "Zone Actions",
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.Medium,
+            color = colors.text
+        )
+
+        TapActionDropdown(
+            label = "Left Zone",
+            selectedAction = tapZones.leftZoneAction,
+            colors = colors,
+            onActionChange = { onTapZonesChange(tapZones.copy(leftZoneAction = it)) }
+        )
+
+        TapActionDropdown(
+            label = "Right Zone",
+            selectedAction = tapZones.rightZoneAction,
+            colors = colors,
+            onActionChange = { onTapZonesChange(tapZones.copy(rightZoneAction = it)) }
+        )
+
+        TapActionDropdown(
+            label = "Center Zone",
+            selectedAction = tapZones.centerZoneAction,
+            colors = colors,
+            onActionChange = { onTapZonesChange(tapZones.copy(centerZoneAction = it)) }
+        )
+
+        TapActionDropdown(
+            label = "Double Tap",
+            selectedAction = tapZones.doubleTapAction,
+            colors = colors,
+            onActionChange = { onTapZonesChange(tapZones.copy(doubleTapAction = it)) }
+        )
+    }
+}
+
+@Composable
+private fun TapActionDropdown(
+    label: String,
+    selectedAction: TapAction,
+    colors: ReaderColors,
+    onActionChange: (TapAction) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodySmall,
+            color = colors.textSecondary
+        )
+
+        Box {
+            Surface(
+                onClick = { expanded = true },
+                shape = RoundedCornerShape(8.dp),
+                color = colors.surface,
+                border = BorderStroke(1.dp, colors.border)
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = selectedAction.displayName,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = colors.text
+                    )
+                    Icon(
+                        imageVector = Icons.Default.ExpandMore,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp),
+                        tint = colors.iconSecondary
+                    )
+                }
+            }
+
+            DropdownMenu(
+                expanded = expanded,
+                onDismissRequest = { expanded = false }
+            ) {
+                TapAction.entries.forEach { action ->
+                    DropdownMenuItem(
+                        text = { Text(action.displayName) },
+                        onClick = {
+                            onActionChange(action)
+                            expanded = false
+                        },
+                        leadingIcon = if (action == selectedAction) {
+                            {
+                                Icon(
+                                    Icons.Default.Check,
+                                    contentDescription = null,
+                                    tint = colors.accent
+                                )
+                            }
+                        } else null
+                    )
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun VolumeKeyDirectionSelector(
+    selectedDirection: VolumeKeyDirection,
+    colors: ReaderColors,
+    onDirectionChange: (VolumeKeyDirection) -> Unit
+) {
+    Column(
+        modifier = Modifier.padding(top = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Text(
+            text = "Volume Key Direction",
+            style = MaterialTheme.typography.labelSmall,
+            color = colors.textSecondary
+        )
+
+        SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+            VolumeKeyDirection.entries.forEachIndexed { index, direction ->
+                SegmentedButton(
+                    selected = selectedDirection == direction,
+                    onClick = { onDirectionChange(direction) },
+                    shape = SegmentedButtonDefaults.itemShape(index, VolumeKeyDirection.entries.size),
+                    label = {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(
+                                text = direction.displayName,
+                                style = MaterialTheme.typography.labelSmall
+                            )
+                        }
+                    },
+                    colors = SegmentedButtonDefaults.colors(
+                        activeContainerColor = colors.accent.copy(alpha = 0.15f),
+                        activeContentColor = colors.accent
+                    )
+                )
+            }
+        }
+
+        Text(
+            text = selectedDirection.description,
+            style = MaterialTheme.typography.bodySmall,
+            color = colors.textSecondary
+        )
+    }
+}
+
+// =============================================================================
 // ADVANCED SETTINGS
 // =============================================================================
 
@@ -1556,6 +2600,7 @@ private fun AdvancedSettings(
     onSettingsChange: (ReaderSettings) -> Unit
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
+        // Display Options
         SettingSection(
             title = "Display",
             icon = Icons.Default.Visibility,
@@ -1582,9 +2627,18 @@ private fun AdvancedSettings(
                     colors = colors,
                     onCheckedChange = { onSettingsChange(settings.copy(showChapterTitle = it)) }
                 )
+
+                SettingSwitch(
+                    title = "Immersive Mode",
+                    subtitle = "Hide status bar while reading",
+                    checked = settings.immersiveMode,
+                    colors = colors,
+                    onCheckedChange = { onSettingsChange(settings.copy(immersiveMode = it)) }
+                )
             }
         }
 
+        // Progress Style (existing)
         AnimatedVisibility(visible = settings.showProgress) {
             SettingSection(
                 title = "Progress Style",
@@ -1599,28 +2653,59 @@ private fun AdvancedSettings(
             }
         }
 
+        // Screen Orientation
         SettingSection(
-            title = "Scrolling",
-            icon = Icons.AutoMirrored.Filled.Sort,
+            title = "Screen Orientation",
+            icon = Icons.Default.ScreenRotation,
+            colors = colors
+        ) {
+            ScreenOrientationSelector(
+                selectedOrientation = settings.screenOrientation,
+                colors = colors,
+                onOrientationChange = { onSettingsChange(settings.copy(screenOrientation = it)) }
+            )
+        }
+
+        // Auto-hide Controls (existing)
+        SettingSection(
+            title = "Auto-hide Controls",
+            icon = Icons.Default.Timer,
+            colors = colors
+        ) {
+            AutoHideDelaySelector(
+                delay = settings.autoHideControlsDelay,
+                colors = colors,
+                onDelayChange = { onSettingsChange(settings.copy(autoHideControlsDelay = it)) }
+            )
+        }
+
+        // Auto-scroll (NEW)
+        SettingSection(
+            title = "Auto-Scroll",
+            subtitle = "Hands-free reading",
+            icon = Icons.Default.PlayArrow,
             colors = colors
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 SettingSwitch(
-                    title = "Smooth Scrolling",
-                    checked = settings.smoothScroll,
+                    title = "Enable Auto-Scroll",
+                    subtitle = "Automatically scroll the page while reading",
+                    checked = settings.autoScrollEnabled,
                     colors = colors,
-                    onCheckedChange = { onSettingsChange(settings.copy(smoothScroll = it)) }
+                    onCheckedChange = { onSettingsChange(settings.copy(autoScrollEnabled = it)) }
                 )
 
-                SettingSwitch(
-                    title = "Volume Key Navigation",
-                    checked = settings.volumeKeyNavigation,
-                    colors = colors,
-                    onCheckedChange = { onSettingsChange(settings.copy(volumeKeyNavigation = it)) }
-                )
+                AnimatedVisibility(visible = settings.autoScrollEnabled) {
+                    AutoScrollSpeedControl(
+                        speed = settings.autoScrollSpeed,
+                        colors = colors,
+                        onSpeedChange = { onSettingsChange(settings.copy(autoScrollSpeed = it)) }
+                    )
+                }
             }
         }
 
+        // Behavior
         SettingSection(
             title = "Behavior",
             icon = Icons.Default.Settings,
@@ -1629,28 +2714,31 @@ private fun AdvancedSettings(
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 SettingSwitch(
                     title = "Keep Screen On",
+                    subtitle = "Prevent screen from turning off while reading",
                     checked = settings.keepScreenOn,
                     colors = colors,
                     onCheckedChange = { onSettingsChange(settings.copy(keepScreenOn = it)) }
                 )
 
                 SettingSwitch(
-                    title = "Text Selection on Long Press",
+                    title = "Text Selection",
+                    subtitle = "Long press to select and copy text",
                     checked = settings.longPressSelection,
                     colors = colors,
                     onCheckedChange = { onSettingsChange(settings.copy(longPressSelection = it)) }
                 )
 
                 SettingSwitch(
-                    title = "Enable Hyphenation",
-                    subtitle = "For justified text",
-                    checked = settings.hyphenation,
+                    title = "Auto-advance Chapter (TTS)",
+                    subtitle = "Automatically start next chapter when TTS finishes",
+                    checked = settings.ttsAutoAdvanceChapter,
                     colors = colors,
-                    onCheckedChange = { onSettingsChange(settings.copy(hyphenation = it)) }
+                    onCheckedChange = { onSettingsChange(settings.copy(ttsAutoAdvanceChapter = it)) }
                 )
             }
         }
 
+        // Accessibility (existing)
         SettingSection(
             title = "Accessibility",
             icon = Icons.Default.AccessibilityNew,
@@ -1659,6 +2747,7 @@ private fun AdvancedSettings(
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 SettingSwitch(
                     title = "Force High Contrast",
+                    subtitle = "Increase text/background contrast",
                     checked = settings.forceHighContrast,
                     colors = colors,
                     onCheckedChange = { onSettingsChange(settings.copy(forceHighContrast = it)) }
@@ -1666,6 +2755,7 @@ private fun AdvancedSettings(
 
                 SettingSwitch(
                     title = "Reduce Motion",
+                    subtitle = "Minimize animations",
                     checked = settings.reduceMotion,
                     colors = colors,
                     onCheckedChange = { onSettingsChange(settings.copy(reduceMotion = it)) }
@@ -1673,12 +2763,143 @@ private fun AdvancedSettings(
 
                 SettingSwitch(
                     title = "Larger Touch Targets",
+                    subtitle = "Easier to tap buttons and controls",
                     checked = settings.largerTouchTargets,
                     colors = colors,
                     onCheckedChange = { onSettingsChange(settings.copy(largerTouchTargets = it)) }
                 )
             }
         }
+
+        // About section (existing)
+        SettingSection(
+            title = "About These Settings",
+            icon = Icons.AutoMirrored.Filled.MenuBook,
+            colors = colors
+        ) {
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = colors.surface
+            ) {
+                Column(
+                    modifier = Modifier.padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = "These settings are saved automatically and apply to all chapters.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colors.textSecondary
+                    )
+                    Text(
+                        text = "Use presets for quick configuration or customize individual settings for the perfect reading experience.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colors.textSecondary
+                    )
+                }
+            }
+        }
+    }
+}
+
+// NEW: Screen Orientation Selector
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ScreenOrientationSelector(
+    selectedOrientation: ScreenOrientation,
+    colors: ReaderColors,
+    onOrientationChange: (ScreenOrientation) -> Unit
+) {
+    SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+        ScreenOrientation.entries.forEachIndexed { index, orientation ->
+            SegmentedButton(
+                selected = selectedOrientation == orientation,
+                onClick = { onOrientationChange(orientation) },
+                shape = SegmentedButtonDefaults.itemShape(index, ScreenOrientation.entries.size),
+                label = {
+                    Text(
+                        text = orientation.displayName,
+                        style = MaterialTheme.typography.labelSmall,
+                        maxLines = 1
+                    )
+                },
+                colors = SegmentedButtonDefaults.colors(
+                    activeContainerColor = colors.accent.copy(alpha = 0.15f),
+                    activeContentColor = colors.accent
+                )
+            )
+        }
+    }
+}
+
+// NEW: Auto-scroll Speed Control
+@Composable
+private fun AutoScrollSpeedControl(
+    speed: Float,
+    colors: ReaderColors,
+    onSpeedChange: (Float) -> Unit
+) {
+    Column(
+        modifier = Modifier.padding(top = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "Scroll Speed",
+                style = MaterialTheme.typography.bodySmall,
+                color = colors.textSecondary
+            )
+            Text(
+                text = "×${String.format("%.1f", speed)}",
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Medium,
+                color = colors.accent
+            )
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            listOf(
+                "Slow" to 0.5f,
+                "Normal" to 1.0f,
+                "Fast" to 2.0f,
+                "Very Fast" to 3.0f
+            ).forEach { (label, value) ->
+                val isSelected = kotlin.math.abs(speed - value) < 0.1f
+
+                Surface(
+                    onClick = { onSpeedChange(value) },
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(8.dp),
+                    color = if (isSelected) colors.accent else colors.surface,
+                    border = BorderStroke(1.dp, if (isSelected) colors.accent else colors.border)
+                ) {
+                    Text(
+                        text = label,
+                        style = MaterialTheme.typography.labelSmall,
+                        textAlign = TextAlign.Center,
+                        color = if (isSelected) colors.onAccent else colors.textSecondary,
+                        modifier = Modifier.padding(vertical = 8.dp)
+                    )
+                }
+            }
+        }
+
+        Slider(
+            value = speed,
+            onValueChange = { onSpeedChange((it * 10).toInt() / 10f) },
+            valueRange = ReaderSettings.MIN_AUTO_SCROLL_SPEED..ReaderSettings.MAX_AUTO_SCROLL_SPEED,
+            colors = SliderDefaults.colors(
+                thumbColor = colors.accent,
+                activeTrackColor = colors.accent,
+                inactiveTrackColor = colors.progressTrack
+            )
+        )
     }
 }
 
@@ -1688,21 +2909,78 @@ private fun ProgressStyleSelector(
     colors: ReaderColors,
     onStyleChange: (ProgressStyle) -> Unit
 ) {
-    LazyRow(
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        LazyRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            items(ProgressStyle.entries.filter { it != ProgressStyle.NONE }) { style ->
+                val isSelected = selectedStyle == style
+
+                Surface(
+                    onClick = { onStyleChange(style) },
+                    shape = RoundedCornerShape(12.dp),
+                    color = if (isSelected) colors.accent else colors.surface,
+                    border = BorderStroke(1.dp, if (isSelected) colors.accent else colors.border)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text(
+                            text = style.displayName,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = if (isSelected) colors.onAccent else colors.text
+                        )
+                    }
+                }
+            }
+        }
+
+        Text(
+            text = selectedStyle.description,
+            style = MaterialTheme.typography.bodySmall,
+            color = colors.textSecondary
+        )
+    }
+}
+
+@Composable
+private fun AutoHideDelaySelector(
+    delay: Long,
+    colors: ReaderColors,
+    onDelayChange: (Long) -> Unit
+) {
+    val options = listOf(
+        "Never" to 0L,
+        "1.5s" to 1500L,
+        "3s" to 3000L,
+        "5s" to 5000L,
+        "10s" to 10000L
+    )
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        items(ProgressStyle.entries.filter { it != ProgressStyle.NONE }) { style ->
-            val isSelected = selectedStyle == style
+        options.forEach { (label, value) ->
+            val isSelected = delay == value
 
-            FilterChip(
-                selected = isSelected,
-                onClick = { onStyleChange(style) },
-                label = { Text(style.displayName) },
-                colors = FilterChipDefaults.filterChipColors(
-                    selectedContainerColor = colors.accent.copy(alpha = 0.15f),
-                    selectedLabelColor = colors.accent
+            Surface(
+                onClick = { onDelayChange(value) },
+                modifier = Modifier.weight(1f),
+                shape = RoundedCornerShape(8.dp),
+                color = if (isSelected) colors.accent else colors.surface,
+                border = BorderStroke(1.dp, if (isSelected) colors.accent else colors.border)
+            ) {
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.labelSmall,
+                    textAlign = TextAlign.Center,
+                    color = if (isSelected) colors.onAccent else colors.textSecondary,
+                    modifier = Modifier.padding(vertical = 10.dp)
                 )
-            )
+            }
         }
     }
 }

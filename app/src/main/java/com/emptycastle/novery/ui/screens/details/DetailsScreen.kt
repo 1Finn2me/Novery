@@ -1,8 +1,12 @@
 // com/emptycastle/novery/ui/screens/details/DetailsScreen.kt
+// Updated to use the new simplified components
 package com.emptycastle.novery.ui.screens.details
 
 import android.content.Intent
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
@@ -16,12 +20,19 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.FloatingActionButtonDefaults
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -48,11 +59,13 @@ import com.emptycastle.novery.ui.screens.details.components.EmptyChaptersMessage
 import com.emptycastle.novery.ui.screens.details.components.EmptyRelatedMessage
 import com.emptycastle.novery.ui.screens.details.components.EmptyReviewsMessage
 import com.emptycastle.novery.ui.screens.details.components.ErrorContent
+import com.emptycastle.novery.ui.screens.details.components.FastScrollerContainer
 import com.emptycastle.novery.ui.screens.details.components.FloatingScrollButton
 import com.emptycastle.novery.ui.screens.details.components.LoadMoreReviewsButton
 import com.emptycastle.novery.ui.screens.details.components.NovelHeader
+import com.emptycastle.novery.ui.screens.details.components.PaginationControls
 import com.emptycastle.novery.ui.screens.details.components.RelatedNovelRow
-import com.emptycastle.novery.ui.screens.details.components.ReviewItem
+import com.emptycastle.novery.ui.screens.details.components.ReviewCard
 import com.emptycastle.novery.ui.screens.details.components.ReviewsHeader
 import com.emptycastle.novery.ui.screens.details.components.ReviewsLoadingIndicator
 import com.emptycastle.novery.ui.screens.details.components.SelectionModeOverlay
@@ -77,6 +90,7 @@ fun DetailsScreen(
     onBack: () -> Unit,
     onChapterClick: (String, String, String) -> Unit,
     onNovelClick: (String, String) -> Unit = { _, _ -> },
+    onOpenInWebView: (String, String) -> Unit = { _, _ -> },
     viewModel: DetailsViewModel = viewModel()
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -88,6 +102,7 @@ fun DetailsScreen(
 
     val isDownloadingThisNovel = downloadState.isActive && downloadState.novelUrl == novelUrl
     val filteredChapters = uiState.filteredChapters
+    val displayedChapters = uiState.displayedChapters
 
     // Handle back press in selection mode
     BackHandler(enabled = uiState.isSelectionMode) {
@@ -97,6 +112,16 @@ fun DetailsScreen(
     // Load novel on first composition
     LaunchedEffect(novelUrl, providerName) {
         viewModel.loadNovel(novelUrl, providerName)
+    }
+
+    // Reset scroll position when page changes in paginated mode
+    LaunchedEffect(uiState.paginationState.currentPage, uiState.chapterDisplayMode) {
+        if (uiState.chapterDisplayMode == ChapterDisplayMode.PAGINATED &&
+            uiState.selectedTab == DetailsTab.CHAPTERS
+        ) {
+            val headerCount = calculateHeaderItemCount(uiState)
+            listState.scrollToItem(headerCount)
+        }
     }
 
     // Dialogs and Bottom Sheets
@@ -135,24 +160,61 @@ fun DetailsScreen(
                             onRefresh = { viewModel.refresh() },
                             modifier = Modifier.fillMaxSize()
                         ) {
-                            DetailsContent(
-                                listState = listState,
-                                uiState = uiState,
-                                details = details,
-                                filteredChapters = filteredChapters,
-                                isDownloadingThisNovel = isDownloadingThisNovel,
-                                downloadProgress = downloadState.progressPercent,
-                                novelUrl = novelUrl,
-                                providerName = providerName,
-                                onBack = onBack,
-                                onChapterClick = onChapterClick,
-                                onNovelClick = onNovelClick,
-                                onHapticFeedback = { type ->
-                                    haptic.performHapticFeedback(type)
-                                },
-                                onTabSelected = { viewModel.selectTab(it) },
-                                viewModel = viewModel
-                            )
+                            // Wrap in FastScrollerContainer for scroll mode in chapters tab
+                            val usesFastScroller = uiState.selectedTab == DetailsTab.CHAPTERS &&
+                                    uiState.chapterDisplayMode == ChapterDisplayMode.SCROLL &&
+                                    filteredChapters.size > 20
+
+                            if (usesFastScroller) {
+                                FastScrollerContainer(
+                                    listState = listState,
+                                    totalItems = filteredChapters.size
+                                ) {
+                                    DetailsContent(
+                                        listState = listState,
+                                        uiState = uiState,
+                                        details = details,
+                                        filteredChapters = filteredChapters,
+                                        displayedChapters = displayedChapters,
+                                        isDownloadingThisNovel = isDownloadingThisNovel,
+                                        downloadProgress = downloadState.progressPercent,
+                                        novelUrl = novelUrl,
+                                        providerName = providerName,
+                                        onBack = onBack,
+                                        onChapterClick = onChapterClick,
+                                        onNovelClick = onNovelClick,
+                                        onOpenInWebView = onOpenInWebView,
+                                        onHapticFeedback = { type ->
+                                            haptic.performHapticFeedback(type)
+                                        },
+                                        onTabSelected = { viewModel.selectTab(it) },
+                                        viewModel = viewModel,
+                                        scope = scope
+                                    )
+                                }
+                            } else {
+                                DetailsContent(
+                                    listState = listState,
+                                    uiState = uiState,
+                                    details = details,
+                                    filteredChapters = filteredChapters,
+                                    displayedChapters = displayedChapters,
+                                    isDownloadingThisNovel = isDownloadingThisNovel,
+                                    downloadProgress = downloadState.progressPercent,
+                                    novelUrl = novelUrl,
+                                    providerName = providerName,
+                                    onBack = onBack,
+                                    onChapterClick = onChapterClick,
+                                    onNovelClick = onNovelClick,
+                                    onOpenInWebView = onOpenInWebView,
+                                    onHapticFeedback = { type ->
+                                        haptic.performHapticFeedback(type)
+                                    },
+                                    onTabSelected = { viewModel.selectTab(it) },
+                                    viewModel = viewModel,
+                                    scope = scope
+                                )
+                            }
                         }
 
                         // Selection mode overlay (only in chapters tab)
@@ -184,8 +246,11 @@ fun DetailsScreen(
                             )
                         }
 
-                        // Floating scroll button (only in chapters tab)
-                        if (uiState.selectedTab == DetailsTab.CHAPTERS) {
+                        // Floating scroll to last read button (only in chapters tab, scroll mode)
+                        if (uiState.selectedTab == DetailsTab.CHAPTERS &&
+                            uiState.chapterDisplayMode == ChapterDisplayMode.SCROLL &&
+                            !uiState.isSelectionMode
+                        ) {
                             FloatingScrollButtonContainer(
                                 uiState = uiState,
                                 filteredChapters = filteredChapters,
@@ -193,8 +258,66 @@ fun DetailsScreen(
                                 scope = scope
                             )
                         }
+
+                        // Scroll to top FAB
+                        ScrollToTopFab(
+                            listState = listState,
+                            uiState = uiState,
+                            scope = scope
+                        )
                     }
                 }
+            }
+        }
+    }
+}
+
+// ================================================================
+// SCROLL TO TOP FAB
+// ================================================================
+
+@Composable
+private fun ScrollToTopFab(
+    listState: LazyListState,
+    uiState: DetailsUiState,
+    scope: CoroutineScope
+) {
+    val showScrollToTop by remember {
+        derivedStateOf {
+            uiState.selectedTab == DetailsTab.CHAPTERS &&
+                    uiState.chapterDisplayMode == ChapterDisplayMode.SCROLL &&
+                    listState.firstVisibleItemIndex > 10 &&
+                    !uiState.isSelectionMode
+        }
+    }
+
+    AnimatedVisibility(
+        visible = showScrollToTop,
+        enter = fadeIn(),
+        exit = fadeOut(),
+        modifier = Modifier.fillMaxSize()
+    ) {
+        Box(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = Alignment.BottomStart
+        ) {
+            FloatingActionButton(
+                onClick = {
+                    scope.launch {
+                        listState.animateScrollToItem(0)
+                    }
+                },
+                containerColor = MaterialTheme.colorScheme.primaryContainer,
+                contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                elevation = FloatingActionButtonDefaults.elevation(4.dp),
+                modifier = Modifier
+                    .padding(16.dp)
+                    .navigationBarsPadding()
+            ) {
+                Icon(
+                    imageVector = Icons.Default.KeyboardArrowUp,
+                    contentDescription = "Scroll to top"
+                )
             }
         }
     }
@@ -282,6 +405,7 @@ private fun DetailsContent(
     uiState: DetailsUiState,
     details: NovelDetails,
     filteredChapters: List<Chapter>,
+    displayedChapters: List<Chapter>,
     isDownloadingThisNovel: Boolean,
     downloadProgress: Float,
     novelUrl: String,
@@ -289,9 +413,11 @@ private fun DetailsContent(
     onBack: () -> Unit,
     onChapterClick: (String, String, String) -> Unit,
     onNovelClick: (String, String) -> Unit,
+    onOpenInWebView: (String, String) -> Unit,
     onHapticFeedback: (HapticFeedbackType) -> Unit,
     onTabSelected: (DetailsTab) -> Unit,
-    viewModel: DetailsViewModel
+    viewModel: DetailsViewModel,
+    scope: CoroutineScope
 ) {
     val context = LocalContext.current
 
@@ -325,6 +451,9 @@ private fun DetailsContent(
                         putExtra(Intent.EXTRA_TEXT, "${details.name}\n${details.url}")
                     }
                     context.startActivity(Intent.createChooser(shareIntent, "Share novel"))
+                },
+                onOpenInWebView = {
+                    onOpenInWebView(providerName, details.url)
                 }
             )
         }
@@ -353,7 +482,8 @@ private fun DetailsContent(
                 readCount = uiState.readChapters.size,
                 downloadedCount = uiState.downloadedCount,
                 rating = details.rating,
-                peopleVoted = details.peopleVoted
+                peopleVoted = details.peopleVoted,
+                views = details.views
             )
         }
 
@@ -400,11 +530,15 @@ private fun DetailsContent(
                 chaptersTabContent(
                     uiState = uiState,
                     filteredChapters = filteredChapters,
+                    displayedChapters = displayedChapters,
                     novelUrl = novelUrl,
                     providerName = providerName,
                     onChapterClick = onChapterClick,
                     onHapticFeedback = onHapticFeedback,
-                    viewModel = viewModel
+                    viewModel = viewModel,
+                    scope = scope,
+                    listState = listState,
+                    context = context
                 )
             }
 
@@ -445,13 +579,17 @@ private fun DetailsContent(
 private fun androidx.compose.foundation.lazy.LazyListScope.chaptersTabContent(
     uiState: DetailsUiState,
     filteredChapters: List<Chapter>,
+    displayedChapters: List<Chapter>,
     novelUrl: String,
     providerName: String,
     onChapterClick: (String, String, String) -> Unit,
     onHapticFeedback: (HapticFeedbackType) -> Unit,
-    viewModel: DetailsViewModel
+    viewModel: DetailsViewModel,
+    scope: CoroutineScope,
+    listState: LazyListState,
+    context: android.content.Context
 ) {
-    // Chapter list header with filters
+    // Chapter list header with filters and display options
     item(key = "chapter_header") {
         ChapterListHeader(
             chapterCount = uiState.novelDetails?.chapters?.size ?: 0,
@@ -464,16 +602,49 @@ private fun androidx.compose.foundation.lazy.LazyListScope.chaptersTabContent(
             unreadCount = uiState.unreadCount,
             downloadedCount = uiState.downloadedCount,
             notDownloadedCount = uiState.notDownloadedCount,
+            displayMode = uiState.chapterDisplayMode,
+            paginationState = uiState.paginationState,
             onToggleSort = { viewModel.toggleChapterSort() },
             onFilterChange = { viewModel.setChapterFilter(it) },
             onToggleSearch = { viewModel.toggleSearch() },
             onSearchQueryChange = { viewModel.setChapterSearchQuery(it) },
-            onEnableSelection = { viewModel.enableSelectionMode() }
+            onEnableSelection = { viewModel.enableSelectionMode() },
+            onDisplayModeChange = { viewModel.setChapterDisplayMode(it) },
+            onChaptersPerPageChange = { viewModel.setChaptersPerPage(it) },
+            onJumpToFirstUnread = {
+                scope.launch {
+                    val index = viewModel.jumpToFirstUnread()
+                    if (uiState.chapterDisplayMode == ChapterDisplayMode.SCROLL && index != null) {
+                        val headerCount = calculateHeaderItemCount(uiState)
+                        listState.animateScrollToItem(headerCount + index)
+                    }
+                }
+            },
+            onJumpToLastRead = {
+                scope.launch {
+                    val index = viewModel.jumpToLastRead()
+                    if (uiState.chapterDisplayMode == ChapterDisplayMode.SCROLL && index != null) {
+                        val headerCount = calculateHeaderItemCount(uiState)
+                        listState.animateScrollToItem(headerCount + index)
+                    }
+                }
+            }
         )
     }
 
+    // Pagination controls (top) for paginated mode
+    if (uiState.chapterDisplayMode == ChapterDisplayMode.PAGINATED && filteredChapters.isNotEmpty()) {
+        item(key = "pagination_top") {
+            PaginationControls(
+                paginationState = uiState.paginationState,
+                totalChapters = filteredChapters.size,
+                onPageChange = { viewModel.setCurrentPage(it) }
+            )
+        }
+    }
+
     // Chapter list or empty message
-    if (filteredChapters.isEmpty()) {
+    if (displayedChapters.isEmpty()) {
         item(key = "empty_chapters") {
             EmptyChaptersMessage(
                 filter = uiState.chapterFilter,
@@ -482,21 +653,32 @@ private fun androidx.compose.foundation.lazy.LazyListScope.chaptersTabContent(
         }
     } else {
         itemsIndexed(
-            items = filteredChapters,
+            items = displayedChapters,
             key = { _, chapter -> "chapter_${chapter.url}" }
-        ) { index, chapter ->
+        ) { displayIndex, chapter ->
+            // Calculate the actual index in the full filtered list
+            val actualIndex = when (uiState.chapterDisplayMode) {
+                ChapterDisplayMode.SCROLL -> displayIndex
+                ChapterDisplayMode.PAGINATED -> {
+                    uiState.paginationState.getPageRange(filteredChapters.size).first + displayIndex
+                }
+            }
+
+            val isRead = uiState.readChapters.contains(chapter.url)
+            val isDownloaded = uiState.downloadedChapters.contains(chapter.url)
+
             ChapterItem(
                 chapter = chapter,
-                index = index,
-                isRead = uiState.readChapters.contains(chapter.url),
-                isDownloaded = uiState.downloadedChapters.contains(chapter.url),
+                index = actualIndex,
+                isRead = isRead,
+                isDownloaded = isDownloaded,
                 isLastRead = chapter.url == uiState.lastReadChapterUrl,
                 isSelectionMode = uiState.isSelectionMode,
                 isSelected = uiState.selectedChapters.contains(chapter.url),
                 onTap = {
                     if (uiState.isSelectionMode) {
                         onHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        viewModel.toggleChapterSelection(index, chapter.url)
+                        viewModel.toggleChapterSelection(actualIndex, chapter.url)
                     } else {
                         onChapterClick(chapter.url, novelUrl, providerName)
                     }
@@ -504,11 +686,32 @@ private fun androidx.compose.foundation.lazy.LazyListScope.chaptersTabContent(
                 onLongPress = {
                     onHapticFeedback(HapticFeedbackType.LongPress)
                     if (uiState.isSelectionMode) {
-                        viewModel.selectRange(index)
+                        viewModel.selectRange(actualIndex)
                     } else {
                         viewModel.enableSelectionMode(chapter.url)
                     }
+                },
+                onSwipeToRead = {
+                    viewModel.toggleChapterReadStatus(chapter.url, isRead)
+                },
+                onSwipeToDownload = {
+                    if (isDownloaded) {
+                        viewModel.deleteChapterDownload(chapter.url)
+                    } else {
+                        viewModel.downloadSingleChapter(context, chapter)
+                    }
                 }
+            )
+        }
+    }
+
+    // Pagination controls (bottom) for paginated mode
+    if (uiState.chapterDisplayMode == ChapterDisplayMode.PAGINATED && filteredChapters.isNotEmpty()) {
+        item(key = "pagination_bottom") {
+            PaginationControls(
+                paginationState = uiState.paginationState,
+                totalChapters = filteredChapters.size,
+                onPageChange = { viewModel.setCurrentPage(it) }
             )
         }
     }
@@ -520,14 +723,13 @@ private fun androidx.compose.foundation.lazy.LazyListScope.chaptersTabContent(
 
 private fun androidx.compose.foundation.lazy.LazyListScope.relatedTabContent(
     novels: List<Novel>,
-    onNovelClick: (String, String) -> Unit
+    onNovelClick: (novelUrl: String, providerName: String) -> Unit
 ) {
     if (novels.isEmpty()) {
         item(key = "empty_related") {
             EmptyRelatedMessage()
         }
     } else {
-        // Chunk novels into rows of 2
         val rows = novels.chunked(2)
         itemsIndexed(
             items = rows,
@@ -535,9 +737,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.relatedTabContent(
         ) { _, rowNovels ->
             RelatedNovelRow(
                 novels = rowNovels,
-                onNovelClick = { novel ->
-                    onNovelClick(novel.apiName, novel.url)
-                }
+                onNovelClick = onNovelClick
             )
         }
     }
@@ -555,7 +755,6 @@ private fun androidx.compose.foundation.lazy.LazyListScope.reviewsTabContent(
     onLoadMore: () -> Unit,
     onToggleSpoilers: () -> Unit
 ) {
-    // Reviews header with spoiler toggle
     item(key = "reviews_header") {
         ReviewsHeader(
             reviewCount = reviews.size,
@@ -573,21 +772,19 @@ private fun androidx.compose.foundation.lazy.LazyListScope.reviewsTabContent(
             items = reviews,
             key = { index, review -> "review_${index}_${review.username}_${review.time}" }
         ) { _, review ->
-            ReviewItem(
+            ReviewCard(
                 review = review,
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
             )
         }
     }
 
-    // Loading indicator
     if (isLoading) {
         item(key = "reviews_loading") {
             ReviewsLoadingIndicator()
         }
     }
 
-    // Load more button
     if (!isLoading && hasMore && reviews.isNotEmpty()) {
         item(key = "reviews_load_more") {
             LoadMoreReviewsButton(onClick = onLoadMore)
@@ -608,7 +805,8 @@ private fun FloatingScrollButtonContainer(
 ) {
     val showButton = uiState.hasStartedReading &&
             uiState.lastReadChapterIndex >= 0 &&
-            !uiState.isSelectionMode
+            !uiState.isSelectionMode &&
+            uiState.chapterDisplayMode == ChapterDisplayMode.SCROLL
 
     if (showButton) {
         val lastReadInFiltered = filteredChapters.indexOfFirst {
@@ -623,7 +821,6 @@ private fun FloatingScrollButtonContainer(
                 FloatingScrollButton(
                     onClick = {
                         scope.launch {
-                            // Calculate offset: header items + tabs + chapter header + index
                             val headerItemCount = calculateHeaderItemCount(uiState)
                             listState.animateScrollToItem(headerItemCount + lastReadInFiltered)
                         }
@@ -648,5 +845,12 @@ private fun calculateHeaderItemCount(uiState: DetailsUiState): Int {
     if (!uiState.novelDetails?.tags.isNullOrEmpty()) count++ // tags
     count++ // sticky tabs
     count++ // chapter header
+
+    if (uiState.chapterDisplayMode == ChapterDisplayMode.PAGINATED &&
+        (uiState.filteredChapters.isNotEmpty())
+    ) {
+        count++ // pagination_top
+    }
+
     return count
 }

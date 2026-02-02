@@ -14,6 +14,7 @@ import com.emptycastle.novery.service.DownloadServiceManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -22,6 +23,7 @@ private const val TAG = "NotificationViewModel"
 class NotificationViewModel : ViewModel() {
 
     private val libraryRepository = RepositoryProvider.getLibraryRepository()
+    private val notificationRepository = RepositoryProvider.getNotificationRepository()
     private val offlineRepository = RepositoryProvider.getOfflineRepository()
     private val novelRepository = RepositoryProvider.getNovelRepository()
     private val preferencesManager = RepositoryProvider.getPreferencesManager()
@@ -30,39 +32,64 @@ class NotificationViewModel : ViewModel() {
     val uiState: StateFlow<NotificationUiState> = _uiState.asStateFlow()
 
     init {
-        loadNovelsWithUpdates()
+        observeNotifications()
     }
 
-    private fun loadNovelsWithUpdates() {
+    private fun observeNotifications() {
         viewModelScope.launch {
             try {
-                libraryRepository.observeLibrary().collect { items ->
-                    val novelsWithNew = items.filter { it.hasNewChapters }
-                    val totalNew = novelsWithNew.sumOf { it.newChapterCount }
+                combine(
+                    notificationRepository.observeNotificationEntries(),
+                    libraryRepository.observeLibrary()
+                ) { notificationEntries, libraryItems ->
+                    val libraryMap = libraryItems.associateBy { it.novel.url }
 
+                    val displayItems = notificationEntries.mapNotNull { entry ->
+                        val libraryItem = libraryMap[entry.novelUrl]
+                        if (libraryItem != null) {
+                            NotificationDisplayItem(
+                                libraryItem = libraryItem,
+                                notificationEntry = entry,
+                                isNew = entry.acknowledgedAt == null
+                            )
+                        } else {
+                            viewModelScope.launch {
+                                notificationRepository.removeNotification(entry.novelUrl)
+                            }
+                            null
+                        }
+                    }.sortedWith(
+                        compareByDescending<NotificationDisplayItem> { it.isNew }
+                            .thenByDescending { it.notificationEntry.lastUpdatedAt }
+                    )
+
+                    val totalNewChapters = displayItems.sumOf { it.libraryItem.newChapterCount }
+                    val unacknowledgedCount = displayItems.count { it.isNew }
+
+                    displayItems to Triple(totalNewChapters, displayItems.size, unacknowledgedCount)
+                }.collect { (displayItems, stats) ->
+                    val (totalNew, totalCount, unackCount) = stats
                     _uiState.update {
                         it.copy(
-                            novelsWithUpdates = novelsWithNew,
+                            displayItems = displayItems,
                             totalNewChapters = totalNew,
-                            novelsCount = novelsWithNew.size,
+                            totalNovelsCount = totalCount,
+                            unacknowledgedCount = unackCount,
                             isLoading = false
                         )
                     }
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Error loading novels with updates", e)
+                Log.e(TAG, "Error observing notifications", e)
                 _uiState.update { it.copy(isLoading = false) }
             }
         }
     }
 
-    // ================================================================
-    // MARK AS SEEN
-    // ================================================================
-
     fun markAsSeen(novelUrl: String) {
         viewModelScope.launch {
             try {
+                notificationRepository.markAsSeen(novelUrl)
                 libraryRepository.acknowledgeNewChapters(novelUrl)
             } catch (e: Exception) {
                 Log.e(TAG, "Error marking as seen: $novelUrl", e)
@@ -74,10 +101,9 @@ class NotificationViewModel : ViewModel() {
         viewModelScope.launch {
             try {
                 _uiState.update { it.copy(isMarkingAllSeen = true) }
-
-                val items = _uiState.value.novelsWithUpdates
-                items.forEach { item ->
-                    libraryRepository.acknowledgeNewChapters(item.novel.url)
+                notificationRepository.markAllAsSeen()
+                _uiState.value.displayItems.forEach { item ->
+                    libraryRepository.acknowledgeNewChapters(item.libraryItem.novel.url)
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error marking all as seen", e)
@@ -87,17 +113,45 @@ class NotificationViewModel : ViewModel() {
         }
     }
 
-    // ================================================================
-    // DOWNLOAD
-    // ================================================================
+    fun removeFromNotifications(novelUrl: String) {
+        viewModelScope.launch {
+            try {
+                notificationRepository.removeNotification(novelUrl)
+                libraryRepository.acknowledgeNewChapters(novelUrl)
+            } catch (e: Exception) {
+                Log.e(TAG, "Error removing from notifications: $novelUrl", e)
+            }
+        }
+    }
+
+    fun requestClearAll() {
+        _uiState.update { it.copy(showClearConfirmation = true) }
+    }
+
+    fun confirmClearAll() {
+        viewModelScope.launch {
+            try {
+                notificationRepository.clearAllNotifications()
+                _uiState.value.displayItems.forEach { item ->
+                    libraryRepository.acknowledgeNewChapters(item.libraryItem.novel.url)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error clearing all notifications", e)
+            } finally {
+                _uiState.update { it.copy(showClearConfirmation = false) }
+            }
+        }
+    }
+
+    fun dismissClearConfirmation() {
+        _uiState.update { it.copy(showClearConfirmation = false) }
+    }
 
     fun downloadNewChapters(context: Context, item: LibraryItem) {
         viewModelScope.launch {
             try {
                 val settings = preferencesManager.appSettings.value
-
                 if (settings.autoDownloadOnWifiOnly && !isOnWifi(context)) {
-                    Log.d(TAG, "Skipping download - not on WiFi")
                     return@launch
                 }
 
@@ -106,7 +160,6 @@ class NotificationViewModel : ViewModel() {
                 }
 
                 downloadChaptersForItem(context, item, settings.autoDownloadLimit)
-
             } catch (e: Exception) {
                 Log.e(TAG, "Error downloading chapters for ${item.novel.name}", e)
             } finally {
@@ -121,28 +174,21 @@ class NotificationViewModel : ViewModel() {
         viewModelScope.launch {
             try {
                 val settings = preferencesManager.appSettings.value
-
                 if (settings.autoDownloadOnWifiOnly && !isOnWifi(context)) {
-                    Log.d(TAG, "Skipping download - not on WiFi")
                     return@launch
                 }
 
-                val novelsWithNew = _uiState.value.novelsWithUpdates
-                if (novelsWithNew.isEmpty()) {
-                    Log.d(TAG, "No novels with new chapters to download")
-                    return@launch
-                }
+                val items = _uiState.value.displayItems.map { it.libraryItem }
+                if (items.isEmpty()) return@launch
 
                 _uiState.update { it.copy(isDownloadingAll = true) }
 
-                novelsWithNew.forEach { item ->
+                items.forEach { item ->
                     try {
                         _uiState.update {
                             it.copy(downloadingNovelUrls = it.downloadingNovelUrls + item.novel.url)
                         }
                         downloadChaptersForItem(context, item, settings.autoDownloadLimit)
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Error downloading chapters for ${item.novel.name}", e)
                     } finally {
                         _uiState.update {
                             it.copy(downloadingNovelUrls = it.downloadingNovelUrls - item.novel.url)
@@ -162,56 +208,28 @@ class NotificationViewModel : ViewModel() {
         item: LibraryItem,
         downloadLimit: Int
     ) {
-        val provider = novelRepository.getProvider(item.novel.apiName)
-        if (provider == null) {
-            Log.w(TAG, "Provider not found for ${item.novel.apiName}")
-            return
-        }
-
-        val detailsResult = novelRepository.loadNovelDetails(provider, item.novel.url, forceRefresh = false)
-        val details = detailsResult.getOrNull()
-        if (details == null) {
-            Log.w(TAG, "Could not load details for ${item.novel.name}")
-            return
-        }
-
-        val allChapters = details.chapters
-        if (allChapters.isNullOrEmpty()) {
-            Log.w(TAG, "No chapters found for ${item.novel.name}")
-            return
-        }
+        val provider = novelRepository.getProvider(item.novel.apiName) ?: return
+        val details = novelRepository.loadNovelDetails(provider, item.novel.url, false).getOrNull() ?: return
+        val allChapters = details.chapters ?: return
 
         val downloadedUrls = try {
             offlineRepository.getDownloadedChapterUrls(item.novel.url)
         } catch (e: Exception) {
-            Log.e(TAG, "Error getting downloaded URLs for ${item.novel.url}", e)
             emptySet()
         }
 
         val newChaptersCount = item.newChapterCount.coerceAtLeast(0)
-
         val newChapters = if (newChaptersCount > 0 && newChaptersCount <= allChapters.size) {
             allChapters.takeLast(newChaptersCount)
         } else {
-            allChapters.asReversed()
-                .filter { !downloadedUrls.contains(it.url) }
-                .take(10)
+            allChapters.asReversed().filter { !downloadedUrls.contains(it.url) }.take(10)
         }
 
         val chaptersToDownload = newChapters
-            .filter { chapter -> !downloadedUrls.contains(chapter.url) }
-            .let { chapters ->
-                if (downloadLimit > 0) {
-                    chapters.take(downloadLimit)
-                } else {
-                    chapters
-                }
-            }
+            .filter { !downloadedUrls.contains(it.url) }
+            .let { if (downloadLimit > 0) it.take(downloadLimit) else it }
 
-        if (chaptersToDownload.isEmpty()) {
-            Log.d(TAG, "No new chapters to download for ${item.novel.name}")
-            return
-        }
+        if (chaptersToDownload.isEmpty()) return
 
         val request = DownloadRequest(
             novelUrl = item.novel.url,
@@ -223,32 +241,21 @@ class NotificationViewModel : ViewModel() {
             priority = DownloadPriority.NORMAL
         )
 
-        try {
-            DownloadServiceManager.startDownload(context, request)
-            Log.d(TAG, "Started download for ${chaptersToDownload.size} chapters of ${item.novel.name}")
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to start download for ${item.novel.name}", e)
-        }
+        DownloadServiceManager.startDownload(context, request)
     }
 
     private fun isOnWifi(context: Context): Boolean {
         return try {
-            val connectivityManager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
-                ?: return false
-            val network = connectivityManager.activeNetwork ?: return false
-            val capabilities = connectivityManager.getNetworkCapabilities(network) ?: return false
-            capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
+            val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return false
+            val network = cm.activeNetwork ?: return false
+            val caps = cm.getNetworkCapabilities(network) ?: return false
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
         } catch (e: Exception) {
-            Log.e(TAG, "Error checking WiFi status", e)
             false
         }
     }
 
-    // ================================================================
-    // READING POSITION
-    // ================================================================
-
-    fun getReadingPosition(novelUrl: String) = _uiState.value.novelsWithUpdates
-        .find { it.novel.url == novelUrl }
-        ?.lastReadPosition
+    fun getReadingPosition(novelUrl: String) = _uiState.value.displayItems
+        .find { it.libraryItem.novel.url == novelUrl }
+        ?.libraryItem?.lastReadPosition
 }

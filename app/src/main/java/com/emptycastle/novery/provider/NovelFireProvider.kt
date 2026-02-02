@@ -1,3 +1,4 @@
+// com/emptycastle/novery/provider/NovelFireProvider.kt
 package com.emptycastle.novery.provider
 
 import com.emptycastle.novery.R
@@ -14,11 +15,8 @@ import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import org.jsoup.select.Elements
+import java.util.concurrent.ConcurrentHashMap
 
-
-/**
- * Provider for NovelFire.net
- */
 class NovelFireProvider : MainProvider() {
 
     override val name = "NovelFire"
@@ -27,8 +25,9 @@ class NovelFireProvider : MainProvider() {
     override val hasReviews = true
     override val iconRes: Int = R.drawable.ic_provider_novelfire
 
-    // Store cursor for comment pagination
-    private var commentCursors = mutableMapOf<String, String?>()
+    // Thread-safe state
+    private val commentCursors = ConcurrentHashMap<String, String?>()
+    private val postIdCache = ConcurrentHashMap<String, String>()
 
     // ================================================================
     // FILTER OPTIONS
@@ -114,59 +113,18 @@ class NovelFireProvider : MainProvider() {
     // ================================================================
 
     private object Selectors {
-        val novelContainers = listOf(
-            ".novel-item",
-            ".novel-list .novel-item"
-        )
-
-        val novelTitle = listOf(
-            ".novel-title > a",
-            "a[title]"
-        )
-
-        val novelDetailTitle = listOf(
-            ".novel-title",
-            ".cover > img[alt]"
-        )
-
-        val chapterContent = listOf(
-            "#content",
-            ".chapter-content"
-        )
-
-        val synopsis = listOf(
-            ".summary .content",
-            ".description"
-        )
-
-        val poster = listOf(
-            ".cover > img",
-            ".novel-cover > img"
-        )
-
-        val author = listOf(
-            ".author .property-item > span",
-            ".author span"
-        )
-
-        val genres = listOf(
-            ".categories .property-item",
-            ".genres a"
-        )
-
-        val status = listOf(
-            ".header-stats .ongoing",
-            ".header-stats .completed"
-        )
-
-        val rating = listOf(
-            ".nub",
-            ".rating-value"
-        )
-
-        val postId = listOf(
-            "#novel-report[report-post_id]"
-        )
+        val novelContainers = listOf(".novel-item", ".novel-list .novel-item")
+        val novelTitle = listOf(".novel-title > a", "a[title]")
+        val novelDetailTitle = listOf(".novel-title", ".cover > img[alt]")
+        val chapterContent = listOf("#content", ".chapter-content")
+        val synopsis = listOf(".summary .content", ".description")
+        val poster = listOf(".cover > img", ".novel-cover > img")
+        val author = listOf(".author .property-item > span", ".author span")
+        val genres = listOf(".categories .property-item", ".genres a")
+        val status = listOf(".header-stats .ongoing", ".header-stats .completed")
+        val rating = listOf(".nub", ".rating-value")
+        val postId = listOf("#novel-report[report-post_id]")
+        val views = listOf(".header-stats span:has(i.icon-eye) strong")
     }
 
     // ================================================================
@@ -203,30 +161,50 @@ class NovelFireProvider : MainProvider() {
 
     private fun fixPosterUrl(imgElement: Element?): String? {
         if (imgElement == null) return null
-
         val rawSrc = imgElement.attrOrNull("data-src")
             ?: imgElement.attrOrNull("src")
             ?: return null
-
         if (rawSrc.isBlank() || rawSrc.contains("data:image/gif")) return null
-
         val cleanedSrc = deSlash(rawSrc)
-        return if (cleanedSrc.startsWith("http")) {
-            cleanedSrc
-        } else {
-            "$mainUrl/$cleanedSrc"
-        }
+        return if (cleanedSrc.startsWith("http")) cleanedSrc else "$mainUrl/$cleanedSrc"
     }
 
     private fun parseStatus(statusText: String?): String? {
         if (statusText.isNullOrBlank()) return null
-
         return when (statusText.lowercase().trim()) {
             "ongoing" -> "Ongoing"
             "completed" -> "Completed"
             "hiatus", "on hiatus" -> "On Hiatus"
             "dropped", "cancelled", "canceled" -> "Cancelled"
             else -> statusText.trim().replaceFirstChar { it.uppercase() }
+        }
+    }
+
+    private fun parseViewCount(text: String?): String? {
+        if (text.isNullOrBlank()) return null
+        // Clean up the text, keeping numbers, decimals, and K/M/B suffixes
+        val cleaned = text.replace(Regex("[^0-9.KMBkmb]"), "").trim()
+        return cleaned.takeIf { it.isNotBlank() }
+    }
+
+    /**
+     * Parse view count to integer value
+     * Converts: "217.5K" -> 217500, "1.4M" -> 1400000, etc.
+     */
+    private fun parseViewCountToInt(text: String?): Int? {
+        if (text.isNullOrBlank()) return null
+        val cleaned = text.replace(Regex("[^0-9.KMBkmb]"), "").trim().uppercase()
+        return when {
+            cleaned.endsWith("K") -> {
+                cleaned.dropLast(1).toFloatOrNull()?.times(1_000)?.toInt()
+            }
+            cleaned.endsWith("M") -> {
+                cleaned.dropLast(1).toFloatOrNull()?.times(1_000_000)?.toInt()
+            }
+            cleaned.endsWith("B") -> {
+                cleaned.dropLast(1).toFloatOrNull()?.times(1_000_000_000)?.toInt()
+            }
+            else -> cleaned.replace(".", "").toIntOrNull()
         }
     }
 
@@ -248,12 +226,8 @@ class NovelFireProvider : MainProvider() {
         return cleaned.trim()
     }
 
-    /**
-     * Extract novel slug from URL
-     * e.g., "/book/sleeping-to-immortality-getting-stronger-one-nap-at-a-time" -> "sleeping-to-immortality-getting-stronger-one-nap-at-a-time"
-     */
     private fun extractNovelSlug(url: String): String {
-        val cleaned = url
+        return url
             .replace(mainUrl, "")
             .replace("$mainUrl/", "")
             .removePrefix("/")
@@ -261,7 +235,6 @@ class NovelFireProvider : MainProvider() {
             .removeSuffix("/")
             .split("/")
             .firstOrNull() ?: url
-        return cleaned
     }
 
     // ================================================================
@@ -270,58 +243,31 @@ class NovelFireProvider : MainProvider() {
 
     private fun parseNovels(document: Document): List<Novel> {
         val elements = document.selectAny(Selectors.novelContainers)
-        return elements.mapNotNull { element ->
-            parseNovelElement(element)
-        }
+        return elements.mapNotNull { element -> parseNovelElement(element) }
     }
 
     private fun parseNovelElement(element: Element): Novel? {
         val titleElement = element.selectFirst(Selectors.novelTitle) ?: return null
-
-        val name = titleElement.attrOrNull("title")
-            ?: titleElement.textOrNull()?.trim()
+        val name = titleElement.attrOrNull("title") ?: titleElement.textOrNull()?.trim()
         if (name.isNullOrBlank()) return null
-
         val href = titleElement.attrOrNull("href") ?: return null
-        val novelUrl = fixUrl(deSlash(href.replace(mainUrl, "").replace("$mainUrl/", "")))
-            ?: return null
-
-        val imgElement = element.selectFirstOrNull(".novel-cover > img")
-            ?: element.selectFirstOrNull("img")
+        val novelUrl = fixUrl(deSlash(href.replace(mainUrl, "").replace("$mainUrl/", ""))) ?: return null
+        val imgElement = element.selectFirstOrNull(".novel-cover > img") ?: element.selectFirstOrNull("img")
         val posterUrl = fixPosterUrl(imgElement)
-
-        return Novel(
-            name = name,
-            url = novelUrl,
-            posterUrl = posterUrl,
-            apiName = this.name
-        )
+        return Novel(name = name, url = novelUrl, posterUrl = posterUrl, apiName = this.name)
     }
 
     private fun parseSearchNovels(document: Document): List<Novel> {
         val elements = document.select(".novel-list.chapters .novel-item")
-
         return elements.mapNotNull { element ->
             val linkElement = element.selectFirstOrNull("a") ?: return@mapNotNull null
-
-            val name = linkElement.attrOrNull("title")
-                ?: linkElement.textOrNull()?.trim()
+            val name = linkElement.attrOrNull("title") ?: linkElement.textOrNull()?.trim()
             if (name.isNullOrBlank()) return@mapNotNull null
-
             val href = linkElement.attrOrNull("href") ?: return@mapNotNull null
-            val novelUrl = fixUrl(deSlash(href.replace(mainUrl, "").replace("$mainUrl/", "")))
-                ?: return@mapNotNull null
-
-            val imgElement = element.selectFirstOrNull(".novel-cover > img")
-                ?: element.selectFirstOrNull("img")
+            val novelUrl = fixUrl(deSlash(href.replace(mainUrl, "").replace("$mainUrl/", ""))) ?: return@mapNotNull null
+            val imgElement = element.selectFirstOrNull(".novel-cover > img") ?: element.selectFirstOrNull("img")
             val posterUrl = fixPosterUrl(imgElement)
-
-            Novel(
-                name = name,
-                url = novelUrl,
-                posterUrl = posterUrl,
-                apiName = this.name
-            )
+            Novel(name = name, url = novelUrl, posterUrl = posterUrl, apiName = this.name)
         }
     }
 
@@ -329,51 +275,27 @@ class NovelFireProvider : MainProvider() {
     // RELATED NOVELS
     // ================================================================
 
-    /**
-     * Load related novels using the AJAX endpoint
-     *
-     * API: GET /ajax/novelYouMayLike?post_id={id}
-     * Returns JSON with HTML content
-     */
     private suspend fun loadRelatedNovels(postId: String?): List<Novel> {
         if (postId.isNullOrBlank()) return emptyList()
-
         return try {
             val url = "$mainUrl/ajax/novelYouMayLike?post_id=$postId"
-
             val response = get(url, mapOf(
                 "Accept" to "application/json, text/javascript, */*; q=0.01",
                 "X-Requested-With" to "XMLHttpRequest"
             ))
-
             val json = JSONObject(response.text)
             val html = json.optString("html", "")
-
             if (html.isBlank()) return emptyList()
-
-            // Parse the HTML content
             val document = Jsoup.parse(html)
             val novelItems = document.select("li.novel-item")
-
             novelItems.mapNotNull { item ->
                 val linkElement = item.selectFirstOrNull("a") ?: return@mapNotNull null
                 val href = linkElement.attrOrNull("href") ?: return@mapNotNull null
-
-                val title = item.selectFirstOrNull("h5.novel-title")?.textOrNull()?.trim()
-                    ?: return@mapNotNull null
-
+                val title = item.selectFirstOrNull("h5.novel-title")?.textOrNull()?.trim() ?: return@mapNotNull null
                 val imgElement = item.selectFirstOrNull("figure.novel-cover img")
                 val posterUrl = fixPosterUrl(imgElement)
-
-                val novelUrl = fixUrl(deSlash(href.removePrefix(mainUrl).removePrefix("/")))
-                    ?: return@mapNotNull null
-
-                Novel(
-                    name = title,
-                    url = novelUrl,
-                    posterUrl = posterUrl,
-                    apiName = this.name
-                )
+                val novelUrl = fixUrl(deSlash(href.removePrefix(mainUrl).removePrefix("/"))) ?: return@mapNotNull null
+                Novel(name = title, url = novelUrl, posterUrl = posterUrl, apiName = this.name)
             }
         } catch (e: Exception) {
             e.printStackTrace()
@@ -385,43 +307,33 @@ class NovelFireProvider : MainProvider() {
     // COMMENTS / REVIEWS
     // ================================================================
 
-    /**
-     * Load user comments for a novel using the /comment/show API
-     *
-     * API: GET /comment/show?post_id={id}&chapter_id=&order_by={order}&cursor={cursor}
-     * - post_id: Novel's post ID
-     * - chapter_id: Empty for novel comments
-     * - order_by: newest, oldest, or mostliked
-     * - cursor: Base64 encoded pagination cursor (empty for first page)
-     */
     override suspend fun loadReviews(
         url: String,
         page: Int,
         showSpoilers: Boolean
     ): List<UserReview> {
         val fullUrl = if (url.startsWith("http")) url else "$mainUrl/$url"
+        val novelSlug = extractNovelSlug(url)
 
-        // First, we need to get the post_id from the novel page
+        // Get or fetch post_id
         val postId = if (page == 1) {
-            // Fetch the novel page to get post_id
             val response = get(fullUrl)
-            val document = response.document
-            extractPostId(document)
+            val id = extractPostId(response.document)
+            if (id != null) {
+                postIdCache[novelSlug] = id
+            }
+            id
         } else {
-            // For subsequent pages, we should have stored the post_id
-            // Extract from URL pattern
-            extractPostIdFromUrl(url)
+            postIdCache[novelSlug]
         }
 
         if (postId.isNullOrBlank()) return emptyList()
 
         // Build comment API URL
         val cursor = if (page == 1) {
-            // Clear any previous cursor for this novel
             commentCursors.remove(postId)
             ""
         } else {
-            // Get the stored cursor for pagination
             commentCursors[postId] ?: return emptyList()
         }
 
@@ -440,7 +352,6 @@ class NovelFireProvider : MainProvider() {
                 "Accept" to "application/json, text/javascript, */*; q=0.01",
                 "X-Requested-With" to "XMLHttpRequest"
             ))
-
             val json = JSONObject(response.text)
             parseCommentsFromJson(json, postId, showSpoilers)
         } catch (e: Exception) {
@@ -449,18 +360,6 @@ class NovelFireProvider : MainProvider() {
         }
     }
 
-    /**
-     * Try to extract post_id from a cached source or URL
-     */
-    private fun extractPostIdFromUrl(url: String): String? {
-        // This is a fallback - in practice we should cache the post_id
-        // when loading the novel details
-        return null
-    }
-
-    /**
-     * Parse comments from the JSON API response
-     */
     private fun parseCommentsFromJson(
         json: JSONObject,
         postId: String,
@@ -468,11 +367,10 @@ class NovelFireProvider : MainProvider() {
     ): List<UserReview> {
         val reviews = mutableListOf<UserReview>()
 
-        // Get the HTML content from response
         val html = json.optString("html", "")
         if (html.isBlank()) return emptyList()
 
-        // Store next cursor for pagination
+        // Store next cursor
         val nextCursor = json.optString("next_cursor", null)
         if (!nextCursor.isNullOrBlank()) {
             commentCursors[postId] = nextCursor
@@ -480,131 +378,172 @@ class NovelFireProvider : MainProvider() {
             commentCursors.remove(postId)
         }
 
-        // Parse the HTML content
         val document = Jsoup.parse(html)
-        val commentItems = document.select("li > div.comment-item")
 
-        for (item in commentItems) {
-            val review = parseCommentElement(item, showSpoilers)
-            if (review != null) {
-                reviews.add(review)
+        // Parse top-level comments
+        document.select("li").forEach { listItem ->
+            val commentEl = listItem.selectFirstOrNull("> div.comment-item")
+            if (commentEl != null) {
+                val review = parseCommentElement(commentEl, showSpoilers)
+                if (review != null) {
+                    // Check for nested replies
+                    val repliesContainer = listItem.selectFirstOrNull(".reply-comments ul")
+                    val nestedReplies = mutableListOf<UserReview>()
+                    var hasMoreReplies = false
+
+                    repliesContainer?.select("> li")?.forEach { replyLi ->
+                        // Check for "View More Replies" button
+                        if (replyLi.hasClass("show_replies")) {
+                            hasMoreReplies = true
+                            return@forEach
+                        }
+
+                        val replyComment = replyLi.selectFirstOrNull("div.comment-item")
+                        if (replyComment != null) {
+                            val reply = parseCommentElement(replyComment, showSpoilers)
+                            if (reply != null) {
+                                nestedReplies.add(reply)
+                            }
+                        }
+                    }
+
+                    reviews.add(review.copy(
+                        replies = nestedReplies.toList(),
+                        replyCount = nestedReplies.size + if (hasMoreReplies) 1 else 0,
+                        hasMoreReplies = hasMoreReplies,
+                        providerData = mapOf("postId" to postId)
+                    ))
+                }
             }
         }
 
         return reviews
     }
 
-    /**
-     * Parse a single comment element
-     */
-    private fun parseCommentElement(element: Element, showSpoilers: Boolean): UserReview? {
+    private fun parseCommentElement(
+        element: Element,
+        showSpoilers: Boolean
+    ): UserReview? {
+        val commentId = element.attrOrNull("data-comid") ?: return null
+
         val header = element.selectFirstOrNull("div.comment-header") ?: return null
         val body = element.selectFirstOrNull("div.comment-body") ?: return null
 
         // Username
         val username = header.selectFirstOrNull("span.username")?.textOrNull()?.trim()
 
-        // Avatar URL
-        val avatarElement = header.selectFirstOrNull("div.user-avatar img.avatar")
-        var avatarUrl = avatarElement?.attrOrNull("src")
+        // User ID from link
+        val userLink = header.selectFirstOrNull("a[href*='/user/']")
+        val userId = userLink?.attrOrNull("href")?.split("/")?.lastOrNull()
 
-        // Skip default avatar or fix relative URLs
+        // Avatar URL
+        val avatarElement = header.selectFirstOrNull("img.avatar")
+        var avatarUrl = avatarElement?.attrOrNull("src")
         if (avatarUrl != null) {
             if (avatarUrl.contains("default-avatar") || avatarUrl.contains("data:image")) {
                 avatarUrl = null
             } else if (!avatarUrl.startsWith("http")) {
-                avatarUrl = "$mainUrl$avatarUrl"
+                avatarUrl = "https://images.novelfire.net$avatarUrl"
             }
         }
 
-        // Post date/time (e.g., "2d", "1w", "5d")
+        // Time
         val time = header.selectFirstOrNull("span.post-date")?.textOrNull()?.trim()
 
-        // User tier/level
+        // User tier
         val tier = header.selectFirstOrNull("span.tier")?.textOrNull()?.trim()
-        val userLevel = header.selectFirstOrNull("span.klvl")?.textOrNull()?.trim()
 
-        // Comment content
+        // Spoiler check
         val commentTextElement = body.selectFirstOrNull("div.comment-text")
+        val isSpoiler = commentTextElement?.attrOrNull("data-spoiler") == "1"
 
-        // Handle spoilers
-        val hasSpoiler = commentTextElement?.attrOrNull("data-spoiler") == "1"
-        if (!showSpoilers && hasSpoiler) {
-            commentTextElement?.html("<em>[Spoiler content hidden]</em>")
-        }
+        // Get content
+        val content = commentTextElement?.html() ?: return null
+        if (content.isBlank()) return null
 
-        val commentContent = commentTextElement?.html() ?: return null
-        if (commentContent.isBlank()) return null
+        // Edit status
+        val isEdited = body.selectFirstOrNull(".edited") != null
 
-        // Likes count
-        val likes = body.selectFirstOrNull(".like-group label span")?.textOrNull()?.toIntOrNull()
-        val dislikes = body.selectFirstOrNull(".dislike-group label span")?.textOrNull()?.toIntOrNull()
+        // Like/Dislike counts
+        val parsedLikeCount = body.selectFirstOrNull(".like-group span")?.textOrNull()?.toIntOrNull() ?: 0
+        val parsedDislikeCount = body.selectFirstOrNull(".dislike-group span")?.textOrNull()?.toIntOrNull() ?: 0
 
-        // Build display username with tier/level if available
-        val displayUsername = buildString {
-            append(username ?: "Anonymous")
-            if (!userLevel.isNullOrBlank()) {
-                append(" [Lv.$userLevel]")
-            }
-            if (!tier.isNullOrBlank() && tier != "Reader") {
-                append(" ($tier)")
-            }
-        }
-
-        // Check if this is a reply to someone
-        val replyTo = header.selectFirstOrNull("div.parent-link a")?.textOrNull()?.trim()
-        val titleContent = if (!replyTo.isNullOrBlank()) {
-            "Reply to $replyTo"
-        } else {
-            null
-        }
+        // Parent reply info
+        val parentLink = header.selectFirstOrNull("div.parent-link a")
+        val parentUsername = parentLink?.textOrNull()?.trim()
+        val parentCommentId = parentLink?.attrOrNull("href")?.removePrefix("#lnw-comment-")
 
         return UserReview(
-            content = commentContent,
-            title = titleContent,
-            username = displayUsername,
+            id = commentId,
+            content = content,
+            username = username,
+            userId = userId,
+            avatarUrl = avatarUrl,
+            userTier = tier?.takeIf { it != "Reader" },
             time = time,
-            avatarUrl = avatarUrl
+            likeCount = parsedLikeCount,
+            dislikeCount = parsedDislikeCount,
+            isSpoiler = isSpoiler,
+            isEdited = isEdited,
+            parentReviewId = parentCommentId,
+            parentUsername = parentUsername
         )
+    }
+
+    /**
+     * Load more replies for a specific comment
+     */
+    suspend fun loadCommentReplies(
+        postId: String,
+        parentCommentId: String
+    ): List<UserReview> {
+        val url = "$mainUrl/comment/replies?post_id=$postId&parent_id=$parentCommentId"
+
+        return try {
+            val response = get(url, mapOf(
+                "Accept" to "application/json, text/javascript, */*; q=0.01",
+                "X-Requested-With" to "XMLHttpRequest"
+            ))
+
+            val json = JSONObject(response.text)
+            val html = json.optString("html", "")
+            if (html.isBlank()) return emptyList()
+
+            val document = Jsoup.parse(html)
+            document.select("div.comment-item").mapNotNull { el ->
+                parseCommentElement(el, true)
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            emptyList()
+        }
     }
 
     // ================================================================
     // MAIN PAGE
     // ================================================================
 
-    override suspend fun loadMainPage(
-        page: Int,
-        orderBy: String?,
-        tag: String?
-    ): MainPageResult {
+    override suspend fun loadMainPage(page: Int, orderBy: String?, tag: String?): MainPageResult {
         val params = mutableListOf<String>()
-
         if (!tag.isNullOrEmpty()) {
             params.add("categories[]=$tag")
         }
-
         params.add("ctgcon=and")
         params.add("totalchapter=0")
         params.add("ratcon=min")
         params.add("rating=0")
         params.add("status=-1")
-
         val sort = orderBy.takeUnless { it.isNullOrEmpty() } ?: "rank-top"
         params.add("sort=$sort")
         params.add("page=$page")
-
         val queryString = params.joinToString("&")
         val url = "$mainUrl/search-adv?$queryString"
-
         val response = get(url)
         val document = response.document
-
         if (document.title().contains("Cloudflare", ignoreCase = true)) {
             throw Exception("Cloudflare is blocking requests. Try again later.")
         }
-
         val novels = parseNovels(document)
-
         return MainPageResult(url = url, novels = novels)
     }
 
@@ -615,14 +554,11 @@ class NovelFireProvider : MainProvider() {
     override suspend fun search(query: String): List<Novel> {
         val encodedQuery = java.net.URLEncoder.encode(query, "UTF-8")
         val url = "$mainUrl/search?keyword=$encodedQuery&page=1"
-
         val response = get(url)
         val document = response.document
-
         if (document.title().contains("Cloudflare", ignoreCase = true)) {
             throw Exception("Cloudflare is blocking requests. Try again later.")
         }
-
         return parseSearchNovels(document)
     }
 
@@ -634,31 +570,21 @@ class NovelFireProvider : MainProvider() {
         val novelPath = deSlash(url.replace(mainUrl, "").replace("$mainUrl/", ""))
         val novelSlug = extractNovelSlug(novelPath)
         val fullUrl = if (url.startsWith("http")) url else "$mainUrl/$novelPath"
-
         val response = get(fullUrl)
         val document = response.document
-
         if (document.title().contains("Cloudflare", ignoreCase = true)) {
             throw Exception("Cloudflare is blocking requests. Try again later.")
         }
-
-        // Get novel title
         val name = document.selectFirst(Selectors.novelDetailTitle)?.textOrNull()?.trim()
             ?: document.selectFirstOrNull(".cover > img")?.attrOrNull("alt")
             ?: "Unknown"
-
-        // Get post_id for AJAX calls
         val postId = extractPostId(document)
-
-        // Load chapters with dates via AJAX
+        if (postId != null) {
+            postIdCache[novelSlug] = postId
+        }
         val chapters = loadChaptersWithDates(novelSlug, postId)
-
-        // Extract all metadata
         val metadata = extractMetadata(document)
-
-        // Load related novels via AJAX (using post_id)
         val relatedNovels = loadRelatedNovels(postId)
-
         return NovelDetails(
             url = fullUrl,
             name = name,
@@ -670,6 +596,7 @@ class NovelFireProvider : MainProvider() {
             rating = metadata.rating,
             peopleVoted = metadata.peopleVoted,
             status = metadata.status,
+            views = metadata.views,
             relatedNovels = relatedNovels.ifEmpty { null }
         )
     }
@@ -681,40 +608,45 @@ class NovelFireProvider : MainProvider() {
         val tags: List<String> = emptyList(),
         val rating: Int? = null,
         val peopleVoted: Int? = null,
-        val status: String? = null
+        val status: String? = null,
+        val views: Int? = null
     )
 
     private fun extractMetadata(document: Document): NovelMetadata {
+        // Author
         val author = document.selectFirst(Selectors.author)?.textOrNull()?.trim()
 
+        // Poster URL
         val posterUrl = document.selectFirst(Selectors.poster)?.let { imgElement ->
-            val src = imgElement.attrOrNull("data-src")
-                ?: imgElement.attrOrNull("src")
+            val src = imgElement.attrOrNull("data-src") ?: imgElement.attrOrNull("src")
             if (!src.isNullOrBlank() && !src.contains("data:image")) {
                 if (src.startsWith("http")) src else "$mainUrl/${deSlash(src)}"
             } else null
         }
 
+        // Synopsis
         val synopsis = document.selectFirst(Selectors.synopsis)?.let { element ->
-            element.text()
-                .replace("Show More", "")
-                .trim()
-                .takeIf { it.isNotBlank() }
+            element.text().replace("Show More", "").trim().takeIf { it.isNotBlank() }
         } ?: "No Summary Found"
 
+        // Tags/Genres
         val tags = document.selectAny(Selectors.genres)
             .mapNotNull { it.textOrNull()?.trim() }
             .filter { it.isNotBlank() }
             .distinct()
 
+        // Status
         val statusText = document.selectFirstOrNull(".header-stats .ongoing")?.textOrNull()
             ?: document.selectFirstOrNull(".header-stats .completed")?.textOrNull()
         val status = parseStatus(statusText)
 
+        // Rating
         val ratingText = document.selectFirst(Selectors.rating)?.textOrNull()
-        val rating = ratingText?.toFloatOrNull()?.let {
-            RatingUtils.from5Stars(it)
-        }
+        val rating = ratingText?.toFloatOrNull()?.let { RatingUtils.from5Stars(it) }
+
+        // Views - use parseViewCountToInt instead of parseViewCount
+        val viewsText = document.selectFirst(Selectors.views)?.textOrNull()?.trim()
+        val views = parseViewCountToInt(viewsText)
 
         return NovelMetadata(
             author = author,
@@ -722,60 +654,38 @@ class NovelFireProvider : MainProvider() {
             synopsis = synopsis,
             tags = tags,
             rating = rating,
-            peopleVoted = null,
-            status = status
+            status = status,
+            views = views
         )
     }
 
     // ================================================================
-    // LOAD CHAPTERS WITH DATES
+    // CHAPTERS
     // ================================================================
 
-    /**
-     * Load chapters using the AJAX endpoint which includes created_at dates
-     *
-     * API: GET /listChapterDataAjax?post_id={id}
-     * Response: {"draw":0,"recordsTotal":80,"recordsFiltered":80,"data":[...]}
-     *
-     * Each chapter object has:
-     * - n_sort: chapter number
-     * - slug: chapter slug for URL
-     * - title: chapter title (HTML encoded)
-     * - created_at: relative time like "4 weeks ago"
-     */
     private suspend fun loadChaptersWithDates(novelSlug: String, postId: String?): List<Chapter> {
         if (postId.isNullOrBlank()) {
-            // Fallback to parsing the chapters page HTML
             return loadChaptersFromHtml(novelSlug)
         }
-
         val chapters = mutableListOf<Chapter>()
-
         try {
             val ajaxUrl = "$mainUrl/listChapterDataAjax?post_id=$postId"
             val response = get(ajaxUrl)
             val responseText = response.text
-
             if (responseText.contains("You are being rate limited")) {
-                throw Exception("NovelFire is rate limiting requests. Please try again later.")
+                throw Exception("NovelFire is rate limiting requests.")
             }
-
             if (responseText.contains("Page Not Found 404")) {
                 return loadChaptersFromHtml(novelSlug)
             }
-
             val json = JSONObject(responseText)
             val dataArray = json.optJSONArray("data") ?: return loadChaptersFromHtml(novelSlug)
-
             for (i in 0 until dataArray.length()) {
                 val chapterObj = dataArray.getJSONObject(i)
-
                 val nSort = chapterObj.optInt("n_sort", i + 1)
                 val title = chapterObj.optString("title", "")
                 val slug = chapterObj.optString("slug", "")
                 val createdAt = chapterObj.optString("created_at", null)
-
-                // Parse chapter name from HTML entities
                 val chapterName = if (title.isNotBlank()) {
                     Jsoup.parse(title).text()
                 } else if (slug.isNotBlank()) {
@@ -783,78 +693,37 @@ class NovelFireProvider : MainProvider() {
                 } else {
                     "Chapter $nSort"
                 }
-
-                // Build chapter URL
                 val chapterPath = "book/$novelSlug/chapter-$nSort"
                 val chapterUrl = fixUrl(chapterPath) ?: continue
-
-                chapters.add(
-                    Chapter(
-                        name = chapterName,
-                        url = chapterUrl,
-                        dateOfRelease = createdAt // "4 weeks ago", etc.
-                    )
-                )
+                chapters.add(Chapter(name = chapterName, url = chapterUrl, dateOfRelease = createdAt))
             }
-
-            // Sort by chapter number
             chapters.sortBy { chapter ->
-                Regex("chapter-(\\d+)").find(chapter.url)
-                    ?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 0
+                Regex("chapter-(\\d+)").find(chapter.url)?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 0
             }
-
         } catch (e: Exception) {
             e.printStackTrace()
-            // Fallback to HTML parsing
             return loadChaptersFromHtml(novelSlug)
         }
-
         return chapters
     }
 
-    /**
-     * Fallback: Load chapters from the /chapters page HTML
-     * URL pattern: /book/{novel-slug}/chapters
-     *
-     * HTML structure:
-     * <li>
-     *   <a href="/book/{slug}/chapter-1" title="...">
-     *     <span class="chapter-no">1</span>
-     *     <strong class="chapter-title">Chapter 1 – ...</strong>
-     *     <time class="chapter-update" datetime="2025-12-25 21:30:02">4 weeks ago</time>
-     *   </a>
-     * </li>
-     */
     private suspend fun loadChaptersFromHtml(novelSlug: String): List<Chapter> {
         val chaptersUrl = "$mainUrl/book/$novelSlug/chapters"
-
         return try {
             val response = get(chaptersUrl)
             val document = response.document
-
             val chapters = mutableListOf<Chapter>()
             val chapterItems = document.select("ul li:has(a[href*='/chapter-'])")
-
             for (item in chapterItems) {
                 val linkElement = item.selectFirstOrNull("a") ?: continue
                 val href = linkElement.attrOrNull("href") ?: continue
-
-                // Get chapter title
                 val titleAttr = linkElement.attrOrNull("title")
                 val titleElement = item.selectFirstOrNull("strong.chapter-title")
                 val chapterNoElement = item.selectFirstOrNull("span.chapter-no")
-
-                val chapterTitle = titleAttr
-                    ?: titleElement?.textOrNull()?.trim()
-                    ?: linkElement.textOrNull()?.trim()
-                    ?: continue
-
-                // Get chapter date from <time> element
+                val chapterTitle = titleAttr ?: titleElement?.textOrNull()?.trim()
+                ?: linkElement.textOrNull()?.trim() ?: continue
                 val timeElement = item.selectFirstOrNull("time.chapter-update")
-                val dateOfRelease = timeElement?.attrOrNull("datetime")
-                    ?: timeElement?.textOrNull()?.trim()
-
-                // Build the chapter name
+                val dateOfRelease = timeElement?.attrOrNull("datetime") ?: timeElement?.textOrNull()?.trim()
                 val chapterNo = chapterNoElement?.textOrNull()?.trim()
                 val chapterName = if (!chapterNo.isNullOrBlank() &&
                     !chapterTitle.startsWith("Chapter $chapterNo", ignoreCase = true)) {
@@ -862,25 +731,12 @@ class NovelFireProvider : MainProvider() {
                 } else {
                     chapterTitle
                 }
-
-                val chapterUrl = fixUrl(deSlash(href.removePrefix(mainUrl).removePrefix("/")))
-                    ?: continue
-
-                chapters.add(
-                    Chapter(
-                        name = chapterName,
-                        url = chapterUrl,
-                        dateOfRelease = dateOfRelease
-                    )
-                )
+                val chapterUrl = fixUrl(deSlash(href.removePrefix(mainUrl).removePrefix("/"))) ?: continue
+                chapters.add(Chapter(name = chapterName, url = chapterUrl, dateOfRelease = dateOfRelease))
             }
-
-            // Sort by chapter number
             chapters.sortBy { chapter ->
-                Regex("chapter-(\\d+)").find(chapter.url)
-                    ?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 0
+                Regex("chapter-(\\d+)").find(chapter.url)?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 0
             }
-
             chapters
         } catch (e: Exception) {
             e.printStackTrace()
@@ -894,17 +750,12 @@ class NovelFireProvider : MainProvider() {
 
     override suspend fun loadChapterContent(url: String): String? {
         val fullUrl = if (url.startsWith("http")) url else "$mainUrl/$url"
-
         val response = get(fullUrl)
         val document = response.document
-
         if (document.title().contains("Cloudflare", ignoreCase = true)) {
             throw Exception("Cloudflare is blocking requests. Try again later.")
         }
-
         val contentElement = document.selectFirst(Selectors.chapterContent) ?: return null
-
-        // Remove custom obfuscation tags (tags with names longer than 5 characters that aren't standard)
         val oddsElements = contentElement.select(":not(p, h1, h2, h3, h4, h5, h6, span, i, b, u, em, strong, img, a, div, br, hr)")
         oddsElements.forEach { ele ->
             val tagName = ele.tagName()
@@ -912,14 +763,9 @@ class NovelFireProvider : MainProvider() {
                 ele.remove()
             }
         }
-
-        // Remove common ad/unwanted elements
         contentElement.select(
-            ".ads, .adsbygoogle, script, style, " +
-                    ".ads-holder, .ads-middle, [id*='ads'], [class*='ads'], " +
-                    ".hidden, [style*='display:none'], [style*='display: none']"
+            ".ads, .adsbygoogle, script, style, .ads-holder, .ads-middle, [id*='ads'], [class*='ads'], .hidden, [style*='display:none'], [style*='display: none']"
         ).remove()
-
         val rawHtml = contentElement.html()
         return cleanChapterHtml(rawHtml)
     }

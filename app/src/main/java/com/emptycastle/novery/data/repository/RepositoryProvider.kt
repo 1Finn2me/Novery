@@ -22,6 +22,7 @@ object RepositoryProvider {
     private var offlineRepository: OfflineRepository? = null
     private var statsRepository: StatsRepository? = null
     private var bookmarkRepository: BookmarkRepository? = null
+    private var notificationRepository: NotificationRepository? = null
 
     /**
      * Initialize the repository provider with application context
@@ -33,6 +34,7 @@ object RepositoryProvider {
         if (preferencesManager == null) {
             preferencesManager = PreferencesManager(context)
         }
+        notificationRepository = NotificationRepository(context)
     }
 
     fun getDatabase(): NovelDatabase {
@@ -82,6 +84,10 @@ object RepositoryProvider {
         return bookmarkRepository ?: BookmarkRepository(
             bookmarkDao = getDatabase().bookmarkDao()
         ).also { bookmarkRepository = it }
+    }
+
+    fun getNotificationRepository(): NotificationRepository {
+        return notificationRepository ?: throw IllegalStateException("NotificationRepository not initialized")
     }
 
     /**

@@ -18,6 +18,7 @@ data class HistoryItem(
     val chapterName: String,
     val chapterUrl: String,
     val timestamp: Long
+
 )
 
 /**

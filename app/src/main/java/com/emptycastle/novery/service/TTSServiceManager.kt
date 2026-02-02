@@ -6,6 +6,7 @@ import android.content.Intent
 import android.content.ServiceConnection
 import android.graphics.Bitmap
 import android.os.IBinder
+import com.emptycastle.novery.tts.VoiceManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -21,7 +22,6 @@ import java.lang.ref.WeakReference
 
 /**
  * Singleton manager for interacting with TTSService.
- * Provides easy access to playback state and control methods.
  */
 object TTSServiceManager {
 
@@ -31,28 +31,26 @@ object TTSServiceManager {
     private var isBound = false
     private var bindingContextRef: WeakReference<Context>? = null
 
-    // Pending request
     private var pendingRequest: PendingPlaybackRequest? = null
 
-    // Collection jobs
     private var segmentChangedJob: Job? = null
     private var playbackCompleteJob: Job? = null
 
-    // Observable state
+    // Track if using system voice
+    private var _useSystemVoice = false
+
     private val _playbackState = MutableStateFlow(TTSPlaybackState())
     val playbackState: StateFlow<TTSPlaybackState> = _playbackState.asStateFlow()
 
     private val _isConnected = MutableStateFlow(false)
     val isConnected: StateFlow<Boolean> = _isConnected.asStateFlow()
 
-    // Event flows for external observation
     private val _segmentChanged = MutableSharedFlow<Int>(extraBufferCapacity = 64)
     val segmentChanged: SharedFlow<Int> = _segmentChanged.asSharedFlow()
 
     private val _playbackComplete = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
     val playbackComplete: SharedFlow<Unit> = _playbackComplete.asSharedFlow()
 
-    // Service state (from companion)
     val serviceState: StateFlow<TTSService.ServiceState>
         get() = TTSService.serviceState
 
@@ -72,14 +70,15 @@ object TTSServiceManager {
             isBound = true
             _isConnected.value = true
 
-            // Observe service playback state
+            // Apply current system voice setting
+            service?.setUseSystemVoice(_useSystemVoice)
+
             scope.launch {
                 service?.playbackState?.collect { state ->
                     _playbackState.value = state
                 }
             }
 
-            // Observe segment changed events from service
             segmentChangedJob?.cancel()
             segmentChangedJob = scope.launch {
                 service?.segmentChangedEvent?.collect { index ->
@@ -87,7 +86,6 @@ object TTSServiceManager {
                 }
             }
 
-            // Observe playback complete events from service
             playbackCompleteJob?.cancel()
             playbackCompleteJob = scope.launch {
                 service?.playbackCompleteEvent?.collect {
@@ -95,7 +93,6 @@ object TTSServiceManager {
                 }
             }
 
-            // Execute pending request
             pendingRequest?.let { request ->
                 service?.startPlayback(request.content, request.startIndex, request.cover)
                 pendingRequest = null
@@ -111,9 +108,6 @@ object TTSServiceManager {
         }
     }
 
-    /**
-     * Bind to the TTS service
-     */
     fun bind(context: Context) {
         if (isBound) return
 
@@ -122,17 +116,12 @@ object TTSServiceManager {
         context.bindService(intent, connection, Context.BIND_AUTO_CREATE)
     }
 
-    /**
-     * Unbind from the TTS service
-     */
     fun unbind() {
         if (!isBound) return
 
         try {
             bindingContextRef?.get()?.unbindService(connection)
-        } catch (e: Exception) {
-            // Not bound
-        }
+        } catch (e: Exception) { }
 
         service = null
         isBound = false
@@ -142,9 +131,6 @@ object TTSServiceManager {
         playbackCompleteJob?.cancel()
     }
 
-    /**
-     * Start TTS playback
-     */
     fun startPlayback(
         context: Context,
         content: TTSContent,
@@ -153,11 +139,9 @@ object TTSServiceManager {
     ) {
         if (content.segments.isEmpty()) return
 
-        // Start service first
         TTSService.start(context)
 
         if (!isBound) {
-            // Store pending request
             pendingRequest = PendingPlaybackRequest(
                 content = content,
                 startIndex = startIndex,
@@ -169,9 +153,6 @@ object TTSServiceManager {
         }
     }
 
-    /**
-     * Update content (e.g., when scrolling to new chapter)
-     */
     fun updateContent(content: TTSContent, keepSegmentIndex: Boolean = false) {
         service?.updateContent(content, keepSegmentIndex)
     }
@@ -204,26 +185,74 @@ object TTSServiceManager {
         service?.seekToSegment(index)
     }
 
+    // ================================================================
+    // SETTINGS
+    // ================================================================
+
     fun setSpeechRate(rate: Float) {
         service?.setSpeechRate(rate)
     }
 
     fun getSpeechRate(): Float = service?.getSpeechRate() ?: 1.0f
 
+    fun setPitch(pitch: Float) {
+        service?.setPitch(pitch)
+    }
+
+    fun getPitch(): Float = service?.getPitch() ?: 1.0f
+
+    /**
+     * Set whether to use system default voice or app-selected voice.
+     * When true, voice selection in the app is disabled and system default is used.
+     */
+    fun setUseSystemVoice(useSystem: Boolean) {
+        _useSystemVoice = useSystem
+        service?.setUseSystemVoice(useSystem)
+    }
+
+    /**
+     * Check if currently using system voice
+     */
+    fun isUsingSystemVoice(): Boolean = _useSystemVoice
+
+    /**
+     * Set voice on the running service. Returns true if successful.
+     * Returns false if using system voice (voice selection disabled).
+     */
+    fun setVoice(voiceId: String): Boolean {
+        if (_useSystemVoice) return false
+
+        // Update VoiceManager's selection
+        VoiceManager.selectVoice(voiceId)
+
+        // Update the running service
+        return service?.setVoice(voiceId) ?: false
+    }
+
+    /**
+     * Apply current VoiceManager selection to service
+     */
+    fun applyCurrentVoice() {
+        if (_useSystemVoice) return
+
+        val currentVoice = VoiceManager.selectedVoice.value
+        if (currentVoice != null) {
+            service?.setVoice(currentVoice.id)
+        }
+    }
+
+    // ================================================================
+    // STATUS
+    // ================================================================
+
     fun isPlaying(): Boolean = _playbackState.value.isPlaying
 
     fun isActive(): Boolean = _playbackState.value.isActive
 
-    /**
-     * Set sleep timer (0 to cancel)
-     */
     fun setSleepTimer(context: Context, minutes: Int) {
         TTSService.setSleepTimer(context, minutes)
     }
 
-    /**
-     * Get sleep timer remaining minutes
-     */
     fun getSleepTimerRemaining(): Int? {
         val state = serviceState.value
         return if (state is TTSService.ServiceState.SleepTimerActive) {

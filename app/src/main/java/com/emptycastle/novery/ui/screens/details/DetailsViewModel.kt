@@ -47,7 +47,18 @@ class DetailsViewModel : ViewModel() {
 
     init {
         val savedSortDescending = preferencesManager.getChapterSortDescending()
-        _uiState.update { it.copy(isChapterSortDescending = savedSortDescending) }
+        val savedDisplayMode = preferencesManager.getChapterDisplayMode()
+        val savedChaptersPerPage = preferencesManager.getChaptersPerPage()
+
+        _uiState.update {
+            it.copy(
+                isChapterSortDescending = savedSortDescending,
+                chapterDisplayMode = savedDisplayMode,
+                paginationState = it.paginationState.copy(
+                    chaptersPerPage = savedChaptersPerPage
+                )
+            )
+        }
     }
 
     // ================================================================
@@ -68,8 +79,13 @@ class DetailsViewModel : ViewModel() {
 
         // Apply search
         if (state.chapterSearchQuery.isNotBlank()) {
+            val query = state.chapterSearchQuery.lowercase()
             chapters = chapters.filter {
-                it.name.contains(state.chapterSearchQuery, ignoreCase = true)
+                it.name.lowercase().contains(query) ||
+                        // Also search by chapter number if query is numeric
+                        (query.toIntOrNull()?.let { num ->
+                            chapters.indexOf(it) + 1 == num
+                        } ?: false)
             }
         }
 
@@ -83,9 +99,23 @@ class DetailsViewModel : ViewModel() {
         _uiState.update {
             it.copy(
                 filteredChapters = sortedChapters,
-                filterVersion = it.filterVersion + 1
+                filterVersion = it.filterVersion + 1,
+                // Reset to page 1 when filters change
+                paginationState = if (it.chapterDisplayMode == ChapterDisplayMode.PAGINATED) {
+                    it.paginationState.copy(currentPage = 1)
+                } else {
+                    it.paginationState
+                }
             )
         }
+    }
+
+    // Store a reference to scroll to position
+    private var _scrollToIndex = MutableStateFlow<Int?>(null)
+    val scrollToIndex: StateFlow<Int?> = _scrollToIndex.asStateFlow()
+
+    fun clearScrollRequest() {
+        _scrollToIndex.value = null
     }
 
     // ================================================================
@@ -200,9 +230,6 @@ class DetailsViewModel : ViewModel() {
     // REVIEWS
     // ================================================================
 
-    /**
-     * Load reviews for the current novel
-     */
     fun loadReviews(reset: Boolean = false) {
         val state = _uiState.value
         val provider = currentProvider ?: return
@@ -246,17 +273,11 @@ class DetailsViewModel : ViewModel() {
         }
     }
 
-    /**
-     * Toggle spoiler visibility and reload reviews
-     */
     fun toggleSpoilers() {
         _uiState.update { it.copy(showSpoilers = !it.showSpoilers) }
         loadReviews(reset = true)
     }
 
-    /**
-     * Load more reviews (pagination)
-     */
     fun loadMoreReviews() {
         loadReviews(reset = false)
     }
@@ -343,6 +364,78 @@ class DetailsViewModel : ViewModel() {
         recomputeFilteredChapters()
     }
 
+    fun setChapterDisplayMode(mode: ChapterDisplayMode) {
+        _uiState.update { it.copy(chapterDisplayMode = mode) }
+        preferencesManager.setChapterDisplayMode(mode)
+    }
+
+    fun setChaptersPerPage(chaptersPerPage: ChaptersPerPage) {
+        _uiState.update {
+            it.copy(
+                paginationState = it.paginationState.copy(
+                    chaptersPerPage = chaptersPerPage,
+                    currentPage = 1  // Reset to first page when changing page size
+                )
+            )
+        }
+        preferencesManager.setChaptersPerPage(chaptersPerPage)
+    }
+
+    fun setCurrentPage(page: Int) {
+        _uiState.update { state ->
+            val totalPages = state.paginationState.getTotalPages(state.filteredChapters.size)
+            state.copy(
+                paginationState = state.paginationState.copy(
+                    currentPage = page.coerceIn(1, totalPages.coerceAtLeast(1))
+                )
+            )
+        }
+    }
+
+    fun jumpToFirstUnread(): Int? {
+        val chapters = _uiState.value.filteredChapters
+        val readChapters = _uiState.value.readChapters
+
+        val firstUnreadIndex = chapters.indexOfFirst { !readChapters.contains(it.url) }
+        if (firstUnreadIndex >= 0) {
+            when (_uiState.value.chapterDisplayMode) {
+                ChapterDisplayMode.SCROLL -> {
+                    return firstUnreadIndex
+                }
+                ChapterDisplayMode.PAGINATED -> {
+                    val chaptersPerPage = _uiState.value.paginationState.chaptersPerPage.value
+                    if (chaptersPerPage > 0) {
+                        val targetPage = (firstUnreadIndex / chaptersPerPage) + 1
+                        setCurrentPage(targetPage)
+                    }
+                }
+            }
+        }
+        return null
+    }
+
+    fun jumpToLastRead(): Int? {
+        val chapters = _uiState.value.filteredChapters
+        val lastReadUrl = _uiState.value.lastReadChapterUrl ?: return null
+
+        val lastReadIndex = chapters.indexOfFirst { it.url == lastReadUrl }
+        if (lastReadIndex >= 0) {
+            when (_uiState.value.chapterDisplayMode) {
+                ChapterDisplayMode.SCROLL -> {
+                    return lastReadIndex
+                }
+                ChapterDisplayMode.PAGINATED -> {
+                    val chaptersPerPage = _uiState.value.paginationState.chaptersPerPage.value
+                    if (chaptersPerPage > 0) {
+                        val targetPage = (lastReadIndex / chaptersPerPage) + 1
+                        setCurrentPage(targetPage)
+                    }
+                }
+            }
+        }
+        return null
+    }
+
     fun setChapterSearchQuery(query: String) {
         _uiState.update { it.copy(chapterSearchQuery = query) }
         recomputeFilteredChapters()
@@ -366,6 +459,22 @@ class DetailsViewModel : ViewModel() {
     // ================================================================
     // CHAPTER READ STATUS
     // ================================================================
+
+    /**
+     * Toggle chapter read status (for swipe action)
+     */
+    fun toggleChapterReadStatus(chapterUrl: String, isCurrentlyRead: Boolean) {
+        val novelUrl = currentNovelUrl ?: return
+        viewModelScope.launch {
+            runCatching {
+                if (isCurrentlyRead) {
+                    historyRepository.markChapterUnread(novelUrl, chapterUrl)
+                } else {
+                    historyRepository.markChapterRead(novelUrl, chapterUrl)
+                }
+            }
+        }
+    }
 
     fun markChapterAsRead(chapterUrl: String) {
         val novelUrl = currentNovelUrl ?: return
@@ -403,6 +512,7 @@ class DetailsViewModel : ViewModel() {
             runCatching { historyRepository.markChaptersRead(novelUrl, previousChapters) }
         }
     }
+
     fun selectTab(tab: DetailsTab) {
         _uiState.update { it.copy(selectedTab = tab) }
 
@@ -523,9 +633,6 @@ class DetailsViewModel : ViewModel() {
         }
     }
 
-    /**
-     * Sets the selected chapter as last read and marks all previous chapters as read
-     */
     fun setAsLastReadAndMarkPrevious() {
         val novelUrl = currentNovelUrl ?: return
         val selected = _uiState.value.selectedChapters.firstOrNull() ?: return
@@ -626,6 +733,18 @@ class DetailsViewModel : ViewModel() {
         )
     }
 
+    /**
+     * Delete a single chapter download (for swipe action)
+     */
+    fun deleteChapterDownload(chapterUrl: String) {
+        val novelUrl = currentNovelUrl ?: return
+        viewModelScope.launch {
+            runCatching {
+                offlineRepository.deleteChapters(novelUrl, listOf(chapterUrl))
+            }
+        }
+    }
+
     fun downloadAll(context: Context) {
         val chapters = _uiState.value.novelDetails?.chapters ?: return
         startBackgroundDownload(context, chapters)
@@ -651,9 +770,12 @@ class DetailsViewModel : ViewModel() {
     fun downloadUnread(context: Context) {
         val details = _uiState.value.novelDetails ?: return
         val readChapters = _uiState.value.readChapters
+        val downloaded = _uiState.value.downloadedChapters
 
-        val unreadChapters = details.chapters.filter { !readChapters.contains(it.url) }
-        startBackgroundDownload(context, unreadChapters)
+        val unreadUndownloaded = details.chapters.filter {
+            !readChapters.contains(it.url) && !downloaded.contains(it.url)
+        }
+        startBackgroundDownload(context, unreadUndownloaded)
     }
 
     fun downloadSelected(context: Context) {

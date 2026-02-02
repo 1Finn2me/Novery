@@ -31,6 +31,7 @@ class ChapterLoader(
 
     /**
      * Loads and parses chapter content.
+     * Content items (text and images) are returned in their original HTML order.
      */
     suspend fun loadChapter(
         chapter: Chapter,
@@ -46,14 +47,15 @@ class ChapterLoader(
         return novelRepository.loadChapterContent(provider, chapter.url)
             .fold(
                 onSuccess = { content ->
-                    val segments = TextProcessor.parseHtmlToSegments(content)
+                    // Parse HTML into ordered content items (text + images interleaved)
+                    val orderedContent = TextProcessor.parseHtmlToOrderedContent(content)
                     val isFromCache = novelRepository.isChapterOffline(chapter.url)
 
                     ChapterLoadResult.Success(
                         LoadedChapter(
                             chapter = chapter,
                             chapterIndex = chapterIndex,
-                            segments = segments,
+                            contentItems = orderedContent,
                             isLoading = false,
                             isFromCache = isFromCache
                         )
@@ -76,7 +78,7 @@ class ChapterLoader(
         return LoadedChapter(
             chapter = chapter,
             chapterIndex = chapterIndex,
-            segments = emptyList(),
+            contentItems = emptyList(),
             isLoading = true
         )
     }
@@ -88,7 +90,7 @@ class ChapterLoader(
         return LoadedChapter(
             chapter = chapter,
             chapterIndex = chapterIndex,
-            segments = emptyList(),
+            contentItems = emptyList(),
             isLoading = false,
             error = error
         )

@@ -263,15 +263,66 @@ data class ReaderColors(
     /** Control bar background */
     val controlsBackground: Color,
 
+    val linkColor: Color = accent,
+
     // =========================================================================
     // METADATA
     // =========================================================================
 
     val metadata: ThemeMetadata
+
+
 ) {
     val isDarkTheme: Boolean get() = metadata.isDark
     val isHighContrast: Boolean get() = metadata.isHighContrast
     val isOled: Boolean get() = metadata.isOled
+
+    /**
+     * Creates a copy with optional parameter overrides.
+     * Used for high contrast mode and other adjustments.
+     */
+    fun withOverrides(
+        text: Color = this.text,
+        textSecondary: Color = this.textSecondary,
+        textTertiary: Color = this.textTertiary,
+        background: Color = this.background,
+        surface: Color = this.surface,
+        accent: Color = this.accent
+    ): ReaderColors = ReaderColors(
+        background = background,
+        surface = surface,
+        text = text,
+        textSecondary = textSecondary,
+        textTertiary = textTertiary,
+        accent = accent,
+        accentDark = this.accentDark,
+        accentLight = this.accentLight,
+        onAccent = this.onAccent,
+        divider = this.divider,
+        border = this.border,
+        icon = this.icon,
+        iconSecondary = this.iconSecondary,
+        buttonBackground = this.buttonBackground,
+        buttonText = this.buttonText,
+        buttonSecondaryBackground = this.buttonSecondaryBackground,
+        ripple = this.ripple,
+        sentenceHighlight = this.sentenceHighlight,
+        segmentHighlight = this.segmentHighlight,
+        selectionBackground = this.selectionBackground,
+        selectionHandle = this.selectionHandle,
+        success = this.success,
+        warning = this.warning,
+        error = this.error,
+        info = this.info,
+        chapterDividerBackground = this.chapterDividerBackground,
+        chapterHeaderText = this.chapterHeaderText,
+        readChapterIndicator = this.readChapterIndicator,
+        progressTrack = this.progressTrack,
+        progressIndicator = this.progressIndicator,
+        scrim = this.scrim,
+        controlsBackground = this.controlsBackground,
+        metadata = this.metadata
+    )
 
     companion object {
 
@@ -590,8 +641,8 @@ data class ReaderColors(
         // =====================================================================
 
         fun darkTheme(): ReaderColors = ReaderColors(
-            background = Color(0xFF1C1B1F),
-            surface = Color(0xFF2B2930),
+            background = Color(0xFF26272C),
+            surface = Color(0xFF39363F),
             text = Color(0xFFE6E1E5),
             textSecondary = Color(0xFFCAC4D0),
 

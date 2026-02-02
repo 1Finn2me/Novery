@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -38,11 +39,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.emptycastle.novery.domain.model.ProgressStyle
 import com.emptycastle.novery.ui.screens.reader.theme.ReaderColors
 import com.emptycastle.novery.ui.screens.reader.theme.ReaderDefaults
 
 // =============================================================================
-// TOP BAR - Simplified Navigation Only
+// TOP BAR
 // =============================================================================
 
 @Composable
@@ -51,14 +53,20 @@ fun ReaderTopBar(
     chapterNumber: Int,
     totalChapters: Int,
     isBookmarked: Boolean,
-    readingProgress: Float,
+    chapterProgress: Float,
     estimatedTimeLeft: String?,
     colors: ReaderColors,
+    progressStyle: ProgressStyle = ProgressStyle.BAR,
+    largerTouchTargets: Boolean = false,
     onBack: () -> Unit,
     onBookmarkClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val statusBarPadding = WindowInsets.statusBars.asPaddingValues()
+    val buttonSize = if (largerTouchTargets) 56.dp else 48.dp
+
+    // Clean up estimated time - treat empty string as null
+    val displayTimeLeft = estimatedTimeLeft?.takeIf { it.isNotBlank() }
 
     Surface(
         modifier = modifier.fillMaxWidth(),
@@ -74,7 +82,10 @@ fun ReaderTopBar(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 // Back button
-                IconButton(onClick = onBack) {
+                IconButton(
+                    onClick = onBack,
+                    modifier = Modifier.size(buttonSize)
+                ) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                         contentDescription = "Go back",
@@ -101,36 +112,22 @@ fun ReaderTopBar(
                         horizontalArrangement = Arrangement.Center,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = "$chapterNumber / $totalChapters",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = colors.textSecondary
+                        ProgressIndicator(
+                            progress = chapterProgress,
+                            chapterNumber = chapterNumber,
+                            totalChapters = totalChapters,
+                            estimatedTimeLeft = displayTimeLeft,
+                            style = progressStyle,
+                            colors = colors
                         )
-
-                        if (estimatedTimeLeft != null) {
-                            Text(
-                                text = " • ",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = colors.textSecondary
-                            )
-                            Icon(
-                                imageVector = Icons.Default.Timer,
-                                contentDescription = null,
-                                modifier = Modifier.size(12.dp),
-                                tint = colors.textSecondary
-                            )
-                            Spacer(modifier = Modifier.width(2.dp))
-                            Text(
-                                text = estimatedTimeLeft,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = colors.textSecondary
-                            )
-                        }
                     }
                 }
 
                 // Bookmark button
-                IconButton(onClick = onBookmarkClick) {
+                IconButton(
+                    onClick = onBookmarkClick,
+                    modifier = Modifier.size(buttonSize)
+                ) {
                     Icon(
                         imageVector = if (isBookmarked)
                             Icons.Default.Bookmark
@@ -142,21 +139,201 @@ fun ReaderTopBar(
                 }
             }
 
-            // Progress bar at bottom of top bar
-            LinearProgressIndicator(
-                progress = { readingProgress.coerceIn(0f, 1f) },
+            // Progress bar at bottom (only if style is BAR)
+            if (progressStyle == ProgressStyle.BAR) {
+                LinearProgressIndicator(
+                    progress = { chapterProgress.coerceIn(0f, 1f) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(2.dp),
+                    color = colors.accent,
+                    trackColor = colors.progressTrack.copy(alpha = 0.3f)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ProgressIndicator(
+    progress: Float,
+    chapterNumber: Int,
+    totalChapters: Int,
+    estimatedTimeLeft: String?,
+    style: ProgressStyle,
+    colors: ReaderColors
+) {
+    when (style) {
+        ProgressStyle.NONE -> {
+            // Show nothing
+        }
+
+        ProgressStyle.BAR -> {
+            // Bar is shown separately, show chapter info and optional time
+            Text(
+                text = "$chapterNumber / $totalChapters",
+                style = MaterialTheme.typography.labelSmall,
+                color = colors.textSecondary
+            )
+
+            // Chapter progress percentage
+            Text(
+                text = " • ${(progress * 100).toInt()}%",
+                style = MaterialTheme.typography.labelSmall,
+                color = colors.textSecondary
+            )
+
+            // Only show time if we have a valid value
+            if (estimatedTimeLeft != null) {
+                Text(
+                    text = " • ",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = colors.textSecondary
+                )
+                Icon(
+                    imageVector = Icons.Default.Timer,
+                    contentDescription = null,
+                    modifier = Modifier.size(12.dp),
+                    tint = colors.textSecondary
+                )
+                Spacer(modifier = Modifier.width(2.dp))
+                Text(
+                    text = estimatedTimeLeft,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = colors.textSecondary
+                )
+            }
+        }
+
+        ProgressStyle.PERCENTAGE -> {
+            Text(
+                text = "${(progress * 100).toInt()}%",
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Bold,
+                color = colors.accent
+            )
+
+            Text(
+                text = " • Ch. $chapterNumber/$totalChapters",
+                style = MaterialTheme.typography.labelSmall,
+                color = colors.textSecondary
+            )
+
+            if (estimatedTimeLeft != null) {
+                Text(
+                    text = " • $estimatedTimeLeft",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = colors.textSecondary
+                )
+            }
+        }
+
+        ProgressStyle.PAGES -> {
+            val estimatedPages = (progress * 100).toInt()
+            Text(
+                text = "~$estimatedPages%",
+                style = MaterialTheme.typography.labelSmall,
+                color = colors.textSecondary
+            )
+
+            Text(
+                text = " • Ch. $chapterNumber/$totalChapters",
+                style = MaterialTheme.typography.labelSmall,
+                color = colors.textSecondary
+            )
+
+            if (estimatedTimeLeft != null) {
+                Text(
+                    text = " • $estimatedTimeLeft left",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = colors.textSecondary
+                )
+            }
+        }
+
+        ProgressStyle.DOTS -> {
+            DotsProgressIndicator(
+                progress = progress,
+                colors = colors
+            )
+
+            if (estimatedTimeLeft != null) {
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = estimatedTimeLeft,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = colors.textSecondary
+                )
+            }
+        }
+
+        ProgressStyle.TIME_LEFT -> {
+            if (estimatedTimeLeft != null) {
+                Icon(
+                    imageVector = Icons.Default.Timer,
+                    contentDescription = null,
+                    modifier = Modifier.size(14.dp),
+                    tint = colors.accent
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(
+                    text = estimatedTimeLeft,
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Medium,
+                    color = colors.accent
+                )
+            } else {
+                // Fallback to percentage if no time available
+                Text(
+                    text = "${(progress * 100).toInt()}%",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Medium,
+                    color = colors.accent
+                )
+            }
+
+            Text(
+                text = " • Ch. $chapterNumber",
+                style = MaterialTheme.typography.labelSmall,
+                color = colors.textSecondary
+            )
+        }
+    }
+}
+
+@Composable
+private fun DotsProgressIndicator(
+    progress: Float,
+    colors: ReaderColors,
+    dotCount: Int = 5
+) {
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        repeat(dotCount) { index ->
+            val dotProgress = (index + 1).toFloat() / dotCount
+            val isActive = progress >= dotProgress
+            val isPartial = !isActive && progress > (index.toFloat() / dotCount)
+
+            Box(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .height(2.dp),
-                color = colors.accent,
-                trackColor = colors.progressTrack.copy(alpha = 0.3f)
+                    .size(6.dp)
+                    .clip(CircleShape)
+                    .background(
+                        when {
+                            isActive -> colors.accent
+                            isPartial -> colors.accent.copy(alpha = 0.4f)
+                            else -> colors.progressTrack
+                        }
+                    )
             )
         }
     }
 }
 
 // =============================================================================
-// TTS ACTIVE INDICATOR - Small badge for top bar when TTS is playing
+// TTS ACTIVE INDICATOR
 // =============================================================================
 
 @Composable

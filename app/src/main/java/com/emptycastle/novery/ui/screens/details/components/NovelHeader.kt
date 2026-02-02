@@ -1,5 +1,7 @@
+// com/emptycastle/novery/ui/screens/details/components/NovelHeader.kt
 package com.emptycastle.novery.ui.screens.details.components
 
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Spring
@@ -10,6 +12,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -60,7 +63,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -109,7 +111,8 @@ fun NovelHeader(
     onToggleFavorite: () -> Unit,
     onStatusClick: () -> Unit,
     onCoverClick: () -> Unit,
-    onShare: (() -> Unit)? = null, // Optional share callback
+    onShare: (() -> Unit)? = null,
+    onOpenInWebView: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val statusBarHeight = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
@@ -125,11 +128,11 @@ fun NovelHeader(
                 .fillMaxWidth()
                 .statusBarsPadding()
         ) {
+            // Top bar WITHOUT favorite button (moved to info column)
             HeaderTopBar(
-                isFavorite = isFavorite,
                 onBack = onBack,
-                onToggleFavorite = onToggleFavorite,
-                onShare = onShare
+                onShare = onShare,
+                onOpenInWebView = onOpenInWebView
             )
 
             Spacer(modifier = Modifier.height(12.dp))
@@ -141,6 +144,7 @@ fun NovelHeader(
                 readingStatus = readingStatus,
                 readProgress = readProgress,
                 onCoverClick = onCoverClick,
+                onToggleFavorite = onToggleFavorite,
                 onStatusClick = onStatusClick
             )
 
@@ -178,7 +182,6 @@ private fun HeaderBackground(
             )
         }
 
-        // Main gradient overlay
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -194,7 +197,6 @@ private fun HeaderBackground(
                 )
         )
 
-        // Subtle vignette effect
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -213,15 +215,14 @@ private fun HeaderBackground(
 }
 
 // ================================================================
-// TOP BAR
+// TOP BAR - WITHOUT FAVORITE BUTTON
 // ================================================================
 
 @Composable
 private fun HeaderTopBar(
-    isFavorite: Boolean,
     onBack: () -> Unit,
-    onToggleFavorite: () -> Unit,
-    onShare: (() -> Unit)?
+    onShare: (() -> Unit)?,
+    onOpenInWebView: (() -> Unit)?
 ) {
     Row(
         modifier = Modifier
@@ -246,7 +247,6 @@ private fun HeaderTopBar(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Share button (optional)
             if (onShare != null) {
                 GlassIconButton(
                     onClick = onShare,
@@ -261,10 +261,20 @@ private fun HeaderTopBar(
                 }
             }
 
-            FavoriteButton(
-                isFavorite = isFavorite,
-                onClick = onToggleFavorite
-            )
+            if (onOpenInWebView != null) {
+                GlassIconButton(
+                    onClick = onOpenInWebView,
+                    contentDescription = "Open in browser"
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Language,
+                        contentDescription = null,
+                        modifier = Modifier.size(20.dp),
+                        tint = Color.White
+                    )
+                }
+            }
+
         }
     }
 }
@@ -308,85 +318,6 @@ private fun GlassIconButton(
     }
 }
 
-@Composable
-private fun FavoriteButton(
-    isFavorite: Boolean,
-    onClick: () -> Unit
-) {
-    val interactionSource = remember { MutableInteractionSource() }
-    val isPressed by interactionSource.collectIsPressedAsState()
-    val haptic = LocalHapticFeedback.current
-
-    val scale by animateFloatAsState(
-        targetValue = when {
-            isPressed -> 0.85f
-            else -> 1.0f
-        },
-        animationSpec = spring(
-            dampingRatio = Spring.DampingRatioMediumBouncy,
-            stiffness = Spring.StiffnessLow
-        ),
-        label = "favorite_scale"
-    )
-
-    val backgroundColor by animateColorAsState(
-        targetValue = if (isFavorite) {
-            DetailsColors.Pink.copy(alpha = 0.25f)
-        } else {
-            Color.White.copy(alpha = 0.12f)
-        },
-        animationSpec = tween(200),
-        label = "favorite_bg"
-    )
-
-    val iconColor by animateColorAsState(
-        targetValue = if (isFavorite) DetailsColors.Pink else Color.White,
-        animationSpec = tween(200),
-        label = "favorite_icon"
-    )
-
-    Surface(
-        onClick = {
-            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-            onClick()
-        },
-        interactionSource = interactionSource,
-        shape = CircleShape,
-        color = backgroundColor,
-        border = BorderStroke(
-            width = if (isFavorite) 1.dp else 0.5.dp,
-            color = if (isFavorite) {
-                DetailsColors.Pink.copy(alpha = 0.5f)
-            } else {
-                Color.White.copy(alpha = 0.2f)
-            }
-        ),
-        modifier = Modifier
-            .size(44.dp)
-            .scale(scale)
-    ) {
-        Box(
-            contentAlignment = Alignment.Center,
-            modifier = Modifier.fillMaxSize()
-        ) {
-            Icon(
-                imageVector = if (isFavorite) {
-                    Icons.Rounded.Favorite
-                } else {
-                    Icons.Rounded.FavoriteBorder
-                },
-                contentDescription = if (isFavorite) {
-                    "Remove from library"
-                } else {
-                    "Add to library"
-                },
-                modifier = Modifier.size(22.dp),
-                tint = iconColor
-            )
-        }
-    }
-}
-
 // ================================================================
 // CONTENT ROW
 // ================================================================
@@ -399,6 +330,7 @@ private fun HeaderContentRow(
     readingStatus: ReadingStatus,
     readProgress: Float,
     onCoverClick: () -> Unit,
+    onToggleFavorite: () -> Unit,
     onStatusClick: () -> Unit
 ) {
     Row(
@@ -422,6 +354,7 @@ private fun HeaderContentRow(
             providerName = providerName,
             isFavorite = isFavorite,
             readingStatus = readingStatus,
+            onToggleFavorite = onToggleFavorite,
             onStatusClick = onStatusClick,
             modifier = Modifier.fillMaxHeight()
         )
@@ -481,14 +414,12 @@ private fun NovelCoverCard(
                 CoverPlaceholder()
             }
 
-            // Top badges row
             Row(
                 modifier = Modifier
                     .align(Alignment.TopEnd)
                     .padding(6.dp),
                 horizontalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                // Bookmark indicator for favorites
                 AnimatedVisibility(
                     visible = isFavorite,
                     enter = scaleIn() + fadeIn(),
@@ -516,7 +447,6 @@ private fun NovelCoverCard(
                 ZoomHintBadge()
             }
 
-            // Chapter count badge (bottom-left)
             if (chapterCount > 0) {
                 Surface(
                     modifier = Modifier
@@ -535,7 +465,6 @@ private fun NovelCoverCard(
                 }
             }
 
-            // Read progress indicator
             if (readProgress > 0f) {
                 ReadProgressIndicator(
                     progress = readProgress,
@@ -619,7 +548,6 @@ private fun ReadProgressIndicator(
                     )
                 )
                 .drawBehind {
-                    // Glow effect at the end
                     drawCircle(
                         color = Color.White.copy(alpha = 0.5f),
                         radius = size.height * 0.8f,
@@ -640,6 +568,7 @@ private fun NovelInfoColumn(
     providerName: String,
     isFavorite: Boolean,
     readingStatus: ReadingStatus,
+    onToggleFavorite: () -> Unit,
     onStatusClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -648,20 +577,16 @@ private fun NovelInfoColumn(
         verticalArrangement = Arrangement.SpaceBetween
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            // Copiable Title
             CopiableTitle(
                 title = details.name,
                 maxLines = 2
             )
 
-            // Metadata chips row
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                // Author (if available)
                 details.author?.takeIf { it.isNotBlank() }?.let { author ->
                     CopiableAuthorChip(author = author)
                 }
 
-                // Provider and Status row
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -678,18 +603,299 @@ private fun NovelInfoColumn(
             }
         }
 
-        // Reading status selector (only for library items)
-        if (isFavorite) {
-            ReadingStatusButton(
-                readingStatus = readingStatus,
-                onClick = onStatusClick
+        // ✨ NEW: Unified Library + Status Button
+        LibraryStatusButton(
+            isFavorite = isFavorite,
+            readingStatus = readingStatus,
+            onToggleFavorite = onToggleFavorite,
+            onStatusClick = onStatusClick
+        )
+    }
+}
+
+// ================================================================
+// ✨ NEW: UNIFIED LIBRARY + STATUS BUTTON
+// ================================================================
+
+@Composable
+private fun LibraryStatusButton(
+    isFavorite: Boolean,
+    readingStatus: ReadingStatus,
+    onToggleFavorite: () -> Unit,
+    onStatusClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val haptic = LocalHapticFeedback.current
+
+    // Heart burst animation when added to library
+    var showHeartBurst by remember { mutableStateOf(false) }
+    var previousFavorite by remember { mutableStateOf(isFavorite) }
+
+    LaunchedEffect(isFavorite) {
+        if (isFavorite && !previousFavorite) {
+            showHeartBurst = true
+            delay(500)
+            showHeartBurst = false
+        }
+        previousFavorite = isFavorite
+    }
+
+    val heartBurstScale by animateFloatAsState(
+        targetValue = if (showHeartBurst) 1.3f else 1f,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioMediumBouncy,
+            stiffness = Spring.StiffnessLow
+        ),
+        label = "heart_burst_scale"
+    )
+
+    // Colors based on state
+    val containerColor by animateColorAsState(
+        targetValue = if (isFavorite) {
+            StatusUtils.getStatusColor(readingStatus).copy(alpha = 0.12f)
+        } else {
+            DetailsColors.Pink.copy(alpha = 0.12f)
+        },
+        animationSpec = tween(350),
+        label = "container_color"
+    )
+
+    val borderColor by animateColorAsState(
+        targetValue = if (isFavorite) {
+            StatusUtils.getStatusColor(readingStatus).copy(alpha = 0.4f)
+        } else {
+            DetailsColors.Pink.copy(alpha = 0.4f)
+        },
+        animationSpec = tween(350),
+        label = "border_color"
+    )
+
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = containerColor,
+        border = BorderStroke(1.dp, borderColor),
+        modifier = modifier.fillMaxWidth()
+    ) {
+        AnimatedContent(
+            targetState = isFavorite,
+            transitionSpec = {
+                if (targetState) {
+                    // Adding to library - expand with scale
+                    (fadeIn(animationSpec = tween(300)) +
+                            scaleIn(initialScale = 0.85f, animationSpec = spring(
+                                dampingRatio = Spring.DampingRatioMediumBouncy,
+                                stiffness = Spring.StiffnessLow
+                            )))
+                        .togetherWith(fadeOut(animationSpec = tween(200)))
+                } else {
+                    // Removing from library - shrink
+                    (fadeIn(animationSpec = tween(200)))
+                        .togetherWith(
+                            fadeOut(animationSpec = tween(200)) +
+                                    scaleOut(targetScale = 0.85f)
+                        )
+                }
+            },
+            contentAlignment = Alignment.Center,
+            label = "library_state"
+        ) { isInLibrary ->
+            if (isInLibrary) {
+                InLibraryContent(
+                    readingStatus = readingStatus,
+                    heartScale = heartBurstScale,
+                    onHeartClick = {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        onToggleFavorite()
+                    },
+                    onStatusClick = {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        onStatusClick()
+                    }
+                )
+            } else {
+                AddToLibraryContent(
+                    onClick = {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        onToggleFavorite()
+                    }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun InLibraryContent(
+    readingStatus: ReadingStatus,
+    heartScale: Float,
+    onHeartClick: () -> Unit,
+    onStatusClick: () -> Unit
+) {
+    val statusColor = StatusUtils.getStatusColor(readingStatus)
+
+    Row(
+        modifier = Modifier.padding(4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        // Heart button (to remove from library)
+        val heartInteraction = remember { MutableInteractionSource() }
+        val heartPressed by heartInteraction.collectIsPressedAsState()
+
+        val heartButtonScale by animateFloatAsState(
+            targetValue = when {
+                heartPressed -> 0.85f
+                else -> heartScale
+            },
+            animationSpec = spring(
+                dampingRatio = Spring.DampingRatioMediumBouncy,
+                stiffness = Spring.StiffnessMedium
+            ),
+            label = "heart_button_scale"
+        )
+
+        Surface(
+            onClick = onHeartClick,
+            interactionSource = heartInteraction,
+            shape = RoundedCornerShape(8.dp),
+            color = DetailsColors.Pink.copy(alpha = 0.15f),
+            border = BorderStroke(0.5.dp, DetailsColors.Pink.copy(alpha = 0.3f)),
+            modifier = Modifier
+                .size(38.dp)
+                .scale(heartButtonScale)
+        ) {
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier.fillMaxSize()
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.Favorite,
+                    contentDescription = "Remove from library",
+                    modifier = Modifier.size(20.dp),
+                    tint = DetailsColors.Pink
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.width(6.dp))
+
+        // Status button
+        val statusInteraction = remember { MutableInteractionSource() }
+        val statusPressed by statusInteraction.collectIsPressedAsState()
+
+        val statusScale by animateFloatAsState(
+            targetValue = if (statusPressed) 0.97f else 1f,
+            animationSpec = spring(stiffness = Spring.StiffnessMedium),
+            label = "status_scale"
+        )
+
+        Surface(
+            onClick = onStatusClick,
+            interactionSource = statusInteraction,
+            shape = RoundedCornerShape(8.dp),
+            color = statusColor.copy(alpha = 0.08f),
+            modifier = Modifier
+                .weight(1f)
+                .scale(statusScale)
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        imageVector = StatusUtils.getStatusIcon(readingStatus),
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                        tint = statusColor
+                    )
+
+                    Text(
+                        text = readingStatus.displayName(),
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.SemiBold,
+                        color = statusColor,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+
+                Icon(
+                    imageVector = Icons.Rounded.KeyboardArrowDown,
+                    contentDescription = "Change status",
+                    modifier = Modifier.size(20.dp),
+                    tint = statusColor.copy(alpha = 0.7f)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun AddToLibraryContent(
+    onClick: () -> Unit
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val isPressed by interactionSource.collectIsPressedAsState()
+
+    val scale by animateFloatAsState(
+        targetValue = if (isPressed) 0.95f else 1f,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioMediumBouncy,
+            stiffness = Spring.StiffnessMedium
+        ),
+        label = "add_scale"
+    )
+
+    val heartScale by animateFloatAsState(
+        targetValue = if (isPressed) 1.2f else 1f,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioHighBouncy,
+            stiffness = Spring.StiffnessLow
+        ),
+        label = "heart_scale"
+    )
+
+    Surface(
+        onClick = onClick,
+        interactionSource = interactionSource,
+        shape = RoundedCornerShape(8.dp),
+        color = Color.Transparent,
+        modifier = Modifier
+            .fillMaxWidth()
+            .scale(scale)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.FavoriteBorder,
+                contentDescription = null,
+                modifier = Modifier
+                    .size(22.dp)
+                    .scale(heartScale),
+                tint = DetailsColors.Pink
+            )
+
+            Spacer(modifier = Modifier.width(10.dp))
+
+            Text(
+                text = "Add to Library",
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.SemiBold,
+                color = DetailsColors.Pink
             )
         }
     }
 }
 
 // ================================================================
-// COPIABLE TITLE (Like Tachiyomi)
+// COPIABLE TITLE
 // ================================================================
 
 @Composable
@@ -699,7 +905,6 @@ private fun CopiableTitle(
 ) {
     val clipboardManager = LocalClipboardManager.current
     val haptic = LocalHapticFeedback.current
-    val scope = rememberCoroutineScope()
 
     var showCopiedFeedback by remember { mutableStateOf(false) }
     val interactionSource = remember { MutableInteractionSource() }
@@ -711,7 +916,6 @@ private fun CopiableTitle(
         label = "title_scale"
     )
 
-    // Auto-hide the copied feedback
     LaunchedEffect(showCopiedFeedback) {
         if (showCopiedFeedback) {
             delay(1500)
@@ -747,7 +951,6 @@ private fun CopiableTitle(
                 modifier = Modifier.weight(1f, fill = false)
             )
 
-            // Copy hint icon (subtle)
             Icon(
                 imageVector = Icons.Outlined.ContentCopy,
                 contentDescription = "Tap to copy title",
@@ -758,7 +961,6 @@ private fun CopiableTitle(
             )
         }
 
-        // Copied feedback toast
         AnimatedVisibility(
             visible = showCopiedFeedback,
             enter = fadeIn() + scaleIn(initialScale = 0.8f),
@@ -801,7 +1003,6 @@ private fun CopiableTitle(
 private fun CopiableAuthorChip(author: String) {
     val clipboardManager = LocalClipboardManager.current
     val haptic = LocalHapticFeedback.current
-    val scope = rememberCoroutineScope()
 
     var showCopiedFeedback by remember { mutableStateOf(false) }
     val interactionSource = remember { MutableInteractionSource() }
@@ -872,7 +1073,6 @@ private fun CopiableAuthorChip(author: String) {
             )
         }
 
-        // Copied feedback
         AnimatedVisibility(
             visible = showCopiedFeedback,
             enter = fadeIn() + scaleIn(initialScale = 0.8f),
@@ -970,69 +1170,6 @@ private fun NovelStatusBadge(status: String) {
                 style = MaterialTheme.typography.labelSmall,
                 fontWeight = FontWeight.SemiBold,
                 color = statusColor
-            )
-        }
-    }
-}
-
-@Composable
-private fun ReadingStatusButton(
-    readingStatus: ReadingStatus,
-    onClick: () -> Unit
-) {
-    val statusColor = StatusUtils.getStatusColor(readingStatus)
-    val haptic = LocalHapticFeedback.current
-    val interactionSource = remember { MutableInteractionSource() }
-    val isPressed by interactionSource.collectIsPressedAsState()
-
-    val scale by animateFloatAsState(
-        targetValue = if (isPressed) 0.95f else 1f,
-        animationSpec = spring(stiffness = Spring.StiffnessMedium),
-        label = "status_scale"
-    )
-
-    Surface(
-        onClick = {
-            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-            onClick()
-        },
-        interactionSource = interactionSource,
-        shape = RoundedCornerShape(12.dp),
-        color = statusColor.copy(alpha = 0.12f),
-        border = BorderStroke(1.dp, statusColor.copy(alpha = 0.35f)),
-        modifier = Modifier
-            .fillMaxWidth()
-            .scale(scale)
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Icon(
-                    imageVector = StatusUtils.getStatusIcon(readingStatus),
-                    contentDescription = null,
-                    modifier = Modifier.size(18.dp),
-                    tint = statusColor
-                )
-
-                Text(
-                    text = readingStatus.displayName(),
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.SemiBold,
-                    color = statusColor
-                )
-            }
-
-            Icon(
-                imageVector = Icons.Rounded.KeyboardArrowDown,
-                contentDescription = "Change status",
-                modifier = Modifier.size(20.dp),
-                tint = statusColor.copy(alpha = 0.7f)
             )
         }
     }

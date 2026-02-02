@@ -306,13 +306,14 @@ class RoyalRoadProvider : MainProvider() {
         }
     }
 
+    // In RoyalRoadProvider.kt, update the parseReview function:
+
     private fun parseReview(reviewElement: Element, showSpoilers: Boolean): UserReview? {
         val textContent = reviewElement.selectFirstOrNull("> div.review-right-content")
         val scoreContent = reviewElement.selectFirstOrNull("> div.review-side")
 
         val scoreHeader = scoreContent?.selectFirstOrNull("> div.scores > div")
         var overallScore = parseOverallScore(scoreHeader)
-
         if (overallScore == null) {
             overallScore = parseOverallScoreFromStarClass(scoreHeader)
         }
@@ -338,14 +339,29 @@ class RoyalRoadProvider : MainProvider() {
 
         val reviewText = reviewContent?.html() ?: return null
 
+        // Check if the review contains spoilers
+        val hasSpoilers = reviewContent?.select(".spoiler")?.isNotEmpty() == true
+
+        // Generate a unique ID for the review
+        // RoyalRoad doesn't expose review IDs directly, so we create one from available data
+        val reviewId = buildString {
+            append(username ?: "anon")
+            append("_")
+            append(reviewTime ?: System.currentTimeMillis().toString())
+            append("_")
+            append(reviewText.hashCode())
+        }
+
         return UserReview(
+            id = reviewId,
             content = reviewText,
             title = reviewTitle,
             username = username,
             time = reviewTime,
             avatarUrl = avatarUrl?.let { fixUrl(it) },
             overallScore = overallScore,
-            advancedScores = advancedScores
+            advancedScores = advancedScores,
+            isSpoiler = hasSpoilers
         )
     }
 

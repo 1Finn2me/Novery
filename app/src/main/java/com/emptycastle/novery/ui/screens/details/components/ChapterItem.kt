@@ -1,3 +1,4 @@
+// com/emptycastle/novery/ui/screens/details/components/ChapterItem.kt
 package com.emptycastle.novery.ui.screens.details.components
 
 import androidx.compose.animation.AnimatedContent
@@ -18,13 +19,18 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -33,26 +39,39 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DownloadDone
 import androidx.compose.material.icons.outlined.CloudDownload
 import androidx.compose.material.icons.outlined.Schedule
+import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import com.emptycastle.novery.domain.model.Chapter
 import com.emptycastle.novery.ui.screens.details.util.DetailsColors
+import kotlin.math.absoluteValue
+import kotlin.math.roundToInt
 
 @Composable
 fun ChapterItem(
@@ -64,8 +83,29 @@ fun ChapterItem(
     isSelectionMode: Boolean,
     isSelected: Boolean,
     onTap: () -> Unit,
-    onLongPress: () -> Unit
+    onLongPress: () -> Unit,
+    onSwipeToRead: (() -> Unit)? = null,
+    onSwipeToDownload: (() -> Unit)? = null
 ) {
+    val haptic = LocalHapticFeedback.current
+    val density = LocalDensity.current
+    val scope = rememberCoroutineScope()
+
+    // Swipe state
+    var offsetX by remember { mutableFloatStateOf(0f) }
+    val swipeThreshold = with(density) { 80.dp.toPx() }
+    val maxSwipe = with(density) { 100.dp.toPx() }
+
+    // Animation states
+    val animatedOffset by animateFloatAsState(
+        targetValue = offsetX,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioMediumBouncy,
+            stiffness = Spring.StiffnessMedium
+        ),
+        label = "swipe_offset"
+    )
+
     val backgroundColor by animateColorAsState(
         targetValue = when {
             isSelectionMode && isSelected -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f)
@@ -134,70 +174,207 @@ fun ChapterItem(
         label = "elevation"
     )
 
-    Surface(
+    Box(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 12.dp, vertical = 3.dp)
-            .scale(itemScale)
-            .pointerInput(isSelectionMode) {
-                detectTapGestures(
-                    onTap = { onTap() },
-                    onLongPress = { onLongPress() }
-                )
-            },
-        shape = RoundedCornerShape(12.dp),
-        color = backgroundColor,
-        shadowElevation = elevation,
-        border = when {
-            isLastRead -> BorderStroke(1.dp, MaterialTheme.colorScheme.tertiary.copy(alpha = 0.5f))
-            isSelectionMode && isSelected -> BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f))
-            else -> null
-        }
     ) {
-        Row(
+        // Swipe action backgrounds
+        if (!isSelectionMode && (onSwipeToRead != null || onSwipeToDownload != null)) {
+            SwipeActionBackground(
+                offsetX = animatedOffset,
+                swipeThreshold = swipeThreshold,
+                isRead = isRead,
+                isDownloaded = isDownloaded
+            )
+        }
+
+        Surface(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 14.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+                .offset { IntOffset(animatedOffset.roundToInt(), 0) }
+                .scale(itemScale)
+                .pointerInput(isSelectionMode, onSwipeToRead, onSwipeToDownload) {
+                    if (!isSelectionMode && (onSwipeToRead != null || onSwipeToDownload != null)) {
+                        detectHorizontalDragGestures(
+                            onDragEnd = {
+                                when {
+                                    offsetX > swipeThreshold && onSwipeToRead != null -> {
+                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                        onSwipeToRead()
+                                    }
+                                    offsetX < -swipeThreshold && onSwipeToDownload != null -> {
+                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                        onSwipeToDownload()
+                                    }
+                                }
+                                offsetX = 0f
+                            },
+                            onDragCancel = { offsetX = 0f },
+                            onHorizontalDrag = { change, dragAmount ->
+                                change.consume()
+                                val newOffset = offsetX + dragAmount
+                                offsetX = newOffset.coerceIn(-maxSwipe, maxSwipe)
+
+                                if (offsetX.absoluteValue >= swipeThreshold * 0.9f &&
+                                    (offsetX - dragAmount).absoluteValue < swipeThreshold * 0.9f) {
+                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                }
+                            }
+                        )
+                    }
+                }
+                .pointerInput(isSelectionMode) {
+                    detectTapGestures(
+                        onTap = { onTap() },
+                        onLongPress = { onLongPress() }
+                    )
+                },
+            shape = RoundedCornerShape(12.dp),
+            color = backgroundColor,
+            shadowElevation = elevation,
+            border = when {
+                isLastRead -> BorderStroke(1.dp, MaterialTheme.colorScheme.tertiary.copy(alpha = 0.5f))
+                isSelectionMode && isSelected -> BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f))
+                else -> null
+            }
         ) {
-            // Left side
             Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.weight(1f)
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                // Selection checkbox with animation
-                SelectionCheckbox(
-                    isVisible = checkboxScale > 0.01f,
-                    isSelected = isSelected,
-                    selectedScale = selectedScale
-                )
+                // Left side
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    // Selection checkbox with animation
+                    SelectionCheckbox(
+                        isVisible = checkboxScale > 0.01f,
+                        isSelected = isSelected,
+                        selectedScale = selectedScale
+                    )
 
-                // Last read indicator
-                LastReadIndicator(
-                    isVisible = isLastRead && !isSelectionMode
-                )
+                    // Last read indicator
+                    LastReadIndicator(
+                        isVisible = isLastRead && !isSelectionMode
+                    )
 
-                // Chapter info
-                ChapterInfo(
-                    chapter = chapter,
-                    index = index,
-                    isLastRead = isLastRead,
+                    // Chapter info
+                    ChapterInfo(
+                        chapter = chapter,
+                        isLastRead = isLastRead,
+                        isSelectionMode = isSelectionMode,
+                        textColor = textColor,
+                        secondaryTextColor = secondaryTextColor
+                    )
+                }
+
+                Spacer(modifier = Modifier.width(8.dp))
+
+                // Right side status icons
+                ChapterStatusIcons(
+                    isDownloaded = isDownloaded,
                     isRead = isRead,
-                    isSelectionMode = isSelectionMode,
-                    textColor = textColor,
-                    secondaryTextColor = secondaryTextColor
+                    isSelectionMode = isSelectionMode
                 )
             }
+        }
+    }
+}
 
-            Spacer(modifier = Modifier.width(8.dp))
+@Composable
+private fun SwipeActionBackground(
+    offsetX: Float,
+    swipeThreshold: Float,
+    isRead: Boolean,
+    isDownloaded: Boolean
+) {
+    val leftProgress = (offsetX / swipeThreshold).coerceIn(0f, 1f)
+    val rightProgress = (-offsetX / swipeThreshold).coerceIn(0f, 1f)
 
-            // Right side status icons
-            ChapterStatusIcons(
-                isDownloaded = isDownloaded,
-                isRead = isRead,
-                isSelectionMode = isSelectionMode
-            )
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(IntrinsicSize.Max)
+            .clip(RoundedCornerShape(12.dp)),
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        // Left action (mark as read/unread)
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxHeight()
+                .background(
+                    if (isRead) DetailsColors.Warning.copy(alpha = leftProgress * 0.25f)
+                    else DetailsColors.Success.copy(alpha = leftProgress * 0.25f)
+                ),
+            contentAlignment = Alignment.CenterStart
+        ) {
+            Row(
+                modifier = Modifier
+                    .padding(start = 16.dp)
+                    .graphicsLayer {
+                        alpha = leftProgress
+                        scaleX = 0.6f + leftProgress * 0.4f
+                        scaleY = 0.6f + leftProgress * 0.4f
+                    },
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Icon(
+                    imageVector = if (isRead) Icons.Outlined.VisibilityOff else Icons.Filled.Check,
+                    contentDescription = null,
+                    modifier = Modifier.size(20.dp),
+                    tint = if (isRead) DetailsColors.Warning else DetailsColors.Success
+                )
+                Text(
+                    text = if (isRead) "Unread" else "Read",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = if (isRead) DetailsColors.Warning else DetailsColors.Success,
+                    fontWeight = FontWeight.Medium
+                )
+            }
+        }
+
+        // Right action (download/delete)
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxHeight()
+                .background(
+                    if (isDownloaded) Color.Red.copy(alpha = rightProgress * 0.25f)
+                    else MaterialTheme.colorScheme.primary.copy(alpha = rightProgress * 0.25f)
+                ),
+            contentAlignment = Alignment.CenterEnd
+        ) {
+            Row(
+                modifier = Modifier
+                    .padding(end = 16.dp)
+                    .graphicsLayer {
+                        alpha = rightProgress
+                        scaleX = 0.6f + rightProgress * 0.4f
+                        scaleY = 0.6f + rightProgress * 0.4f
+                    },
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Text(
+                    text = if (isDownloaded) "Delete" else "Download",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = if (isDownloaded) Color.Red else MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.Medium
+                )
+                Icon(
+                    imageVector = if (isDownloaded) Icons.Filled.Delete else Icons.Outlined.CloudDownload,
+                    contentDescription = null,
+                    modifier = Modifier.size(20.dp),
+                    tint = if (isDownloaded) Color.Red else MaterialTheme.colorScheme.primary
+                )
+            }
         }
     }
 }
@@ -215,12 +392,12 @@ private fun SelectionCheckbox(
     ) {
         Box(
             modifier = Modifier
-                .padding(end = 14.dp)
+                .padding(end = 12.dp)
                 .scale(selectedScale)
         ) {
             Box(
                 modifier = Modifier
-                    .size(26.dp)
+                    .size(24.dp)
                     .clip(CircleShape)
                     .background(
                         if (isSelected)
@@ -245,7 +422,7 @@ private fun SelectionCheckbox(
                     Icon(
                         imageVector = Icons.Default.Check,
                         contentDescription = null,
-                        modifier = Modifier.size(16.dp),
+                        modifier = Modifier.size(14.dp),
                         tint = MaterialTheme.colorScheme.onPrimary
                     )
                 }
@@ -264,13 +441,13 @@ private fun LastReadIndicator(isVisible: Boolean) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(
                 modifier = Modifier
-                    .size(4.dp, 28.dp)
+                    .size(3.dp, 24.dp)
                     .background(
                         MaterialTheme.colorScheme.tertiary,
                         RoundedCornerShape(2.dp)
                     )
             )
-            Spacer(modifier = Modifier.width(12.dp))
+            Spacer(modifier = Modifier.width(10.dp))
         }
     }
 }
@@ -278,9 +455,7 @@ private fun LastReadIndicator(isVisible: Boolean) {
 @Composable
 private fun ChapterInfo(
     chapter: Chapter,
-    index: Int,
     isLastRead: Boolean,
-    isRead: Boolean,
     isSelectionMode: Boolean,
     textColor: Color,
     secondaryTextColor: Color,
@@ -301,7 +476,7 @@ private fun ChapterInfo(
             overflow = TextOverflow.Ellipsis
         )
 
-        // Secondary info row - release date and continue reading hint
+        // Secondary info row
         val hasSecondaryInfo = chapter.dateOfRelease != null || (isLastRead && !isSelectionMode)
 
         AnimatedVisibility(
@@ -333,7 +508,7 @@ private fun ChapterInfo(
                     }
                 }
 
-                // Separator dot when both date and continue reading are shown
+                // Separator dot
                 if (chapter.dateOfRelease != null && isLastRead && !isSelectionMode) {
                     Text(
                         text = "•",
@@ -342,7 +517,7 @@ private fun ChapterInfo(
                     )
                 }
 
-                // "Continue reading" hint for last read
+                // Continue reading hint
                 if (isLastRead && !isSelectionMode) {
                     Text(
                         text = "Continue reading",
@@ -363,7 +538,7 @@ private fun ChapterStatusIcons(
     isSelectionMode: Boolean
 ) {
     Row(
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         // Download status indicator
@@ -374,25 +549,28 @@ private fun ChapterStatusIcons(
             },
             label = "download_status"
         ) { downloaded ->
-            Surface(
-                shape = CircleShape,
-                color = if (downloaded)
-                    DetailsColors.Success.copy(alpha = if (isRead) 0.15f else 0.2f)
-                else
-                    Color.Transparent
-            ) {
+            if (downloaded) {
+                Surface(
+                    shape = CircleShape,
+                    color = DetailsColors.Success.copy(alpha = if (isRead) 0.12f else 0.18f)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.DownloadDone,
+                        contentDescription = "Downloaded",
+                        modifier = Modifier
+                            .padding(4.dp)
+                            .size(14.dp),
+                        tint = DetailsColors.Success.copy(alpha = if (isRead) 0.6f else 1f)
+                    )
+                }
+            } else {
                 Icon(
-                    imageVector = if (downloaded) Icons.Default.DownloadDone else Icons.Outlined.CloudDownload,
-                    contentDescription = if (downloaded) "Downloaded" else "Not downloaded",
-                    modifier = Modifier
-                        .padding(if (downloaded) 4.dp else 0.dp)
-                        .size(if (downloaded) 16.dp else 18.dp),
-                    tint = if (downloaded)
-                        DetailsColors.Success.copy(alpha = if (isRead) 0.6f else 1f)
-                    else
-                        MaterialTheme.colorScheme.onSurfaceVariant.copy(
-                            alpha = if (isRead) 0.3f else 0.4f
-                        )
+                    imageVector = Icons.Outlined.CloudDownload,
+                    contentDescription = "Not downloaded",
+                    modifier = Modifier.size(18.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(
+                        alpha = if (isRead) 0.3f else 0.4f
+                    )
                 )
             }
         }
@@ -406,7 +584,7 @@ private fun ChapterStatusIcons(
             Icon(
                 imageVector = Icons.Default.CheckCircle,
                 contentDescription = "Read",
-                modifier = Modifier.size(18.dp),
+                modifier = Modifier.size(16.dp),
                 tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
             )
         }

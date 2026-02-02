@@ -23,6 +23,7 @@ import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -42,11 +43,12 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -60,9 +62,7 @@ import androidx.compose.material.icons.rounded.BookmarkAdd
 import androidx.compose.material.icons.rounded.Cancel
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Clear
-import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.CloudDownload
-import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Explore
 import androidx.compose.material.icons.rounded.LibraryBooks
 import androidx.compose.material.icons.rounded.MenuBook
@@ -70,7 +70,6 @@ import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.material.icons.rounded.PauseCircle
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Sync
-import androidx.compose.material.icons.rounded.Visibility
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Card
@@ -78,7 +77,6 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -113,11 +111,15 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.emptycastle.novery.data.repository.LibraryItem
 import com.emptycastle.novery.domain.model.AppSettings
+import com.emptycastle.novery.domain.model.DisplayMode
 import com.emptycastle.novery.domain.model.LibraryFilter
 import com.emptycastle.novery.domain.model.ReadingStatus
+import com.emptycastle.novery.domain.model.UiDensity
 import com.emptycastle.novery.ui.components.NovelActionSheet
 import com.emptycastle.novery.ui.components.NovelCard
 import com.emptycastle.novery.ui.components.NovelCardSkeleton
+import com.emptycastle.novery.ui.components.NovelListItem
+import com.emptycastle.novery.ui.components.NovelListItemSkeleton
 import com.emptycastle.novery.ui.theme.NoveryTheme
 import com.emptycastle.novery.util.calculateGridColumns
 
@@ -212,7 +214,9 @@ fun LibraryTab(
                     LibraryLoadingSkeleton(
                         gridColumns = gridColumns,
                         statusBarPadding = statusBarPadding,
-                        modifier = Modifier.fillMaxSize()
+                        modifier = Modifier.fillMaxSize(),
+                        density = appSettings.uiDensity,
+                        displayMode = appSettings.libraryDisplayMode
                     )
                 }
                 uiState.filteredItems.isEmpty() -> {
@@ -668,63 +672,123 @@ private fun LibraryContent(
 ) {
     val dimensions = NoveryTheme.dimensions
     val showRefreshProgress = uiState.refreshProgress != null
-
-    // Count novels with new chapters for notification badge
     val novelsWithNewChapters = uiState.items.count { it.hasNewChapters }
 
-    LazyVerticalGrid(
-        columns = GridCells.Fixed(gridColumns),
-        modifier = modifier,
-        contentPadding = PaddingValues(
-            start = dimensions.gridPadding,
-            end = dimensions.gridPadding,
-            top = statusBarPadding.calculateTopPadding() + 8.dp,
-            bottom = 88.dp
-        ),
-        horizontalArrangement = Arrangement.spacedBy(dimensions.cardSpacing),
-        verticalArrangement = Arrangement.spacedBy(dimensions.cardSpacing)
-    ) {
-        // Header with Search and Notification Button
-        item(span = { GridItemSpan(maxLineSpan) }, key = "header") {
-            LibraryHeader(
-                query = uiState.searchQuery,
-                onQueryChange = onQueryChange,
-                notificationCount = novelsWithNewChapters,
-                onNotificationClick = onNotificationClick,
-                resultCount = uiState.filteredItems.size,
-                totalCount = uiState.items.size,
-                modifier = Modifier.padding(bottom = 4.dp)
-            )
-        }
+    // Use display mode from settings
+    val displayMode = appSettings.libraryDisplayMode
 
-        // Refresh progress
-        if (showRefreshProgress) {
-            item(span = { GridItemSpan(maxLineSpan) }, key = "refresh_progress") {
-                uiState.refreshProgress?.let { progress ->
-                    RefreshProgressCard(
-                        progress = progress,
-                        modifier = Modifier.padding(vertical = 8.dp)
+    when (displayMode) {
+        DisplayMode.GRID -> {
+            LazyVerticalGrid(
+                columns = GridCells.Fixed(gridColumns),
+                modifier = modifier,
+                contentPadding = PaddingValues(
+                    start = dimensions.gridPadding,
+                    end = dimensions.gridPadding,
+                    top = 6.dp,
+                    bottom = 70.dp
+                ),
+                horizontalArrangement = Arrangement.spacedBy(dimensions.cardSpacing),
+                verticalArrangement = Arrangement.spacedBy(dimensions.cardSpacing)
+            ) {
+                // Header
+                item(span = { GridItemSpan(maxLineSpan) }, key = "header") {
+                    LibraryHeader(
+                        query = uiState.searchQuery,
+                        onQueryChange = onQueryChange,
+                        notificationCount = novelsWithNewChapters,
+                        onNotificationClick = onNotificationClick,
+                        resultCount = uiState.filteredItems.size,
+                        totalCount = uiState.items.size,
+                        modifier = Modifier.padding(bottom = 4.dp)
+                    )
+                }
+
+                // Refresh progress
+                if (showRefreshProgress) {
+                    item(span = { GridItemSpan(maxLineSpan) }, key = "refresh_progress") {
+                        uiState.refreshProgress?.let { progress ->
+                            RefreshProgressCard(
+                                progress = progress,
+                                modifier = Modifier.padding(vertical = 8.dp)
+                            )
+                        }
+                    }
+                }
+
+                // Spacer
+                item(span = { GridItemSpan(maxLineSpan) }, key = "spacer") {
+                    Spacer(modifier = Modifier.height(4.dp))
+                }
+
+                // Novel cards
+                items(uiState.filteredItems, key = { it.novel.url }) { item ->
+                    NovelCard(
+                        novel = item.novel,
+                        onClick = { onNovelClick(item) },
+                        onLongClick = { onNovelLongClick(item) },
+                        newChapterCount = if (appSettings.showBadges) item.newChapterCount else 0,
+                        readingStatus = if (appSettings.showBadges) item.readingStatus else null,
+                        lastReadChapter = item.lastReadPosition?.chapterName,
+                        density = appSettings.uiDensity
                     )
                 }
             }
         }
+        DisplayMode.LIST -> {
+            LazyColumn(
+                modifier = modifier,
+                contentPadding = PaddingValues(
+                    start = dimensions.gridPadding,
+                    end = dimensions.gridPadding,
+                    top = 6.dp,
+                    bottom = 70.dp
+                ),
+                verticalArrangement = Arrangement.spacedBy(dimensions.cardSpacing)
+            ) {
+                // Header
+                item(key = "header") {
+                    LibraryHeader(
+                        query = uiState.searchQuery,
+                        onQueryChange = onQueryChange,
+                        notificationCount = novelsWithNewChapters,
+                        onNotificationClick = onNotificationClick,
+                        resultCount = uiState.filteredItems.size,
+                        totalCount = uiState.items.size,
+                        modifier = Modifier.padding(bottom = 4.dp)
+                    )
+                }
 
-        // Spacer
-        item(span = { GridItemSpan(maxLineSpan) }, key = "spacer") {
-            Spacer(modifier = Modifier.height(4.dp))
-        }
+                // Refresh progress
+                if (showRefreshProgress) {
+                    item(key = "refresh_progress") {
+                        uiState.refreshProgress?.let { progress ->
+                            RefreshProgressCard(
+                                progress = progress,
+                                modifier = Modifier.padding(vertical = 8.dp)
+                            )
+                        }
+                    }
+                }
 
-        // Novel cards
-        items(uiState.filteredItems, key = { it.novel.url }) { item ->
-            NovelCard(
-                novel = item.novel,
-                onClick = { onNovelClick(item) },
-                onLongClick = { onNovelLongClick(item) },
-                newChapterCount = if (appSettings.showBadges) item.newChapterCount else 0,
-                readingStatus = if (appSettings.showBadges) item.readingStatus else null,
-                lastReadChapter = item.lastReadPosition?.chapterName,
-                density = appSettings.uiDensity
-            )
+                // Spacer
+                item(key = "spacer") {
+                    Spacer(modifier = Modifier.height(4.dp))
+                }
+
+                // Novel list items
+                items(uiState.filteredItems, key = { it.novel.url }) { item ->
+                    NovelListItem(
+                        novel = item.novel,
+                        onClick = { onNovelClick(item) },
+                        onLongClick = { onNovelLongClick(item) },
+                        newChapterCount = if (appSettings.showBadges) item.newChapterCount else 0,
+                        readingStatus = if (appSettings.showBadges) item.readingStatus else null,
+                        lastReadChapter = item.lastReadPosition?.chapterName,
+                        density = appSettings.uiDensity
+                    )
+                }
+            }
         }
     }
 }
@@ -746,7 +810,7 @@ private fun LibraryEmptyContent(
 
     Column(
         modifier = modifier.padding(
-            top = statusBarPadding.calculateTopPadding() + 8.dp,
+            top = 6.dp,
             start = dimensions.gridPadding,
             end = dimensions.gridPadding
         )
@@ -764,7 +828,7 @@ private fun LibraryEmptyContent(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()
-                .padding(bottom = 88.dp),
+                .padding(bottom = 70.dp),
             contentAlignment = Alignment.Center
         ) {
             LibraryEmptyState(
@@ -995,55 +1059,103 @@ private fun getFilterEmptyContent(filter: LibraryFilter): FilterEmptyContent {
 @Composable
 private fun LibraryLoadingSkeleton(
     gridColumns: Int,
+    displayMode: DisplayMode,
+    density: UiDensity,
     statusBarPadding: PaddingValues,
     modifier: Modifier = Modifier
 ) {
     val dimensions = NoveryTheme.dimensions
 
-    LazyVerticalGrid(
-        columns = GridCells.Fixed(gridColumns),
-        modifier = modifier,
-        contentPadding = PaddingValues(
-            start = dimensions.gridPadding,
-            end = dimensions.gridPadding,
-            top = statusBarPadding.calculateTopPadding() + 8.dp,
-            bottom = 88.dp
-        ),
-        horizontalArrangement = Arrangement.spacedBy(dimensions.cardSpacing),
-        verticalArrangement = Arrangement.spacedBy(dimensions.cardSpacing),
-        userScrollEnabled = false
-    ) {
-        // Header skeleton (search + notification button)
-        item(span = { GridItemSpan(maxLineSpan) }) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
+    when (displayMode) {
+        DisplayMode.GRID -> {
+            LazyVerticalGrid(
+                columns = GridCells.Fixed(gridColumns),
+                modifier = modifier,
+                contentPadding = PaddingValues(
+                    start = dimensions.gridPadding,
+                    end = dimensions.gridPadding,
+                    top = 6.dp,
+                    bottom = 70.dp
+                ),
+                horizontalArrangement = Arrangement.spacedBy(dimensions.cardSpacing),
+                verticalArrangement = Arrangement.spacedBy(dimensions.cardSpacing),
+                userScrollEnabled = false
             ) {
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(48.dp)
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(MaterialTheme.colorScheme.surfaceContainerHigh)
-                )
-                Box(
-                    modifier = Modifier
-                        .size(48.dp)
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(MaterialTheme.colorScheme.surfaceContainerHigh)
-                )
+                // Header skeleton
+                item(span = { GridItemSpan(maxLineSpan) }) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(48.dp)
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                        )
+                        Box(
+                            modifier = Modifier
+                                .size(48.dp)
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                        )
+                    }
+                }
+
+                item(span = { GridItemSpan(maxLineSpan) }) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                }
+
+                items(8) {
+                    NovelCardSkeleton(density = density)
+                }
             }
         }
+        DisplayMode.LIST -> {
+            LazyColumn(
+                modifier = modifier,
+                contentPadding = PaddingValues(
+                    start = dimensions.gridPadding,
+                    end = dimensions.gridPadding,
+                    top = 6.dp,
+                    bottom = 70.dp
+                ),
+                verticalArrangement = Arrangement.spacedBy(dimensions.cardSpacing),
+                userScrollEnabled = false
+            ) {
+                // Header skeleton
+                item {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(48.dp)
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                        )
+                        Box(
+                            modifier = Modifier
+                                .size(48.dp)
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                        )
+                    }
+                }
 
-        // Small spacer
-        item(span = { GridItemSpan(maxLineSpan) }) {
-            Spacer(modifier = Modifier.height(12.dp))
-        }
+                item {
+                    Spacer(modifier = Modifier.height(12.dp))
+                }
 
-        // Novel card skeletons
-        items(8) {
-            NovelCardSkeleton()
+                items(6) {
+                    NovelListItemSkeleton(density = density)
+                }
+            }
         }
     }
 }
@@ -1061,28 +1173,21 @@ private fun LibraryFilterBar(
 ) {
     val dimensions = NoveryTheme.dimensions
 
-    Surface(
-        modifier = modifier.fillMaxWidth(),
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.98f),
-        shadowElevation = 16.dp,
-        tonalElevation = 3.dp
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState())
+            .padding(horizontal = dimensions.gridPadding, vertical = 10.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState())
-                .padding(horizontal = dimensions.gridPadding, vertical = 14.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            LibraryFilter.entries.forEach { filter ->
-                LibraryFilterChip(
-                    filter = filter,
-                    selected = selectedFilter == filter,
-                    onClick = { onFilterChange(filter) },
-                    count = itemCounts[filter] ?: 0,
-                    showCount = filter == LibraryFilter.ALL || (itemCounts[filter] ?: 0) > 0
-                )
-            }
+        LibraryFilter.entries.forEach { filter ->
+            LibraryFilterChip(
+                filter = filter,
+                selected = selectedFilter == filter,
+                onClick = { onFilterChange(filter) },
+                count = itemCounts[filter] ?: 0,
+                showCount = filter == LibraryFilter.ALL || (itemCounts[filter] ?: 0) > 0
+            )
         }
     }
 }
@@ -1099,27 +1204,30 @@ private fun LibraryFilterChip(
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
 
-    val containerColor by animateColorAsState(
-        targetValue = if (selected) getFilterColor(filter) else MaterialTheme.colorScheme.surfaceContainerHighest,
-        animationSpec = tween(200),
-        label = "chip_container"
-    )
+    val filterColor = getFilterColor(filter)
 
+    // Content color changes when selected
     val contentColor by animateColorAsState(
-        targetValue = if (selected) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
-        animationSpec = tween(200),
+        targetValue = when {
+            selected -> filterColor
+            else -> MaterialTheme.colorScheme.onSurfaceVariant
+        },
+        animationSpec = tween(250),
         label = "chip_content"
     )
 
+    // Border animates from transparent to filter color
+    val borderColor by animateColorAsState(
+        targetValue = if (selected) filterColor else Color.Transparent,
+        animationSpec = tween(250, easing = EaseOutCubic),
+        label = "chip_border"
+    )
+
     val scale by animateFloatAsState(
-        targetValue = when {
-            isPressed -> 0.95f
-            selected -> 1.02f
-            else -> 1f
-        },
+        targetValue = if (isPressed) 0.92f else 1f,
         animationSpec = spring(
             dampingRatio = Spring.DampingRatioMediumBouncy,
-            stiffness = Spring.StiffnessMedium
+            stiffness = Spring.StiffnessHigh
         ),
         label = "chip_scale"
     )
@@ -1131,58 +1239,63 @@ private fun LibraryFilterChip(
             scaleX = scale
             scaleY = scale
         },
-        shape = RoundedCornerShape(14.dp),
-        color = containerColor,
-        shadowElevation = if (selected) 6.dp else 0.dp
+        shape = RoundedCornerShape(25.dp), // Increased from 22.dp
+        color = MaterialTheme.colorScheme.surfaceContainerHigh, // Always gray background
+        contentColor = contentColor,
+        border = BorderStroke(2.dp, borderColor)
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 11.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.padding(
+                horizontal = 16.dp, // Increased from 12-14.dp
+                vertical = 10.dp    // Increased from 8.dp
+            ),
+            horizontalArrangement = Arrangement.spacedBy(7.dp), // Increased from 6.dp
             verticalAlignment = Alignment.CenterVertically
         ) {
+            // Icon
             val icon = getFilterIcon(filter)
             if (icon != null) {
                 Icon(
                     imageVector = icon,
                     contentDescription = null,
-                    modifier = Modifier.size(18.dp),
+                    modifier = Modifier.size(20.dp), // Increased from 16-18.dp
                     tint = contentColor
                 )
             }
 
+            // Label
             Text(
                 text = filter.displayName(),
-                style = MaterialTheme.typography.labelLarge,
+                style = MaterialTheme.typography.labelLarge, // Changed from labelMedium
                 fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-                color = contentColor
+                color = contentColor,
+                maxLines = 1
             )
 
+            // Count badge
             AnimatedVisibility(
-                visible = showCount && count > 0,
-                enter = fadeIn() + scaleIn(),
-                exit = fadeOut() + scaleOut()
+                visible = showCount && count > 0 && selected,
+                enter = fadeIn(tween(200)) + scaleIn(initialScale = 0.8f, animationSpec = tween(200)),
+                exit = fadeOut(tween(150)) + scaleOut(targetScale = 0.8f, animationSpec = tween(150))
             ) {
                 Surface(
-                    shape = RoundedCornerShape(8.dp),
-                    color = if (selected) {
-                        Color.White.copy(alpha = 0.25f)
-                    } else {
-                        MaterialTheme.colorScheme.outline.copy(alpha = 0.15f)
-                    }
+                    shape = RoundedCornerShape(12.dp), // Increased from 10.dp
+                    color = filterColor.copy(alpha = 0.2f)
                 ) {
                     Text(
                         text = if (count > 999) "999+" else count.toString(),
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Bold,
-                        color = contentColor,
-                        fontSize = 11.sp,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                        color = filterColor,
+                        fontSize = 11.sp, // Increased from 10.sp
+                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp) // Increased from 6.dp, 2.dp
                     )
                 }
             }
         }
     }
 }
+
 
 @Composable
 private fun getFilterColor(filter: LibraryFilter): Color {

@@ -1,5 +1,7 @@
 package com.emptycastle.novery.service
 
+import com.emptycastle.novery.util.ParsedSentence
+
 /**
  * Represents the current state of TTS playback
  */
@@ -29,6 +31,14 @@ data class TTSPlaybackState(
 }
 
 /**
+ * A TTS segment with pause hint (milliseconds) provided by the sentence parser
+ */
+data class TTSSegment(
+    val text: String,
+    val pauseAfterMs: Int = ParsedSentence.DEFAULT_PAUSE_MS
+)
+
+/**
  * Content to be read by TTS
  */
 data class TTSContent(
@@ -36,10 +46,10 @@ data class TTSContent(
     val novelUrl: String,
     val chapterName: String,
     val chapterUrl: String,
-    val segments: List<String>,
+    val segments: List<TTSSegment>,
     val coverUrl: String? = null
 ) {
     val totalSegments: Int get() = segments.size
 
-    fun getSegment(index: Int): String? = segments.getOrNull(index)
+    fun getSegment(index: Int): TTSSegment? = segments.getOrNull(index)
 }

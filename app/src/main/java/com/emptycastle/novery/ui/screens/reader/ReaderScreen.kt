@@ -1,22 +1,30 @@
 package com.emptycastle.novery.ui.screens.reader
 
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -24,10 +32,14 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
@@ -38,25 +50,32 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.emptycastle.novery.data.repository.RepositoryProvider
+import com.emptycastle.novery.domain.model.ProgressStyle
 import com.emptycastle.novery.domain.model.ReaderSettings
-import com.emptycastle.novery.domain.model.ReaderTheme
+import com.emptycastle.novery.domain.model.ScrollMode
+import com.emptycastle.novery.domain.model.TapAction
 import com.emptycastle.novery.service.TTSStatus
 import com.emptycastle.novery.tts.VoiceInfo
 import com.emptycastle.novery.ui.components.ChapterListSheet
 import com.emptycastle.novery.ui.components.ReaderBottomBar
+import com.emptycastle.novery.ui.components.TTSPlayer
 import com.emptycastle.novery.ui.components.TTSSettingsPanel
 import com.emptycastle.novery.ui.screens.reader.components.KeepScreenOnEffect
+import com.emptycastle.novery.ui.screens.reader.components.PagedReaderContainer
 import com.emptycastle.novery.ui.screens.reader.components.ReaderContainer
 import com.emptycastle.novery.ui.screens.reader.components.ReaderErrorState
-import com.emptycastle.novery.ui.screens.reader.components.ReaderLoadingState
 import com.emptycastle.novery.ui.screens.reader.components.ReaderTopBar
+import com.emptycastle.novery.ui.screens.reader.components.ScrollUtils
 import com.emptycastle.novery.ui.screens.reader.model.ReaderDisplayItem
 import com.emptycastle.novery.ui.screens.reader.model.ReaderUiState
 import com.emptycastle.novery.ui.screens.reader.theme.ReaderColors
 import com.emptycastle.novery.ui.screens.reader.theme.ReaderDefaults
 import com.emptycastle.novery.util.ImmersiveModeEffect
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.launch
 
 // =============================================================================
 // MAIN SCREEN
@@ -75,12 +94,25 @@ fun ReaderScreen(
     val uiState by viewModel.uiState.collectAsState()
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
+    val scope = rememberCoroutineScope()
 
     val chapterListSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val listState = rememberLazyListState()
+
+    // Auto-hide controls timer
+    var autoHideJob by remember { mutableStateOf<Job?>(null) }
 
     // Initialize context for TTS
     LaunchedEffect(Unit) {
         viewModel.setContext(context)
+    }
+
+    // Register/unregister with volume key manager
+    DisposableEffect(Unit) {
+        viewModel.onReaderEnter()
+        onDispose {
+            viewModel.onReaderExit()
+        }
     }
 
     // Get preferences
@@ -98,16 +130,31 @@ fun ReaderScreen(
         ReaderColors.fromTheme(uiState.settings.theme)
     }
 
-    val listState = rememberLazyListState()
-
-    // Immersive mode control - show system bars when controls are visible or in special states
+    // Immersive mode control
     val showSystemBars = uiState.showControls ||
             uiState.isTTSActive ||
-            uiState.isLoading ||
-            uiState.error != null ||
+            uiState.shouldShowLoadingOverlay ||
+            (uiState.error != null && uiState.isContentReady) ||
             uiState.showTTSSettings ||
             uiState.showChapterList
     ImmersiveModeEffect(showSystemBars = showSystemBars)
+
+    // Auto-hide controls
+    LaunchedEffect(uiState.showControls, uiState.settings.autoHideControlsDelay) {
+        autoHideJob?.cancel()
+
+        if (uiState.showControls &&
+            uiState.settings.autoHideControlsDelay > 0 &&
+            !uiState.isTTSActive &&
+            !uiState.showTTSSettings &&
+            !uiState.showChapterList
+        ) {
+            autoHideJob = scope.launch {
+                delay(uiState.settings.autoHideControlsDelay)
+                viewModel.hideControls()
+            }
+        }
+    }
 
     // Lifecycle handling for reading time tracking
     DisposableEffect(lifecycleOwner) {
@@ -129,9 +176,10 @@ fun ReaderScreen(
         viewModel.loadChapter(chapterUrl, novelUrl, providerName)
     }
 
-    // Restore scroll position when content is loaded
-    LaunchedEffect(uiState.targetScrollPosition) {
+    // Restore scroll position when content is loaded and ready
+    LaunchedEffect(uiState.targetScrollPosition, uiState.isContentReady) {
         val targetPosition = uiState.targetScrollPosition ?: return@LaunchedEffect
+        if (!uiState.isContentReady) return@LaunchedEffect
 
         delay(150)
 
@@ -153,8 +201,10 @@ fun ReaderScreen(
         viewModel.markScrollRestored()
     }
 
-    // Track scroll position changes
-    LaunchedEffect(listState) {
+    // Track scroll position changes - only when content is ready
+    LaunchedEffect(listState, uiState.isContentReady) {
+        if (!uiState.isContentReady) return@LaunchedEffect
+
         snapshotFlow {
             Pair(listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset)
         }.collect { (index, offset) ->
@@ -162,8 +212,10 @@ fun ReaderScreen(
         }
     }
 
-    // Track current chapter based on visible items
-    LaunchedEffect(listState) {
+    // Track current chapter based on visible items - only when content is ready
+    LaunchedEffect(listState, uiState.isContentReady) {
+        if (!uiState.isContentReady) return@LaunchedEffect
+
         snapshotFlow { listState.firstVisibleItemIndex }
             .distinctUntilChanged()
             .collect { firstVisibleIndex ->
@@ -174,6 +226,7 @@ fun ReaderScreen(
                 val chapterIndex = when (item) {
                     is ReaderDisplayItem.ChapterHeader -> item.chapterIndex
                     is ReaderDisplayItem.Segment -> item.chapterIndex
+                    is ReaderDisplayItem.Image -> item.chapterIndex
                     is ReaderDisplayItem.ChapterDivider -> item.chapterIndex
                     is ReaderDisplayItem.LoadingIndicator -> item.chapterIndex
                     is ReaderDisplayItem.ErrorIndicator -> item.chapterIndex
@@ -187,8 +240,10 @@ fun ReaderScreen(
             }
     }
 
-    // Infinite scroll: approaching beginning
-    LaunchedEffect(listState) {
+    // Infinite scroll handlers - only when content is ready
+    LaunchedEffect(listState, uiState.isContentReady) {
+        if (!uiState.isContentReady) return@LaunchedEffect
+
         snapshotFlow {
             listState.layoutInfo.visibleItemsInfo.firstOrNull()?.index ?: 0
         }.collect { firstVisibleIndex ->
@@ -198,6 +253,7 @@ fun ReaderScreen(
                 val chapterIndex = when (firstItem) {
                     is ReaderDisplayItem.ChapterHeader -> firstItem.chapterIndex
                     is ReaderDisplayItem.Segment -> firstItem.chapterIndex
+                    is ReaderDisplayItem.Image -> firstItem.chapterIndex
                     else -> return@collect
                 }
                 viewModel.onApproachingBeginning(chapterIndex)
@@ -205,8 +261,9 @@ fun ReaderScreen(
         }
     }
 
-    // Infinite scroll: approaching end
-    LaunchedEffect(listState) {
+    LaunchedEffect(listState, uiState.isContentReady) {
+        if (!uiState.isContentReady) return@LaunchedEffect
+
         snapshotFlow {
             val layoutInfo = listState.layoutInfo
             val lastVisibleIndex = layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
@@ -218,6 +275,7 @@ fun ReaderScreen(
                 val lastItem = displayItems.getOrNull(lastVisibleIndex)
                 val chapterIndex = when (lastItem) {
                     is ReaderDisplayItem.Segment -> lastItem.chapterIndex
+                    is ReaderDisplayItem.Image -> lastItem.chapterIndex
                     is ReaderDisplayItem.ChapterDivider -> lastItem.chapterIndex
                     else -> return@collect
                 }
@@ -245,6 +303,21 @@ fun ReaderScreen(
         }
     }
 
+    // Volume key scroll handling
+    LaunchedEffect(Unit) {
+        viewModel.volumeScrollAction.collectLatest { goForward ->
+            ScrollUtils.scrollByPage(
+                scope = scope,
+                listState = listState,
+                forward = goForward,
+                smoothScroll = uiState.settings.smoothScroll,
+                reduceMotion = uiState.settings.reduceMotion,
+                sensitivity = uiState.settings.scrollSensitivity,
+                totalItems = uiState.displayItems.size
+            )
+        }
+    }
+
     // Save position when leaving
     DisposableEffect(Unit) {
         onDispose {
@@ -252,26 +325,54 @@ fun ReaderScreen(
         }
     }
 
-    // Calculate reading progress
-    val readingProgress by remember {
+    // Calculate CHAPTER-SPECIFIC reading progress - only when content is ready
+    val chapterProgress by remember(uiState.currentChapterIndex, uiState.displayItems, uiState.isContentReady) {
         derivedStateOf {
-            val totalItems = listState.layoutInfo.totalItemsCount
-            if (totalItems == 0) 0f
-            else (listState.firstVisibleItemIndex.toFloat() / totalItems).coerceIn(0f, 1f)
+            if (!uiState.isContentReady) 0f
+            else calculateChapterProgress(
+                listState = listState,
+                displayItems = uiState.displayItems,
+                currentChapterIndex = uiState.currentChapterIndex
+            )
         }
     }
 
-    LaunchedEffect(readingProgress) {
-        viewModel.updateReadingProgress(readingProgress)
+    // Update progress in ViewModel
+    LaunchedEffect(chapterProgress, uiState.isContentReady) {
+        if (uiState.isContentReady) {
+            viewModel.updateChapterProgress(chapterProgress)
+        }
     }
 
-    // Calculate estimated reading time
-    val estimatedTimeLeft by remember(readingProgress, uiState.estimatedTotalWords) {
+    // Calculate estimated reading time for CURRENT CHAPTER
+    val estimatedTimeLeft by remember(chapterProgress, uiState.currentChapterWordCount, uiState.settings, uiState.isContentReady) {
         derivedStateOf {
-            calculateEstimatedTimeLeft(
-                progress = readingProgress,
-                totalWords = uiState.estimatedTotalWords,
+            if (!uiState.isContentReady) ""
+            else calculateEstimatedTimeLeft(
+                progress = chapterProgress,
+                totalWords = uiState.currentChapterWordCount,
                 settings = uiState.settings
+            )
+        }
+    }
+
+    // Scroll by page function for tap zones and volume keys
+    val scrollByPage: (Boolean) -> Unit = remember(
+        listState,
+        uiState.settings.smoothScroll,
+        uiState.settings.reduceMotion,
+        uiState.settings.scrollSensitivity,
+        uiState.displayItems.size
+    ) {
+        { forward: Boolean ->
+            ScrollUtils.scrollByPage(
+                scope = scope,
+                listState = listState,
+                forward = forward,
+                smoothScroll = uiState.settings.smoothScroll,
+                reduceMotion = uiState.settings.reduceMotion,
+                sensitivity = uiState.settings.scrollSensitivity,
+                totalItems = uiState.displayItems.size
             )
         }
     }
@@ -294,34 +395,33 @@ fun ReaderScreen(
         uiState = uiState,
         colors = colors,
         listState = listState,
+        chapterProgress = chapterProgress,
         estimatedTimeLeft = if (uiState.settings.showReadingTime) estimatedTimeLeft else null,
+        onTapAction = { action ->
+            when (action) {
+                TapAction.TOGGLE_CONTROLS -> viewModel.toggleControls()
+                TapAction.PREVIOUS_PAGE -> scrollByPage(false)
+                TapAction.NEXT_PAGE -> scrollByPage(true)
+                TapAction.BOOKMARK -> viewModel.toggleBookmark()
+                TapAction.OPEN_SETTINGS -> viewModel.toggleControls()
+                TapAction.OPEN_CHAPTERS -> viewModel.toggleChapterList()
+                TapAction.START_TTS -> viewModel.startTTS()
+                TapAction.SCROLL_UP -> scrollByPage(false)
+                TapAction.SCROLL_DOWN -> scrollByPage(true)
+                TapAction.TOGGLE_FULLSCREEN -> viewModel.toggleControls()
+                TapAction.NONE -> { }
+            }
+        },
         onBack = onBack,
         onRetry = { viewModel.loadChapter(chapterUrl, novelUrl, providerName) },
         onRetryChapter = { chapterIndex -> viewModel.retryChapter(chapterIndex) },
         onToggleControls = viewModel::toggleControls,
         onToggleBookmark = viewModel::toggleBookmark,
         onToggleChapterList = viewModel::toggleChapterList,
-        onToggleSettings = viewModel::toggleSettings,
         onToggleTTSSettings = viewModel::toggleTTSSettings,
         onHideTTSSettings = viewModel::hideTTSSettings,
-
-        // Quick settings
-        onFontSizeChange = { delta ->
-            val newSize = (uiState.settings.fontSize + delta).coerceIn(
-                ReaderSettings.MIN_FONT_SIZE,
-                ReaderSettings.MAX_FONT_SIZE
-            )
-            viewModel.updateReaderSettings(uiState.settings.copy(fontSize = newSize))
-        },
-        onThemeChange = { theme ->
-            viewModel.updateReaderSettings(uiState.settings.copy(theme = theme))
-        },
-        onLineHeightChange = { newLineHeight ->
-            viewModel.updateReaderSettings(uiState.settings.copy(lineHeight = newLineHeight))
-        },
+        onSettingsChange = viewModel::updateReaderSettings,
         onNavigateToSettings = onNavigateToSettings,
-
-        // TTS
         onStartTTS = viewModel::startTTS,
         onPauseTTS = viewModel::pauseTTS,
         onResumeTTS = viewModel::resumeTTS,
@@ -333,12 +433,10 @@ fun ReaderScreen(
         onTTSVoiceSelected = viewModel::updateTTSVoice,
         onTTSAutoScrollChange = viewModel::updateTTSAutoScroll,
         onTTSHighlightChange = viewModel::updateTTSHighlightSentence,
-
-        // Navigation
+        onTTSUseSystemVoiceChange = viewModel::updateTTSUseSystemVoice,
         onPrevious = viewModel::navigateToPrevious,
         onNext = viewModel::navigateToNext,
-        onSegmentClick = viewModel::setCurrentSegment,
-        onSentenceClick = viewModel::seekToSentence
+        onConfirmScrollReset = viewModel::confirmScrollReset
     )
 }
 
@@ -346,6 +444,52 @@ fun ReaderScreen(
 // HELPER FUNCTIONS
 // =============================================================================
 
+/**
+ * Calculate progress within the current chapter only
+ */
+private fun calculateChapterProgress(
+    listState: LazyListState,
+    displayItems: List<ReaderDisplayItem>,
+    currentChapterIndex: Int
+): Float {
+    if (displayItems.isEmpty()) return 0f
+
+    // Find first and last item indices for the current chapter
+    var chapterFirstIndex = -1
+    var chapterLastIndex = -1
+
+    displayItems.forEachIndexed { index, item ->
+        val itemChapterIndex = when (item) {
+            is ReaderDisplayItem.ChapterHeader -> item.chapterIndex
+            is ReaderDisplayItem.Segment -> item.chapterIndex
+            is ReaderDisplayItem.Image -> item.chapterIndex
+            is ReaderDisplayItem.ChapterDivider -> item.chapterIndex
+            is ReaderDisplayItem.LoadingIndicator -> item.chapterIndex
+            is ReaderDisplayItem.ErrorIndicator -> item.chapterIndex
+        }
+
+        if (itemChapterIndex == currentChapterIndex) {
+            if (chapterFirstIndex == -1) {
+                chapterFirstIndex = index
+            }
+            chapterLastIndex = index
+        }
+    }
+
+    if (chapterFirstIndex == -1 || chapterLastIndex == -1) return 0f
+
+    val chapterItemCount = chapterLastIndex - chapterFirstIndex + 1
+    if (chapterItemCount <= 1) return 0f
+
+    val currentIndex = listState.firstVisibleItemIndex
+    val positionInChapter = (currentIndex - chapterFirstIndex).coerceIn(0, chapterItemCount - 1)
+
+    return (positionInChapter.toFloat() / (chapterItemCount - 1)).coerceIn(0f, 1f)
+}
+
+/**
+ * Calculate estimated time left to read the current chapter
+ */
 private fun calculateEstimatedTimeLeft(
     progress: Float,
     totalWords: Int,
@@ -354,26 +498,33 @@ private fun calculateEstimatedTimeLeft(
     if (totalWords <= 0) return ""
 
     val baseWpm = 250
+
     val fontSizeModifier = when {
         settings.fontSize < 14 -> 1.1f
         settings.fontSize > 20 -> 0.9f
         else -> 1.0f
     }
+
     val lineHeightModifier = when {
         settings.lineHeight < 1.4f -> 1.05f
         settings.lineHeight > 2.0f -> 0.95f
         else -> 1.0f
     }
+
     val wpm = (baseWpm * fontSizeModifier * lineHeightModifier).toInt()
 
-    val remainingProgress = 1f - progress
+    val remainingProgress = (1f - progress).coerceIn(0f, 1f)
     val remainingWords = (totalWords * remainingProgress).toInt()
     val minutes = remainingWords / wpm
 
     return when {
         minutes < 1 -> "< 1 min"
         minutes < 60 -> "$minutes min"
-        else -> "${minutes / 60}h ${minutes % 60}m"
+        else -> {
+            val hours = minutes / 60
+            val mins = minutes % 60
+            if (mins == 0) "${hours}h" else "${hours}h ${mins}m"
+        }
     }
 }
 
@@ -421,24 +572,19 @@ private fun ReaderScreenContent(
     uiState: ReaderUiState,
     colors: ReaderColors,
     listState: LazyListState,
+    chapterProgress: Float,
     estimatedTimeLeft: String?,
+    onTapAction: (TapAction) -> Unit,
     onBack: () -> Unit,
     onRetry: () -> Unit,
     onRetryChapter: (Int) -> Unit,
     onToggleControls: () -> Unit,
     onToggleBookmark: () -> Unit,
     onToggleChapterList: () -> Unit,
-    onToggleSettings: () -> Unit,
     onToggleTTSSettings: () -> Unit,
     onHideTTSSettings: () -> Unit,
-
-    // Quick settings
-    onFontSizeChange: (Int) -> Unit,
-    onThemeChange: (ReaderTheme) -> Unit,
-    onLineHeightChange: (Float) -> Unit,  // Changed from toggle to value
+    onSettingsChange: (ReaderSettings) -> Unit,
     onNavigateToSettings: () -> Unit,
-
-    // TTS
     onStartTTS: () -> Unit,
     onPauseTTS: () -> Unit,
     onResumeTTS: () -> Unit,
@@ -450,100 +596,205 @@ private fun ReaderScreenContent(
     onTTSVoiceSelected: (VoiceInfo) -> Unit,
     onTTSAutoScrollChange: (Boolean) -> Unit,
     onTTSHighlightChange: (Boolean) -> Unit,
-
-    // Navigation
+    onTTSUseSystemVoiceChange: (Boolean) -> Unit,
     onPrevious: () -> Unit,
     onNext: () -> Unit,
-    onSegmentClick: (Int) -> Unit,
-    onSentenceClick: (Int, Int) -> Unit
+    onConfirmScrollReset: () -> Unit
 ) {
+    val tapZones = uiState.settings.tapZones
+    val isContinuousMode = uiState.settings.scrollMode == ScrollMode.CONTINUOUS
+
+    // Track if we've completed scroll reset for this content
+    var hasCompletedScrollReset by remember(uiState.currentChapterUrl) {
+        mutableStateOf(false)
+    }
+
+    // Handle scroll reset when content is ready but scroll pending
+    LaunchedEffect(
+        uiState.isContentReady,
+        uiState.pendingScrollReset,
+        uiState.displayItems.size,
+        uiState.targetScrollPosition
+    ) {
+        if (uiState.isContentReady &&
+            uiState.pendingScrollReset &&
+            uiState.displayItems.isNotEmpty() &&
+            !hasCompletedScrollReset
+        ) {
+            val targetPosition = uiState.targetScrollPosition
+            val targetIndex = (targetPosition?.displayIndex ?: 0)
+                .coerceIn(0, uiState.displayItems.size - 1)
+            val targetOffset = targetPosition?.offsetPixels ?: 0
+
+            try {
+                // Scroll immediately without animation
+                listState.scrollToItem(index = targetIndex, scrollOffset = targetOffset)
+            } catch (e: Exception) {
+                try {
+                    listState.scrollToItem(0)
+                } catch (_: Exception) { }
+            }
+
+            hasCompletedScrollReset = true
+            onConfirmScrollReset()
+        }
+    }
+
+    // Reset the flag when chapter changes
+    LaunchedEffect(uiState.currentChapterUrl) {
+        hasCompletedScrollReset = false
+    }
+
+    // Determine if content should be visible
+    // Content is rendered but invisible while scroll reset is pending
+    val contentVisible = !uiState.shouldShowLoadingOverlay
+
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(colors.background)
     ) {
-        when {
-            uiState.isLoading && uiState.displayItems.isEmpty() -> {
-                ReaderLoadingState(colors = colors)
-            }
+        // Render content (potentially invisible) to allow scroll positioning
+        if (uiState.displayItems.isNotEmpty()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .alpha(if (contentVisible) 1f else 0f)
+            ) {
+                if (isContinuousMode) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .pointerInput(tapZones, contentVisible) {
+                                if (contentVisible) {
+                                    detectTapGestures(
+                                        onDoubleTap = { offset ->
+                                            onTapAction(tapZones.doubleTapAction)
+                                        },
+                                        onTap = { offset ->
+                                            val width = size.width.toFloat()
+                                            val height = size.height.toFloat()
 
-            uiState.error != null && uiState.displayItems.isEmpty() -> {
-                ReaderErrorState(
-                    message = uiState.error,
-                    colors = colors,
-                    onRetry = onRetry,
-                    onBack = onBack
-                )
-            }
+                                            val leftZoneWidth = width * tapZones.horizontalZoneRatio
+                                            val rightZoneStart = width * (1 - tapZones.horizontalZoneRatio)
+                                            val topZoneHeight = height * tapZones.verticalZoneRatio
+                                            val bottomZoneStart = height * (1 - tapZones.verticalZoneRatio)
 
-            else -> {
-                // Main content with tap detection
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .pointerInput(Unit) {
-                            detectTapGestures(
-                                onTap = {
-                                    // Simple: tap anywhere toggles controls
-                                    onToggleControls()
+                                            val action = when {
+                                                offset.y < topZoneHeight -> tapZones.topZoneAction
+                                                offset.y > bottomZoneStart -> tapZones.bottomZoneAction
+                                                offset.x < leftZoneWidth -> tapZones.leftZoneAction
+                                                offset.x > rightZoneStart -> tapZones.rightZoneAction
+                                                else -> tapZones.centerZoneAction
+                                            }
+
+                                            onTapAction(action)
+                                        }
+                                    )
                                 }
-                            )
-                        }
-                ) {
-                    ReaderContainer(
+                            }
+                    ) {
+                        ReaderContainer(
+                            uiState = uiState,
+                            colors = colors,
+                            listState = listState,
+                            onPrevious = onPrevious,
+                            onNext = onNext,
+                            onBack = onBack,
+                            onRetryChapter = onRetryChapter
+                        )
+                    }
+                } else {
+                    PagedReaderContainer(
                         uiState = uiState,
                         colors = colors,
-                        listState = listState,
-                        onSegmentClick = onSegmentClick,
-                        onSentenceClick = onSentenceClick,
+                        initialPage = 0,
+                        onPageChanged = { _, _ -> },
                         onPrevious = onPrevious,
                         onNext = onNext,
                         onBack = onBack,
-                        onRetryChapter = onRetryChapter
+                        onRetryChapter = onRetryChapter,
+                        onTapCenter = onToggleControls
                     )
                 }
 
-                // Overlay controls
-                ControlsOverlay(
-                    uiState = uiState,
-                    colors = colors,
-                    estimatedTimeLeft = estimatedTimeLeft,
-                    onBack = onBack,
-                    onToggleBookmark = onToggleBookmark,
-                    onToggleChapterList = onToggleChapterList,
-                    onFontSizeChange = onFontSizeChange,
-                    onThemeChange = onThemeChange,
-                    onLineHeightChange = onLineHeightChange,
-                    onNavigateToSettings = onNavigateToSettings,
-                    onStartTTS = onStartTTS,
-                    onPauseTTS = onPauseTTS,
-                    onResumeTTS = onResumeTTS,
-                    onStopTTS = onStopTTS,
-                    onTTSNext = onTTSNext,
-                    onTTSPrevious = onTTSPrevious,
-                    onToggleTTSSettings = onToggleTTSSettings
-                )
+                // Controls overlay (only interactive when visible)
+                if (contentVisible) {
+                    ControlsOverlay(
+                        uiState = uiState,
+                        colors = colors,
+                        chapterProgress = chapterProgress,
+                        estimatedTimeLeft = estimatedTimeLeft,
+                        onBack = onBack,
+                        onToggleBookmark = onToggleBookmark,
+                        onToggleChapterList = onToggleChapterList,
+                        onSettingsChange = onSettingsChange,
+                        onNavigateToSettings = onNavigateToSettings,
+                        onStartTTS = onStartTTS,
+                        onPauseTTS = onPauseTTS,
+                        onResumeTTS = onResumeTTS,
+                        onStopTTS = onStopTTS,
+                        onTTSNext = onTTSNext,
+                        onTTSPrevious = onTTSPrevious,
+                        onToggleTTSSettings = onToggleTTSSettings
+                    )
 
-                // TTS Settings Panel (slides up from bottom)
-                AnimatedVisibility(
-                    visible = uiState.showTTSSettings,
-                    enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
-                    exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
-                    modifier = Modifier.align(Alignment.BottomCenter)
+                    // TTS Settings Panel
+                    AnimatedVisibility(
+                        visible = uiState.showTTSSettings,
+                        enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
+                        exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
+                        modifier = Modifier.align(Alignment.BottomCenter)
+                    ) {
+                        TTSSettingsPanel(
+                            speed = uiState.ttsSettings.speed,
+                            pitch = uiState.ttsSettings.pitch,
+                            selectedVoiceId = uiState.ttsSettings.voiceId,
+                            autoScroll = uiState.ttsSettings.autoScroll,
+                            highlightSentence = uiState.ttsSettings.highlightSentence,
+                            useSystemVoice = uiState.ttsSettings.useSystemVoice,
+                            onSpeedChange = onTTSSpeedChange,
+                            onPitchChange = onTTSPitchChange,
+                            onVoiceSelected = onTTSVoiceSelected,
+                            onAutoScrollChange = onTTSAutoScrollChange,
+                            onHighlightChange = onTTSHighlightChange,
+                            onUseSystemVoiceChange = onTTSUseSystemVoiceChange,
+                            onDismiss = onHideTTSSettings,
+                            modifier = Modifier.padding(16.dp)
+                        )
+                    }
+                }
+            }
+        }
+
+        // Error state
+        if (uiState.error != null && uiState.isContentReady && uiState.displayItems.isEmpty()) {
+            ReaderErrorState(
+                message = uiState.error,
+                colors = colors,
+                onRetry = onRetry,
+                onBack = onBack
+            )
+        }
+
+        // Loading overlay
+        if (uiState.shouldShowLoadingOverlay) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(colors.background),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
                 ) {
-                    TTSSettingsPanel(
-                        speed = uiState.ttsSettings.speed,
-                        pitch = uiState.ttsSettings.pitch,
-                        selectedVoiceId = uiState.ttsSettings.voiceId,
-                        autoScroll = uiState.ttsSettings.autoScroll,
-                        highlightSentence = uiState.ttsSettings.highlightSentence,
-                        onSpeedChange = onTTSSpeedChange,
-                        onPitchChange = onTTSPitchChange,
-                        onVoiceSelected = onTTSVoiceSelected,
-                        onAutoScrollChange = onTTSAutoScrollChange,
-                        onHighlightChange = onTTSHighlightChange,
-                        onDismiss = onHideTTSSettings,
-                        modifier = Modifier.padding(16.dp)
+                    CircularProgressIndicator(color = colors.accent)
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = "Loading chapter...",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = colors.text
                     )
                 }
             }
@@ -567,13 +818,12 @@ private fun ReaderScreenContent(
 private fun ControlsOverlay(
     uiState: ReaderUiState,
     colors: ReaderColors,
+    chapterProgress: Float,
     estimatedTimeLeft: String?,
     onBack: () -> Unit,
     onToggleBookmark: () -> Unit,
     onToggleChapterList: () -> Unit,
-    onFontSizeChange: (Int) -> Unit,
-    onThemeChange: (ReaderTheme) -> Unit,
-    onLineHeightChange: (Float) -> Unit,  // Changed from toggle to value
+    onSettingsChange: (ReaderSettings) -> Unit,
     onNavigateToSettings: () -> Unit,
     onStartTTS: () -> Unit,
     onPauseTTS: () -> Unit,
@@ -583,8 +833,7 @@ private fun ControlsOverlay(
     onTTSPrevious: () -> Unit,
     onToggleTTSSettings: () -> Unit
 ) {
-    val animationDuration =
-        if (uiState.settings.reduceMotion) 0 else ReaderDefaults.ControlsAnimationDuration
+    val animationDuration = if (uiState.settings.reduceMotion) 0 else ReaderDefaults.ControlsAnimationDuration
 
     Column(modifier = Modifier.fillMaxSize()) {
         // Top Bar
@@ -600,15 +849,15 @@ private fun ControlsOverlay(
             ) + fadeOut()
         ) {
             ReaderTopBar(
-                chapterTitle = if (uiState.settings.showChapterTitle)
-                    uiState.currentChapterName
-                else "",
+                chapterTitle = if (uiState.settings.showChapterTitle) uiState.currentChapterName else "",
                 chapterNumber = uiState.currentChapterIndex + 1,
                 totalChapters = uiState.allChapters.size,
                 isBookmarked = uiState.isCurrentChapterBookmarked,
-                readingProgress = uiState.readingProgress,
+                chapterProgress = chapterProgress,
                 estimatedTimeLeft = estimatedTimeLeft,
                 colors = colors,
+                progressStyle = if (uiState.settings.showProgress) uiState.settings.progressStyle else ProgressStyle.NONE,
+                largerTouchTargets = uiState.settings.largerTouchTargets,
                 onBack = onBack,
                 onBookmarkClick = onToggleBookmark
             )
@@ -616,7 +865,7 @@ private fun ControlsOverlay(
 
         Spacer(modifier = Modifier.weight(1f))
 
-        // Bottom Bar - visible when controls shown OR when TTS is active
+        // Bottom Controls
         AnimatedVisibility(
             visible = uiState.showControls || uiState.isTTSActive,
             enter = slideInVertically(
@@ -628,37 +877,51 @@ private fun ControlsOverlay(
                 animationSpec = tween(durationMillis = animationDuration)
             ) + fadeOut()
         ) {
-            ReaderBottomBar(
-                // TTS State
-                isTTSActive = uiState.isTTSActive,
-                isTTSPlaying = uiState.ttsStatus == TTSStatus.PLAYING,
-                currentSentenceIndex = uiState.currentGlobalSentenceIndex,
-                totalSentences = uiState.totalTTSSentences,
-                chapterName = uiState.currentChapterName,
-                speechRate = uiState.ttsSettings.speed,
-
-                // Quick Settings State
-                fontSize = uiState.settings.fontSize,
-                currentTheme = uiState.settings.theme,
-                lineHeight = uiState.settings.lineHeight,
-
-                // Callbacks - Normal Mode
-                onFontSizeDecrease = { onFontSizeChange(-1) },
-                onFontSizeIncrease = { onFontSizeChange(1) },
-                onThemeChange = onThemeChange,
-                onLineHeightChange = onLineHeightChange,  // Now passes value directly
-                onOpenChapterList = onToggleChapterList,
-                onOpenSettings = onNavigateToSettings,
-
-                // Callbacks - TTS
-                onStartTTS = onStartTTS,
-                onPauseTTS = onPauseTTS,
-                onResumeTTS = onResumeTTS,
-                onStopTTS = onStopTTS,
-                onNextSentence = onTTSNext,
-                onPreviousSentence = onTTSPrevious,
-                onOpenTTSSettings = onToggleTTSSettings
-            )
+            AnimatedContent(
+                targetState = uiState.isTTSActive,
+                transitionSpec = {
+                    val enter = slideInVertically(
+                        initialOffsetY = { if (targetState) it else -it },
+                        animationSpec = spring(dampingRatio = 0.8f, stiffness = 400f)
+                    ) + fadeIn(tween(200))
+                    val exit = slideOutVertically(
+                        targetOffsetY = { if (targetState) -it else it },
+                        animationSpec = tween(150)
+                    ) + fadeOut(tween(100))
+                    enter togetherWith exit
+                },
+                label = "bottomBarSwitch"
+            ) { ttsActive ->
+                if (ttsActive) {
+                    // TTS Player
+                    TTSPlayer(
+                        isPlaying = uiState.ttsStatus == TTSStatus.PLAYING,
+                        canGoPrevious = uiState.currentGlobalSentenceIndex > 0,
+                        canGoNext = uiState.currentGlobalSentenceIndex < uiState.totalTTSSentences - 1,
+                        currentSentenceInChapter = uiState.currentSentenceInChapter,
+                        totalSentencesInChapter = uiState.totalSentencesInChapter,
+                        chapterNumber = uiState.currentChapterIndex + 1,
+                        totalChapters = uiState.allChapters.size,
+                        speechRate = uiState.ttsSettings.speed,
+                        onPlayPause = {
+                            if (uiState.ttsStatus == TTSStatus.PLAYING) onPauseTTS() else onResumeTTS()
+                        },
+                        onNext = onTTSNext,
+                        onPrevious = onTTSPrevious,
+                        onStop = onStopTTS,
+                        onOpenSettings = onToggleTTSSettings
+                    )
+                } else {
+                    // Reader bottom bar with inline settings
+                    ReaderBottomBar(
+                        settings = uiState.settings,
+                        onSettingsChange = onSettingsChange,
+                        onOpenChapterList = onToggleChapterList,
+                        onStartTTS = onStartTTS,
+                        onNavigateToSettings = onNavigateToSettings
+                    )
+                }
+            }
         }
     }
 }

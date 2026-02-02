@@ -1,6 +1,4 @@
 // com/emptycastle/novery/data/local/dao/LibraryDao.kt
-// REPLACE with this enhanced version
-
 package com.emptycastle.novery.data.local.dao
 
 import androidx.room.Dao

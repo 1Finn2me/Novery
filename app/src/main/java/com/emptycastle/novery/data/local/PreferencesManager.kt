@@ -3,6 +3,7 @@ package com.emptycastle.novery.data.local
 import android.content.Context
 import android.content.SharedPreferences
 import com.emptycastle.novery.domain.model.AppSettings
+import com.emptycastle.novery.domain.model.DisplayMode
 import com.emptycastle.novery.domain.model.FontFamily
 import com.emptycastle.novery.domain.model.FontWeight
 import com.emptycastle.novery.domain.model.GridColumns
@@ -22,6 +23,9 @@ import com.emptycastle.novery.domain.model.TextAlign
 import com.emptycastle.novery.domain.model.ThemeMode
 import com.emptycastle.novery.domain.model.UiDensity
 import com.emptycastle.novery.domain.model.VolumeKeyDirection
+import com.emptycastle.novery.provider.MainProvider
+import com.emptycastle.novery.ui.screens.details.ChapterDisplayMode
+import com.emptycastle.novery.ui.screens.details.ChaptersPerPage
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -168,6 +172,17 @@ class PreferencesManager(context: Context) {
             }.toSet()
         }
 
+        // Load provider order and disabled set (defaults to registered providers)
+        val providerOrderString = prefs.getString(KEY_PROVIDER_ORDER, null)
+        val providerOrder = if (providerOrderString.isNullOrBlank()) {
+            MainProvider.getProviders().map { it.name }
+        } else {
+            providerOrderString.split(",").map { it }
+        }
+
+        val disabledString = prefs.getString(KEY_DISABLED_PROVIDERS, "")
+        val disabledSet = if (disabledString.isNullOrBlank()) emptySet() else disabledString.split(",").toSet()
+
         return AppSettings(
             themeMode = ThemeMode.valueOf(
                 prefs.getString(KEY_THEME_MODE, ThemeMode.DARK.name) ?: ThemeMode.DARK.name
@@ -186,6 +201,20 @@ class PreferencesManager(context: Context) {
                 prefs.getString(KEY_DEFAULT_LIBRARY_SORT, LibrarySortOrder.LAST_READ.name)
                     ?: LibrarySortOrder.LAST_READ.name
             ),
+            // Display modes
+            libraryDisplayMode = DisplayMode.valueOf(
+                prefs.getString(KEY_LIBRARY_DISPLAY_MODE, DisplayMode.GRID.name)
+                    ?: DisplayMode.GRID.name
+            ),
+            browseDisplayMode = DisplayMode.valueOf(
+                prefs.getString(KEY_BROWSE_DISPLAY_MODE, DisplayMode.GRID.name)
+                    ?: DisplayMode.GRID.name
+            ),
+            searchDisplayMode = DisplayMode.valueOf(
+                prefs.getString(KEY_SEARCH_DISPLAY_MODE, DisplayMode.GRID.name)
+                    ?: DisplayMode.GRID.name
+            ),
+
             defaultLibraryFilter = LibraryFilter.valueOf(
                 prefs.getString(KEY_DEFAULT_LIBRARY_FILTER, LibraryFilter.DOWNLOADED.name)
                     ?: LibraryFilter.DOWNLOADED.name
@@ -195,7 +224,9 @@ class PreferencesManager(context: Context) {
             autoDownloadEnabled = prefs.getBoolean(KEY_AUTO_DOWNLOAD_ENABLED, false),
             autoDownloadOnWifiOnly = prefs.getBoolean(KEY_AUTO_DOWNLOAD_WIFI_ONLY, true),
             autoDownloadLimit = prefs.getInt(KEY_AUTO_DOWNLOAD_LIMIT, 10),
-            autoDownloadForStatuses = autoDownloadStatuses
+            autoDownloadForStatuses = autoDownloadStatuses,
+            providerOrder = providerOrder,
+            disabledProviders = disabledSet
         )
     }
 
@@ -221,6 +252,13 @@ class PreferencesManager(context: Context) {
                 KEY_AUTO_DOWNLOAD_STATUSES,
                 settings.autoDownloadForStatuses.joinToString(",") { it.name }
             )
+            // Providers
+            putString(KEY_PROVIDER_ORDER, settings.providerOrder.joinToString(","))
+            putString(KEY_DISABLED_PROVIDERS, settings.disabledProviders.joinToString(","))
+            putString(KEY_LIBRARY_DISPLAY_MODE, settings.libraryDisplayMode.name)
+            putString(KEY_BROWSE_DISPLAY_MODE, settings.browseDisplayMode.name)
+            putString(KEY_SEARCH_DISPLAY_MODE, settings.searchDisplayMode.name)
+
             apply()
         }
         _appSettings.value = settings
@@ -229,6 +267,18 @@ class PreferencesManager(context: Context) {
     // Convenience methods for app settings
     fun updateDensity(density: UiDensity) {
         updateAppSettings(_appSettings.value.copy(uiDensity = density))
+    }
+
+    fun updateLibraryDisplayMode(mode: DisplayMode) {
+        updateAppSettings(_appSettings.value.copy(libraryDisplayMode = mode))
+    }
+
+    fun updateBrowseDisplayMode(mode: DisplayMode) {
+        updateAppSettings(_appSettings.value.copy(browseDisplayMode = mode))
+    }
+
+    fun updateSearchDisplayMode(mode: DisplayMode) {
+        updateAppSettings(_appSettings.value.copy(searchDisplayMode = mode))
     }
 
     fun updateThemeMode(mode: ThemeMode) {
@@ -265,6 +315,19 @@ class PreferencesManager(context: Context) {
 
     fun updateAutoDownloadStatuses(statuses: Set<ReadingStatus>) {
         updateAppSettings(_appSettings.value.copy(autoDownloadForStatuses = statuses))
+    }
+
+    // Provider settings
+    fun updateProviderOrder(order: List<String>) {
+        prefs.edit().putString(KEY_PROVIDER_ORDER, order.joinToString(",")).apply()
+        updateAppSettings(_appSettings.value.copy(providerOrder = order))
+    }
+
+    fun setProviderEnabled(providerName: String, enabled: Boolean) {
+        val current = _appSettings.value.disabledProviders.toMutableSet()
+        if (enabled) current.remove(providerName) else current.add(providerName)
+        prefs.edit().putString(KEY_DISABLED_PROVIDERS, current.joinToString(",")).apply()
+        updateAppSettings(_appSettings.value.copy(disabledProviders = current))
     }
 
     // =========================================================================
@@ -730,11 +793,33 @@ class PreferencesManager(context: Context) {
     // =========================================================================
 
     fun getChapterSortDescending(): Boolean {
-        return prefs.getBoolean(KEY_CHAPTER_SORT_DESCENDING, false)
+        return prefs.getBoolean(KEY_CHAPTER_SORT_DESCENDING, true)
     }
 
     fun setChapterSortDescending(descending: Boolean) {
         prefs.edit().putBoolean(KEY_CHAPTER_SORT_DESCENDING, descending).apply()
+    }
+
+    fun getChapterDisplayMode(): ChapterDisplayMode {
+        val value = prefs.getString(KEY_CHAPTER_DISPLAY_MODE, ChapterDisplayMode.SCROLL.name)
+        return try {
+            ChapterDisplayMode.valueOf(value ?: ChapterDisplayMode.SCROLL.name)
+        } catch (e: Exception) {
+            ChapterDisplayMode.SCROLL
+        }
+    }
+
+    fun setChapterDisplayMode(mode: ChapterDisplayMode) {
+        prefs.edit().putString(KEY_CHAPTER_DISPLAY_MODE, mode.name).apply()
+    }
+
+    fun getChaptersPerPage(): ChaptersPerPage {
+        val value = prefs.getInt(KEY_CHAPTERS_PER_PAGE, ChaptersPerPage.FIFTY.value)
+        return ChaptersPerPage.fromValue(value)
+    }
+
+    fun setChaptersPerPage(chaptersPerPage: ChaptersPerPage) {
+        prefs.edit().putInt(KEY_CHAPTERS_PER_PAGE, chaptersPerPage.value).apply()
     }
 
     // =========================================================================
@@ -833,6 +918,14 @@ class PreferencesManager(context: Context) {
     }
 
     fun getTtsVolume(): Float = prefs.getFloat(KEY_TTS_VOLUME, 1.0f)
+
+    fun getTtsUseSystemVoice(): Boolean {
+        return prefs.getBoolean(KEY_TTS_USE_SYSTEM_VOICE, false)
+    }
+
+    fun setTtsUseSystemVoice(useSystem: Boolean) {
+        prefs.edit().putBoolean(KEY_TTS_USE_SYSTEM_VOICE, useSystem).apply()
+    }
 
     fun setTtsVolume(volume: Float) {
         prefs.edit().putFloat(KEY_TTS_VOLUME, volume.coerceIn(0f, 1f)).apply()
@@ -965,6 +1058,7 @@ class PreferencesManager(context: Context) {
             put("readerSettings", exportReaderSettings())
             put("appSettings", exportAppSettings())
             put("ttsSettings", exportTtsSettings())
+            put("chapterListSettings", exportChapterListSettings())
         }
     }
 
@@ -1042,6 +1136,130 @@ class PreferencesManager(context: Context) {
         }
     }
 
+    private fun exportChapterListSettings(): Map<String, Any?> {
+        return buildMap {
+            put("sortDescending", getChapterSortDescending())
+            put("displayMode", getChapterDisplayMode().name)
+            put("chaptersPerPage", getChaptersPerPage().value)
+        }
+    }
+
+    // =========================================================================
+// RESET TO DEFAULTS
+// =========================================================================
+
+    /**
+     * Resets all settings to their default values.
+     * This includes app settings, reader settings, TTS settings, and chapter list settings.
+     */
+    fun resetToDefaults() {
+        // Reset app settings to defaults
+        updateAppSettings(AppSettings())
+
+        // Reset reader settings to defaults
+        resetReaderSettings()
+
+        // Reset TTS settings to defaults
+        resetTtsSettings()
+
+        // Reset chapter list settings to defaults
+        resetChapterListSettings()
+
+        // Reset reading goals to defaults
+        resetReadingGoals()
+
+        // Reset cache settings to defaults
+        resetCacheSettings()
+
+        // Reset notification settings to defaults
+        resetNotificationSettings()
+    }
+
+    /**
+     * Resets only app settings (theme, layout, etc.) to defaults.
+     */
+    fun resetAppSettings() {
+        updateAppSettings(AppSettings())
+    }
+
+    /**
+     * Resets TTS settings to defaults.
+     */
+    private fun resetTtsSettings() {
+        prefs.edit().apply {
+            putFloat(KEY_TTS_SPEED, 1.0f)
+            putFloat(KEY_TTS_PITCH, 1.0f)
+            putFloat(KEY_TTS_VOLUME, 1.0f)
+            remove(KEY_TTS_VOICE)
+            putBoolean(KEY_TTS_AUTO_SCROLL, true)
+            putBoolean(KEY_TTS_HIGHLIGHT_SENTENCE, true)
+            putBoolean(KEY_TTS_PAUSE_ON_CALLS, true)
+            putBoolean(KEY_TTS_SKIP_CHAPTER_HEADERS, false)
+            putBoolean(KEY_TTS_CONTINUE_ON_CHAPTER_END, true)
+            putLong(KEY_TTS_SENTENCE_DELAY, 0)
+            putLong(KEY_TTS_PARAGRAPH_DELAY, 200)
+            putBoolean(KEY_TTS_USE_SYSTEM_VOICE, false)
+            apply()
+        }
+    }
+
+    /**
+     * Resets chapter list settings to defaults.
+     */
+    private fun resetChapterListSettings() {
+        prefs.edit().apply {
+            putBoolean(KEY_CHAPTER_SORT_DESCENDING, true)
+            putString(KEY_CHAPTER_DISPLAY_MODE, ChapterDisplayMode.SCROLL.name)
+            putInt(KEY_CHAPTERS_PER_PAGE, ChaptersPerPage.FIFTY.value)
+            apply()
+        }
+    }
+
+    /**
+     * Resets reading goals to defaults.
+     */
+    private fun resetReadingGoals() {
+        prefs.edit().apply {
+            putInt(KEY_DAILY_READING_GOAL, 30)
+            putInt(KEY_WEEKLY_READING_GOAL, 180)
+            putInt(KEY_MONTHLY_CHAPTER_GOAL, 50)
+            apply()
+        }
+    }
+
+    /**
+     * Resets cache settings to defaults.
+     */
+    private fun resetCacheSettings() {
+        prefs.edit().apply {
+            putInt(KEY_IMAGE_CACHE_SIZE, 100)
+            putBoolean(KEY_CLEAR_CACHE_ON_EXIT, false)
+            apply()
+        }
+    }
+
+    /**
+     * Resets notification settings to defaults.
+     */
+    private fun resetNotificationSettings() {
+        prefs.edit().apply {
+            putBoolean(KEY_UPDATE_NOTIFICATIONS, true)
+            putBoolean(KEY_DOWNLOAD_NOTIFICATIONS, true)
+            apply()
+        }
+    }
+
+    /**
+     * Resets backup settings to defaults (but keeps backup data).
+     */
+    fun resetBackupSettings() {
+        prefs.edit().apply {
+            putBoolean(KEY_AUTO_BACKUP_ENABLED, false)
+            putInt(KEY_AUTO_BACKUP_INTERVAL, 7)
+            apply()
+        }
+    }
+
     // =========================================================================
     // COMPANION OBJECT
     // =========================================================================
@@ -1070,6 +1288,9 @@ class PreferencesManager(context: Context) {
         private const val KEY_MARGIN_VERTICAL = "reader_margin_vertical"
         private const val KEY_PARAGRAPH_SPACING = "reader_paragraph_spacing"
         private const val KEY_PARAGRAPH_INDENT = "reader_paragraph_indent"
+        private const val KEY_LIBRARY_DISPLAY_MODE = "library_display_mode"
+        private const val KEY_BROWSE_DISPLAY_MODE = "browse_display_mode"
+        private const val KEY_SEARCH_DISPLAY_MODE = "search_display_mode"
 
         // Appearance
         private const val KEY_READER_THEME = "reader_theme"
@@ -1128,6 +1349,7 @@ class PreferencesManager(context: Context) {
         private const val KEY_TTS_CONTINUE_ON_CHAPTER_END = "tts_continue_on_chapter_end"
         private const val KEY_TTS_SENTENCE_DELAY = "tts_sentence_delay"
         private const val KEY_TTS_PARAGRAPH_DELAY = "tts_paragraph_delay"
+        private const val KEY_TTS_USE_SYSTEM_VOICE = "tts_use_system_voice"
 
         // =====================================================================
         // SCROLL POSITION KEYS
@@ -1147,6 +1369,8 @@ class PreferencesManager(context: Context) {
         // =====================================================================
 
         private const val KEY_CHAPTER_SORT_DESCENDING = "chapter_sort_descending"
+        private const val KEY_CHAPTER_DISPLAY_MODE = "chapter_display_mode"
+        private const val KEY_CHAPTERS_PER_PAGE = "chapters_per_page"
 
         // =====================================================================
         // READING GOALS
@@ -1182,6 +1406,8 @@ class PreferencesManager(context: Context) {
         private const val KEY_KEEP_SCREEN_ON = "keep_screen_on"
         private const val KEY_INFINITE_SCROLL = "infinite_scroll"
         private const val KEY_SEARCH_RESULTS_PER_PROVIDER = "search_results_per_provider"
+        private const val KEY_PROVIDER_ORDER = "provider_order"
+        private const val KEY_DISABLED_PROVIDERS = "disabled_providers"
 
         // =====================================================================
         // NOTIFICATIONS
@@ -1212,6 +1438,8 @@ class PreferencesManager(context: Context) {
         private const val KEY_FIRST_RUN = "first_run"
         private const val KEY_ONBOARDING_COMPLETE = "onboarding_complete"
         private const val KEY_APP_VERSION = "app_version"
+
+
 
         // =====================================================================
         // SINGLETON

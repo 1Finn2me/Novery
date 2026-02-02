@@ -17,6 +17,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DownloadDone
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.MenuBook
+import androidx.compose.material.icons.outlined.RemoveRedEye
 import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -32,6 +33,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.emptycastle.novery.ui.screens.details.util.DetailsColors
+import java.text.DecimalFormat
 
 @Composable
 fun StatsRow(
@@ -39,7 +41,8 @@ fun StatsRow(
     readCount: Int,
     downloadedCount: Int,
     rating: Int?,
-    peopleVoted: Int?
+    peopleVoted: Int?,
+    views: Int? = null
 ) {
     Card(
         modifier = Modifier
@@ -81,17 +84,68 @@ fun StatsRow(
                 color = if (downloadedCount > 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
             )
 
+            // Show views if available, otherwise show rating
+            if (views != null) {
+                StatDivider()
+
+                StatItem(
+                    icon = Icons.Outlined.RemoveRedEye,
+                    value = formatViewCount(views),
+                    label = "Views",
+                    color = MaterialTheme.colorScheme.tertiary
+                )
+            }
+
             if (rating != null) {
                 StatDivider()
 
                 StatItem(
                     icon = Icons.Default.Star,
                     value = String.format("%.1f", rating / 100f),
-                    label = if (peopleVoted != null) "$peopleVoted votes" else "Rating",
+                    label = if (peopleVoted != null) formatVoteCount(peopleVoted) else "Rating",
                     color = DetailsColors.Warning
                 )
             }
         }
+    }
+}
+
+/**
+ * Format view count to human-readable format
+ * Examples: 217500 -> "217.5K", 1400000 -> "1.4M"
+ */
+private fun formatViewCount(count: Int): String {
+    return when {
+        count >= 1_000_000_000 -> {
+            val value = count / 1_000_000_000.0
+            "${DecimalFormat("#.#").format(value)}B"
+        }
+        count >= 1_000_000 -> {
+            val value = count / 1_000_000.0
+            "${DecimalFormat("#.#").format(value)}M"
+        }
+        count >= 1_000 -> {
+            val value = count / 1_000.0
+            "${DecimalFormat("#.#").format(value)}K"
+        }
+        else -> count.toString()
+    }
+}
+
+/**
+ * Format vote count for the rating label
+ */
+private fun formatVoteCount(count: Int): String {
+    return when {
+        count >= 1_000_000 -> {
+            val value = count / 1_000_000.0
+            "${DecimalFormat("#.#").format(value)}M votes"
+        }
+        count >= 1_000 -> {
+            val value = count / 1_000.0
+            "${DecimalFormat("#.#").format(value)}K votes"
+        }
+        else -> "$count votes"
     }
 }
 

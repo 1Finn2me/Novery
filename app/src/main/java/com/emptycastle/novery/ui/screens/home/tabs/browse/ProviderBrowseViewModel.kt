@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import com.emptycastle.novery.provider.MainProvider
 
 class ProviderBrowseViewModel(
     private val providerName: String
@@ -39,31 +40,75 @@ class ProviderBrowseViewModel(
     }
 
     init {
-        initialize()
-    }
+        // Live initialize and react to preference/provider registry changes
+        var hadProvider = false
 
-    private fun initialize() {
         viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true) }
+            // React to app settings changes
+            launch {
+                RepositoryProvider.getPreferencesManager().appSettings.collect {
+                    val providers = novelRepository.getProviders()
+                    val provider = providers.find { it.name == providerName }
 
-            val providers = novelRepository.getProviders()
-            val provider = providers.find { it.name == providerName }
+                    if (provider != null) {
+                        _uiState.update {
+                            it.copy(
+                                provider = provider,
+                                selectedTag = provider.tags.firstOrNull()?.value,
+                                selectedSort = provider.orderBys.firstOrNull()?.value,
+                                isLoading = false,
+                                error = null
+                            )
+                        }
 
-            if (provider != null) {
-                _uiState.update {
-                    it.copy(
-                        provider = provider,
-                        selectedTag = provider.tags.firstOrNull()?.value,
-                        selectedSort = provider.orderBys.firstOrNull()?.value
-                    )
+                        if (!hadProvider) {
+                            hadProvider = true
+                            loadPage()
+                        }
+                    } else {
+                        hadProvider = false
+                        _uiState.update {
+                            it.copy(
+                                provider = null,
+                                error = "Provider '$providerName' not found",
+                                isLoading = false
+                            )
+                        }
+                    }
                 }
-                loadPage()
-            } else {
-                _uiState.update {
-                    it.copy(
-                        error = "Provider '$providerName' not found",
-                        isLoading = false
-                    )
+            }
+
+            // React to provider registry changes
+            launch {
+                MainProvider.providersState().collect {
+                    val providers = novelRepository.getProviders()
+                    val provider = providers.find { it.name == providerName }
+
+                    if (provider != null) {
+                        _uiState.update {
+                            it.copy(
+                                provider = provider,
+                                selectedTag = provider.tags.firstOrNull()?.value,
+                                selectedSort = provider.orderBys.firstOrNull()?.value,
+                                isLoading = false,
+                                error = null
+                            )
+                        }
+
+                        if (!hadProvider) {
+                            hadProvider = true
+                            loadPage()
+                        }
+                    } else {
+                        hadProvider = false
+                        _uiState.update {
+                            it.copy(
+                                provider = null,
+                                error = "Provider '$providerName' not found",
+                                isLoading = false
+                            )
+                        }
+                    }
                 }
             }
         }

@@ -46,6 +46,19 @@ enum class UiDensity {
 }
 
 /**
+ * Display mode for novel grids/lists
+ */
+enum class DisplayMode {
+    GRID,
+    LIST;
+
+    fun displayName(): String = when (this) {
+        GRID -> "Grid"
+        LIST -> "List"
+    }
+}
+
+/**
  * Theme mode for the app
  */
 enum class ThemeMode {
@@ -97,6 +110,11 @@ data class AppSettings(
     val searchGridColumns: GridColumns = GridColumns.Auto,
     val showBadges: Boolean = true,
 
+    // Display mode settings
+    val libraryDisplayMode: DisplayMode = DisplayMode.GRID,
+    val browseDisplayMode: DisplayMode = DisplayMode.GRID,
+    val searchDisplayMode: DisplayMode = DisplayMode.GRID,
+
     // Library
     val defaultLibrarySort: LibrarySortOrder = LibrarySortOrder.LAST_READ,
     val defaultLibraryFilter: LibraryFilter = LibraryFilter.DOWNLOADED,
@@ -112,7 +130,11 @@ data class AppSettings(
 
     // Reader
     val keepScreenOn: Boolean = true,
-    val infiniteScroll: Boolean = false
+    val infiniteScroll: Boolean = false,
+
+    // Providers
+    val providerOrder: List<String> = emptyList(),
+    val disabledProviders: Set<String> = emptySet()
 )
 
 /**

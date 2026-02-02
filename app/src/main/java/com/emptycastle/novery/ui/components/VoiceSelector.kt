@@ -1,5 +1,7 @@
 package com.emptycastle.novery.ui.components
 
+import android.content.Intent
+import android.provider.Settings
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
@@ -13,7 +15,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -23,26 +24,23 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Cloud
-import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.RecordVoiceOver
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -54,15 +52,18 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -82,6 +83,7 @@ import com.emptycastle.novery.ui.theme.Zinc800
 
 /**
  * Full voice selector with language groups and search
+ * Filters to LOCAL VOICES ONLY
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -92,45 +94,118 @@ fun VoiceSelector(
     onStopPreview: () -> Unit,
     modifier: Modifier = Modifier,
     isPreviewPlaying: Boolean = false,
-    previewingVoiceId: String? = null
+    previewingVoiceId: String? = null,
+    showSystemSettings: Boolean = true
 ) {
+    val context = LocalContext.current
     val languageGroups by VoiceManager.languageGroups.collectAsState()
     val isLoading by VoiceManager.isLoading.collectAsState()
 
     var searchQuery by remember { mutableStateOf("") }
     var expandedLanguage by remember { mutableStateOf<String?>(null) }
 
-    // Filter voices by search
-    val filteredGroups = remember(languageGroups, searchQuery) {
-        if (searchQuery.isBlank()) {
-            languageGroups
-        } else {
-            languageGroups.mapNotNull { group ->
-                val filteredVoices = group.voices.filter { voice ->
-                    voice.displayName.contains(searchQuery, ignoreCase = true) ||
-                            voice.languageDisplayName.contains(searchQuery, ignoreCase = true)
-                }
-                if (filteredVoices.isNotEmpty()) {
-                    group.copy(voices = filteredVoices)
+    // Filter to LOCAL voices only and apply search
+    val filteredGroups by remember(languageGroups, searchQuery) {
+        derivedStateOf {
+            val localOnlyGroups = languageGroups.mapNotNull { group ->
+                val localVoices = group.voices.filter { it.isLocal && it.isInstalled }
+                if (localVoices.isNotEmpty()) {
+                    group.copy(voices = localVoices)
                 } else {
                     null
+                }
+            }
+
+            if (searchQuery.isBlank()) {
+                localOnlyGroups
+            } else {
+                localOnlyGroups.mapNotNull { group ->
+                    val filteredVoices = group.voices.filter { voice ->
+                        voice.displayName.contains(searchQuery, ignoreCase = true) ||
+                                voice.languageDisplayName.contains(searchQuery, ignoreCase = true)
+                    }
+                    if (filteredVoices.isNotEmpty()) {
+                        group.copy(voices = filteredVoices)
+                    } else {
+                        null
+                    }
                 }
             }
         }
     }
 
-    // Stop preview when unmounted
     DisposableEffect(Unit) {
         onDispose { onStopPreview() }
     }
 
     Column(modifier = modifier.fillMaxWidth()) {
+        // System TTS Settings Button
+        if (showSystemSettings) {
+            Surface(
+                onClick = {
+                    try {
+                        val intent = Intent("com.android.settings.TTS_SETTINGS")
+                        context.startActivity(intent)
+                    } catch (e: Exception) {
+                        try {
+                            context.startActivity(Intent(Settings.ACTION_SETTINGS))
+                        } catch (e2: Exception) { }
+                    }
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 12.dp),
+                shape = RoundedCornerShape(12.dp),
+                color = Zinc800,
+                border = androidx.compose.foundation.BorderStroke(1.dp, Zinc700)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Settings,
+                            contentDescription = null,
+                            tint = Zinc400,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Column {
+                            Text(
+                                text = "System TTS Settings",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = Zinc300,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Text(
+                                text = "Download more voices or change default engine",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Zinc500
+                            )
+                        }
+                    }
+                    Icon(
+                        imageVector = Icons.Default.OpenInNew,
+                        contentDescription = null,
+                        tint = Zinc500,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+            }
+        }
+
         // Search bar
         OutlinedTextField(
             value = searchQuery,
             onValueChange = { searchQuery = it },
             placeholder = {
-                Text("Search voices...", color = Zinc500)
+                Text("Search local voices...", color = Zinc500)
             },
             leadingIcon = {
                 Icon(
@@ -151,6 +226,14 @@ fun VoiceSelector(
                 cursorColor = Orange500
             ),
             singleLine = true
+        )
+
+        // Info text
+        Text(
+            text = "Showing local voices only • ${filteredGroups.sumOf { it.voiceCount }} available",
+            style = MaterialTheme.typography.labelSmall,
+            color = Zinc500,
+            modifier = Modifier.padding(bottom = 8.dp)
         )
 
         if (isLoading) {
@@ -186,9 +269,15 @@ fun VoiceSelector(
                     )
                     Spacer(modifier = Modifier.height(12.dp))
                     Text(
-                        text = if (searchQuery.isNotBlank()) "No voices found" else "No voices available",
+                        text = if (searchQuery.isNotBlank()) "No voices found" else "No local voices available",
                         color = Zinc400,
                         style = MaterialTheme.typography.bodyMedium
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "Open System TTS Settings to download voices",
+                        color = Zinc500,
+                        style = MaterialTheme.typography.bodySmall
                     )
                 }
             }
@@ -221,9 +310,6 @@ fun VoiceSelector(
     }
 }
 
-/**
- * Language group item with expandable voice list
- */
 @Composable
 private fun LanguageGroupItem(
     group: LanguageGroup,
@@ -254,7 +340,6 @@ private fun LanguageGroupItem(
         shape = RoundedCornerShape(12.dp)
     ) {
         Column {
-            // Header
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -262,7 +347,6 @@ private fun LanguageGroupItem(
                     .padding(16.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Flag
                 if (group.flag != null) {
                     Text(
                         text = group.flag,
@@ -271,7 +355,6 @@ private fun LanguageGroupItem(
                     Spacer(modifier = Modifier.width(12.dp))
                 }
 
-                // Language name
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = group.displayName,
@@ -286,7 +369,6 @@ private fun LanguageGroupItem(
                     )
                 }
 
-                // Quality indicators
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
                     verticalAlignment = Alignment.CenterVertically
@@ -294,19 +376,10 @@ private fun LanguageGroupItem(
                     if (group.hasPremiumVoices) {
                         QualityBadge(quality = VoiceQuality.PREMIUM)
                     }
-                    if (group.hasLocalVoices) {
-                        Icon(
-                            imageVector = Icons.Default.CloudOff,
-                            contentDescription = "Local voices available",
-                            tint = Zinc400,
-                            modifier = Modifier.size(16.dp)
-                        )
-                    }
                 }
 
                 Spacer(modifier = Modifier.width(8.dp))
 
-                // Expand icon
                 Icon(
                     imageVector = Icons.Default.ExpandMore,
                     contentDescription = if (isExpanded) "Collapse" else "Expand",
@@ -315,7 +388,6 @@ private fun LanguageGroupItem(
                 )
             }
 
-            // Voice list
             AnimatedVisibility(
                 visible = isExpanded,
                 enter = expandVertically() + fadeIn(),
@@ -345,9 +417,6 @@ private fun LanguageGroupItem(
     }
 }
 
-/**
- * Individual voice item
- */
 @Composable
 private fun VoiceListItem(
     voice: VoiceInfo,
@@ -369,7 +438,6 @@ private fun VoiceListItem(
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // Selection indicator
         Box(
             modifier = Modifier
                 .size(24.dp)
@@ -392,7 +460,6 @@ private fun VoiceListItem(
 
         Spacer(modifier = Modifier.width(12.dp))
 
-        // Voice info
         Column(modifier = Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
@@ -406,7 +473,6 @@ private fun VoiceListItem(
 
                 Spacer(modifier = Modifier.width(6.dp))
 
-                // Gender badge
                 if (voice.gender != VoiceGender.UNKNOWN) {
                     GenderBadge(gender = voice.gender)
                 }
@@ -416,20 +482,8 @@ private fun VoiceListItem(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                // Quality
                 QualityBadge(quality = voice.quality)
 
-                // Network indicator
-                if (voice.isNetworkRequired) {
-                    Icon(
-                        imageVector = Icons.Default.Cloud,
-                        contentDescription = "Requires network",
-                        tint = Zinc500,
-                        modifier = Modifier.size(12.dp)
-                    )
-                }
-
-                // Country
                 if (voice.countryDisplayName.isNotBlank()) {
                     Text(
                         text = "• ${voice.countryDisplayName}",
@@ -440,7 +494,6 @@ private fun VoiceListItem(
             }
         }
 
-        // Preview button
         IconButton(
             onClick = onPreview,
             modifier = Modifier.size(40.dp)
@@ -454,9 +507,6 @@ private fun VoiceListItem(
     }
 }
 
-/**
- * Voice quality badge
- */
 @Composable
 private fun QualityBadge(quality: VoiceQuality) {
     val (color, text) = when (quality) {
@@ -496,9 +546,6 @@ private fun QualityBadge(quality: VoiceQuality) {
     }
 }
 
-/**
- * Voice gender badge
- */
 @Composable
 private fun GenderBadge(gender: VoiceGender) {
     val text = when (gender) {
@@ -517,19 +564,19 @@ private fun GenderBadge(gender: VoiceGender) {
     }
 }
 
-/**
- * Compact voice selector for inline use
- */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CompactVoiceSelector(
     selectedVoice: VoiceInfo?,
     onOpenFullSelector: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true // NEW PARAMETER
 ) {
     Surface(
-        onClick = onOpenFullSelector,
-        modifier = modifier.fillMaxWidth(),
+        onClick = { if (enabled) onOpenFullSelector() },
+        modifier = modifier
+            .fillMaxWidth()
+            .alpha(if (enabled) 1f else 0.5f), // Dim when disabled
         shape = RoundedCornerShape(12.dp),
         color = Zinc800,
         border = androidx.compose.foundation.BorderStroke(1.dp, Zinc700)
@@ -541,7 +588,7 @@ fun CompactVoiceSelector(
             Icon(
                 imageVector = Icons.Default.RecordVoiceOver,
                 contentDescription = null,
-                tint = Orange500,
+                tint = if (enabled) Orange500 else Zinc500,
                 modifier = Modifier.size(24.dp)
             )
 
@@ -554,74 +601,22 @@ fun CompactVoiceSelector(
                     color = Zinc400
                 )
                 Text(
-                    text = selectedVoice?.shortName ?: "Select a voice",
+                    text = selectedVoice?.shortName ?: "System Default",
                     style = MaterialTheme.typography.bodyMedium,
-                    color = if (selectedVoice != null) Color.White else Zinc500,
+                    color = if (enabled && selectedVoice != null) Color.White else Zinc500,
                     fontWeight = FontWeight.Medium,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
             }
 
-            Icon(
-                imageVector = Icons.Default.ExpandMore,
-                contentDescription = "Select voice",
-                tint = Zinc400
-            )
-        }
-    }
-}
-
-/**
- * Quick voice filter chips
- */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun VoiceFilterChips(
-    selectedFilter: VoiceFilter,
-    onFilterSelected: (VoiceFilter) -> Unit,
-    modifier: Modifier = Modifier
-) {
-    LazyRow(
-        modifier = modifier,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        contentPadding = PaddingValues(horizontal = 4.dp)
-    ) {
-        items(VoiceFilter.entries) { filter ->
-            FilterChip(
-                selected = selectedFilter == filter,
-                onClick = { onFilterSelected(filter) },
-                label = { Text(filter.displayName) },
-                leadingIcon = if (selectedFilter == filter) {
-                    {
-                        Icon(
-                            imageVector = Icons.Default.Check,
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp)
-                        )
-                    }
-                } else null,
-                colors = FilterChipDefaults.filterChipColors(
-                    selectedContainerColor = Orange500,
-                    selectedLabelColor = Color.White,
-                    containerColor = Zinc800,
-                    labelColor = Zinc300
-                ),
-                border = FilterChipDefaults.filterChipBorder(
-                    borderColor = Zinc700,
-                    selectedBorderColor = Orange500,
-                    enabled = true,
-                    selected = selectedFilter == filter
+            if (enabled) {
+                Icon(
+                    imageVector = Icons.Default.ExpandMore,
+                    contentDescription = "Select voice",
+                    tint = Zinc400
                 )
-            )
+            }
         }
     }
-}
-
-enum class VoiceFilter(val displayName: String) {
-    ALL("All"),
-    LOCAL("Local Only"),
-    PREMIUM("Premium"),
-    ENGLISH("English"),
-    OTHER("Other Languages")
 }

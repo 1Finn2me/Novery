@@ -51,6 +51,10 @@ data class DetailsUiState(
     // Chapter data (for backwards compatibility)
     val chapters: List<Chapter> = emptyList(),
 
+    // Chapter display mode & pagination
+    val chapterDisplayMode: ChapterDisplayMode = ChapterDisplayMode.SCROLL,
+    val paginationState: PaginationState = PaginationState(),
+
     // Chapter status
     val downloadedChapters: Set<String> = emptySet(),
     val readChapters: Set<String> = emptySet(),
@@ -200,6 +204,52 @@ data class DetailsUiState(
             val chapterList = novelDetails?.chapters ?: chapters
             val shouldReverse = isChapterSortDescending || isChapterListReversed
             return if (shouldReverse) chapterList.reversed() else chapterList
+        }
+
+    /**
+     * Returns chapters to display based on current display mode.
+     * For SCROLL mode: returns all filtered chapters
+     * For PAGINATED mode: returns only chapters for current page
+     */
+    val displayedChapters: List<Chapter>
+        get() = when (chapterDisplayMode) {
+            ChapterDisplayMode.SCROLL -> filteredChapters
+            ChapterDisplayMode.PAGINATED -> {
+                val range = paginationState.getPageRange(filteredChapters.size)
+                if (range.isEmpty()) {
+                    emptyList()
+                } else {
+                    filteredChapters.subList(
+                        range.first,
+                        range.last.coerceAtMost(filteredChapters.size)
+                    )
+                }
+            }
+        }
+
+    /**
+     * Total number of pages for paginated mode
+     */
+    val totalPages: Int
+        get() = paginationState.getTotalPages(filteredChapters.size)
+
+    /**
+     * Current page info string (e.g., "Page 1 of 10")
+     */
+    val pageInfoString: String
+        get() = "Page ${paginationState.currentPage} of $totalPages"
+
+    /**
+     * Current page range info string (e.g., "1-50 of 500")
+     */
+    val pageRangeInfoString: String
+        get() {
+            val range = paginationState.getPageRange(filteredChapters.size)
+            return if (range.isEmpty()) {
+                "0 of 0"
+            } else {
+                "${range.first + 1}-${range.last} of ${filteredChapters.size}"
+            }
         }
 
     // Tab badges

@@ -30,6 +30,7 @@ class LibraryViewModel : ViewModel() {
     private val offlineRepository = RepositoryProvider.getOfflineRepository()
     private val novelRepository = RepositoryProvider.getNovelRepository()
     private val preferencesManager = RepositoryProvider.getPreferencesManager()
+    private val notificationRepository = RepositoryProvider.getNotificationRepository()
 
     private val _uiState = MutableStateFlow(LibraryUiState())
     val uiState: StateFlow<LibraryUiState> = _uiState.asStateFlow()
@@ -41,6 +42,19 @@ class LibraryViewModel : ViewModel() {
     init {
         initialize()
         observeNewChapterCount()
+
+        // Observe app settings so changes (like default sort/filter) apply instantly
+        viewModelScope.launch {
+            preferencesManager.appSettings.collect { settings ->
+                _uiState.update {
+                    it.copy(
+                        filter = settings.defaultLibraryFilter,
+                        sortOrder = settings.defaultLibrarySort
+                    )
+                }
+                applyFilters()
+            }
+        }
     }
 
     private fun initialize() {
@@ -435,6 +449,17 @@ class LibraryViewModel : ViewModel() {
 
                 novelsWithNewChapters = result.updatedCount
                 totalNewChapters = result.totalNewChapters
+
+                // Add novels with new chapters to notification list
+                if (totalNewChapters > 0) {
+                    val novelsWithNew = _uiState.value.items.filter { it.hasNewChapters }
+                    novelsWithNew.forEach { item ->
+                        notificationRepository.addOrUpdateNotification(
+                            novelUrl = item.novel.url,
+                            providerName = item.novel.apiName
+                        )
+                    }
+                }
 
                 val counts = offlineRepository.getAllDownloadCounts()
 

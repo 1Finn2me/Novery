@@ -2,11 +2,12 @@ package com.emptycastle.novery.tts
 
 import android.content.Context
 import android.content.SharedPreferences
-import kotlinx.coroutines.flow.StateFlow
 import java.util.Locale
 
 /**
- * Singleton manager for TTS Engine with settings persistence.
+ * Simple settings manager for TTS preferences.
+ * Actual playback is handled by TTSService.
+ * Voice management is handled by VoiceManager.
  */
 object TTSManager {
 
@@ -17,256 +18,101 @@ object TTSManager {
     private const val KEY_VOICE_ID = "voice_id"
     private const val KEY_LANGUAGE = "language"
 
-    private var engine: TTSEngine? = null
     private var prefs: SharedPreferences? = null
+    private var lightweightEngine: TTSEngine? = null
+
+    // Cached settings
+    private var cachedRate = 1.0f
+    private var cachedPitch = 1.0f
+    private var cachedVolume = 1.0f
+    private var cachedVoiceId: String? = null
 
     /**
-     * Initialize the TTS engine with settings persistence
+     * Initialize preferences. Call early in app lifecycle.
      */
     fun initialize(context: Context) {
-        if (engine == null) {
+        if (prefs == null) {
             prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            engine = TTSEngine(context.applicationContext)
-            restoreSettings()
+            loadCachedSettings()
+        }
+    }
+
+    private fun loadCachedSettings() {
+        prefs?.let { p ->
+            cachedRate = p.getFloat(KEY_SPEECH_RATE, 1.0f)
+            cachedPitch = p.getFloat(KEY_PITCH, 1.0f)
+            cachedVolume = p.getFloat(KEY_VOLUME, 1.0f)
+            cachedVoiceId = p.getString(KEY_VOICE_ID, null)
         }
     }
 
     /**
-     * Get the TTS engine instance
+     * Get lightweight engine for quick TTS (not for reader playback)
      */
     fun getEngine(): TTSEngine {
-        return engine ?: throw IllegalStateException(
+        return lightweightEngine ?: throw IllegalStateException(
             "TTSManager not initialized. Call initialize() first."
         )
     }
 
     /**
-     * Check if engine is initialized
+     * Create engine lazily if needed
      */
-    fun isInitialized(): Boolean = engine != null
-
-    /**
-     * Get engine status flow
-     */
-    fun getStatusFlow(): StateFlow<TTSStatus>? = engine?.status
-
-    /**
-     * Get current voice flow
-     */
-    fun getCurrentVoiceFlow(): StateFlow<TTSVoice?>? = engine?.currentVoice
-
-    /**
-     * Get available voices flow
-     */
-    fun getVoicesFlow(): StateFlow<List<TTSVoice>>? = engine?.voices
-
-    // ================================================================
-    // QUICK ACCESS METHODS
-    // ================================================================
-
-    /**
-     * Speak text immediately
-     */
-    fun speak(text: String) {
-        engine?.speak(text)
+    fun getOrCreateEngine(context: Context): TTSEngine {
+        return lightweightEngine ?: TTSEngine.getInstance(context).also {
+            lightweightEngine = it
+        }
     }
 
-    /**
-     * Stop speaking
-     */
-    fun stop() {
-        engine?.stop()
-    }
+    fun isInitialized(): Boolean = prefs != null
 
-    /**
-     * Pause speaking
-     */
-    fun pause() {
-        engine?.pause()
-    }
-
-    /**
-     * Resume speaking
-     */
-    fun resume() {
-        engine?.resume()
-    }
-
-    /**
-     * Toggle play/pause
-     */
-    fun togglePlayPause() {
-        engine?.togglePlayPause()
-    }
-
-    /**
-     * Check if speaking
-     */
-    fun isSpeaking(): Boolean = engine?.isSpeaking() == true
-
-    /**
-     * Check if ready
-     */
-    fun isReady(): Boolean = engine?.isReady() == true
-
-    // ================================================================
-    // SETTINGS WITH PERSISTENCE
-    // ================================================================
-
-    /**
-     * Set speech rate and persist
-     */
+    // Settings with persistence
     fun setRate(rate: Float) {
-        engine?.setRate(rate)
-        prefs?.edit()?.putFloat(KEY_SPEECH_RATE, rate)?.apply()
+        cachedRate = rate.coerceIn(0.5f, 2.5f)
+        prefs?.edit()?.putFloat(KEY_SPEECH_RATE, cachedRate)?.apply()
     }
 
-    /**
-     * Get current speech rate
-     */
-    fun getRate(): Float = engine?.getRate() ?: 1.0f
+    fun getRate(): Float = cachedRate
 
-    /**
-     * Set pitch and persist
-     */
     fun setPitch(pitch: Float) {
-        engine?.setPitch(pitch)
-        prefs?.edit()?.putFloat(KEY_PITCH, pitch)?.apply()
+        cachedPitch = pitch.coerceIn(0.5f, 2.0f)
+        prefs?.edit()?.putFloat(KEY_PITCH, cachedPitch)?.apply()
     }
 
-    /**
-     * Get current pitch
-     */
-    fun getPitch(): Float = engine?.getPitch() ?: 1.0f
+    fun getPitch(): Float = cachedPitch
 
-    /**
-     * Set volume and persist
-     */
     fun setVolume(volume: Float) {
-        engine?.setVolume(volume)
-        prefs?.edit()?.putFloat(KEY_VOLUME, volume)?.apply()
+        cachedVolume = volume.coerceIn(0f, 1f)
+        prefs?.edit()?.putFloat(KEY_VOLUME, cachedVolume)?.apply()
     }
 
-    /**
-     * Get current volume
-     */
-    fun getVolume(): Float = engine?.getVolume() ?: 1.0f
+    fun getVolume(): Float = cachedVolume
 
-    /**
-     * Set voice and persist
-     */
-    fun setVoice(voiceId: String): Boolean {
-        val success = engine?.setVoice(voiceId) ?: false
-        if (success) {
-            prefs?.edit()?.putString(KEY_VOICE_ID, voiceId)?.apply()
-        }
-        return success
+    fun setVoice(voiceId: String) {
+        cachedVoiceId = voiceId
+        prefs?.edit()?.putString(KEY_VOICE_ID, voiceId)?.apply()
+        VoiceManager.selectVoice(voiceId)
     }
 
-    /**
-     * Get current voice ID
-     */
-    fun getVoiceId(): String? = engine?.currentVoice?.value?.id
+    fun getVoiceId(): String? = cachedVoiceId
 
-    /**
-     * Set language and persist
-     */
-    fun setLanguage(locale: Locale): Boolean {
-        val success = engine?.setLanguage(locale) ?: false
-        if (success) {
-            prefs?.edit()?.putString(KEY_LANGUAGE, locale.toLanguageTag())?.apply()
-        }
-        return success
+    fun setLanguage(locale: Locale) {
+        prefs?.edit()?.putString(KEY_LANGUAGE, locale.toLanguageTag())?.apply()
     }
 
-    /**
-     * Get available languages
-     */
-    fun getAvailableLanguages(): List<Locale> = engine?.getAvailableLanguages() ?: emptyList()
+    fun getAvailableRates(): List<Float> = listOf(0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 1.75f, 2.0f, 2.5f)
 
-    /**
-     * Get voices for a specific language
-     */
-    fun getVoicesForLanguage(languageCode: String): List<TTSVoice> {
-        return engine?.getVoicesForLanguage(languageCode) ?: emptyList()
-    }
-
-    // ================================================================
-    // RATE PRESETS
-    // ================================================================
-
-    /**
-     * Get available rate presets
-     */
-    fun getAvailableRates(): List<Float> = SpeechRatePreset.getAvailableRates()
-
-    /**
-     * Increase rate by one step
-     */
-    fun increaseRate() {
-        val currentRate = getRate()
-        val rates = getAvailableRates()
-        val nextRate = rates.firstOrNull { it > currentRate } ?: rates.last()
-        setRate(nextRate)
-    }
-
-    /**
-     * Decrease rate by one step
-     */
-    fun decreaseRate() {
-        val currentRate = getRate()
-        val rates = getAvailableRates()
-        val prevRate = rates.lastOrNull { it < currentRate } ?: rates.first()
-        setRate(prevRate)
-    }
-
-    // ================================================================
-    // SETTINGS PERSISTENCE
-    // ================================================================
-
-    private fun restoreSettings() {
-        prefs?.let { p ->
-            val rate = p.getFloat(KEY_SPEECH_RATE, 1.0f)
-            val pitch = p.getFloat(KEY_PITCH, 1.0f)
-            val volume = p.getFloat(KEY_VOLUME, 1.0f)
-            val voiceId = p.getString(KEY_VOICE_ID, null)
-            val languageTag = p.getString(KEY_LANGUAGE, null)
-
-            engine?.setRate(rate)
-            engine?.setPitch(pitch)
-            engine?.setVolume(volume)
-
-            voiceId?.let { engine?.setVoice(it) }
-            languageTag?.let {
-                try {
-                    engine?.setLanguage(Locale.forLanguageTag(it))
-                } catch (e: Exception) {
-                    // Ignore invalid locale
-                }
-            }
-        }
-    }
-
-    /**
-     * Reset all settings to defaults
-     */
     fun resetSettings() {
         prefs?.edit()?.clear()?.apply()
-        engine?.setRate(1.0f)
-        engine?.setPitch(1.0f)
-        engine?.setVolume(1.0f)
+        cachedRate = 1.0f
+        cachedPitch = 1.0f
+        cachedVolume = 1.0f
+        cachedVoiceId = null
     }
 
-    // ================================================================
-    // CLEANUP
-    // ================================================================
-
-    /**
-     * Shutdown and release resources
-     */
     fun shutdown() {
-        engine?.shutdown()
-        engine = null
+        lightweightEngine?.shutdown()
+        lightweightEngine = null
         prefs = null
     }
 }

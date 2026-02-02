@@ -1,10 +1,9 @@
+// com/emptycastle/novery/ui/screens/details/components/ChapterListHeader.kt
+// Restored original with minor visual improvements
 package com.emptycastle.novery.ui.screens.details.components
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.spring
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -29,8 +28,10 @@ import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SearchOff
+import androidx.compose.material.icons.outlined.AutoStories
 import androidx.compose.material.icons.outlined.CheckBox
 import androidx.compose.material.icons.outlined.CloudDownload
+import androidx.compose.material.icons.outlined.TableRows
 import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
@@ -39,12 +40,16 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -57,7 +62,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.emptycastle.novery.ui.screens.details.ChapterDisplayMode
 import com.emptycastle.novery.ui.screens.details.ChapterFilter
+import com.emptycastle.novery.ui.screens.details.ChaptersPerPage
+import com.emptycastle.novery.ui.screens.details.PaginationState
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -72,20 +80,20 @@ fun ChapterListHeader(
     unreadCount: Int,
     downloadedCount: Int,
     notDownloadedCount: Int,
+    displayMode: ChapterDisplayMode,
+    paginationState: PaginationState,
     onToggleSort: () -> Unit,
     onFilterChange: (ChapterFilter) -> Unit,
     onToggleSearch: () -> Unit,
     onSearchQueryChange: (String) -> Unit,
-    onEnableSelection: () -> Unit
+    onEnableSelection: () -> Unit,
+    onDisplayModeChange: (ChapterDisplayMode) -> Unit,
+    onChaptersPerPageChange: (ChaptersPerPage) -> Unit,
+    onJumpToFirstUnread: () -> Unit,
+    onJumpToLastRead: () -> Unit
 ) {
     var showFilters by remember { mutableStateOf(false) }
-
-    // Animate filter section
-    val filterHeight by animateDpAsState(
-        targetValue = if (showFilters || currentFilter != ChapterFilter.ALL) 44.dp else 0.dp,
-        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
-        label = "filter_height"
-    )
+    var showDisplayOptions by remember { mutableStateOf(false) }
 
     Card(
         modifier = Modifier
@@ -107,11 +115,14 @@ fun ChapterListHeader(
                 chapterCount = chapterCount,
                 isSearchActive = isSearchActive,
                 showFilters = showFilters,
+                showDisplayOptions = showDisplayOptions,
                 currentFilter = currentFilter,
                 isDescending = isDescending,
                 isSelectionMode = isSelectionMode,
+                displayMode = displayMode,
                 onToggleSearch = onToggleSearch,
                 onToggleFilters = { showFilters = !showFilters },
+                onToggleDisplayOptions = { showDisplayOptions = !showDisplayOptions },
                 onToggleSort = onToggleSort,
                 onEnableSelection = onEnableSelection
             )
@@ -133,21 +144,36 @@ fun ChapterListHeader(
                 notDownloadedCount = notDownloadedCount,
                 onFilterChange = onFilterChange
             )
+
+            // Display options section
+            DisplayOptionsSection(
+                isVisible = showDisplayOptions,
+                displayMode = displayMode,
+                paginationState = paginationState,
+                onDisplayModeChange = onDisplayModeChange,
+                onChaptersPerPageChange = onChaptersPerPageChange,
+                onJumpToFirstUnread = onJumpToFirstUnread,
+                onJumpToLastRead = onJumpToLastRead
+            )
         }
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ChapterHeaderTitleRow(
     filteredCount: Int,
     chapterCount: Int,
     isSearchActive: Boolean,
     showFilters: Boolean,
+    showDisplayOptions: Boolean,
     currentFilter: ChapterFilter,
     isDescending: Boolean,
     isSelectionMode: Boolean,
+    displayMode: ChapterDisplayMode,
     onToggleSearch: () -> Unit,
     onToggleFilters: () -> Unit,
+    onToggleDisplayOptions: () -> Unit,
     onToggleSort: () -> Unit,
     onEnableSelection: () -> Unit
 ) {
@@ -156,7 +182,7 @@ private fun ChapterHeaderTitleRow(
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // Chapter count
+        // Chapter count with icon
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -210,8 +236,19 @@ private fun ChapterHeaderTitleRow(
             // Filter button
             FilterActionButton(
                 onClick = onToggleFilters,
-                isActive = showFilters || currentFilter != ChapterFilter.ALL,
+                isActive = showFilters,
                 hasActiveFilter = currentFilter != ChapterFilter.ALL
+            )
+
+            // Display options button
+            HeaderActionButton(
+                onClick = onToggleDisplayOptions,
+                isActive = showDisplayOptions,
+                icon = if (displayMode == ChapterDisplayMode.PAGINATED)
+                    Icons.Outlined.AutoStories
+                else
+                    Icons.Outlined.TableRows,
+                contentDescription = "Display options"
             )
 
             // Sort button
@@ -242,6 +279,174 @@ private fun ChapterHeaderTitleRow(
                 }
             }
         }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DisplayOptionsSection(
+    isVisible: Boolean,
+    displayMode: ChapterDisplayMode,
+    paginationState: PaginationState,
+    onDisplayModeChange: (ChapterDisplayMode) -> Unit,
+    onChaptersPerPageChange: (ChaptersPerPage) -> Unit,
+    onJumpToFirstUnread: () -> Unit,
+    onJumpToLastRead: () -> Unit
+) {
+    AnimatedVisibility(
+        visible = isVisible,
+        enter = fadeIn() + expandVertically(),
+        exit = fadeOut() + shrinkVertically()
+    ) {
+        Column(
+            modifier = Modifier.padding(top = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            HorizontalDivider(
+                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)
+            )
+
+            // Display mode toggle
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Display Mode",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                SingleChoiceSegmentedButtonRow {
+                    SegmentedButton(
+                        selected = displayMode == ChapterDisplayMode.SCROLL,
+                        onClick = { onDisplayModeChange(ChapterDisplayMode.SCROLL) },
+                        shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
+                        icon = {}
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.TableRows,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Text("Scroll", style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
+
+                    SegmentedButton(
+                        selected = displayMode == ChapterDisplayMode.PAGINATED,
+                        onClick = { onDisplayModeChange(ChapterDisplayMode.PAGINATED) },
+                        shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
+                        icon = {}
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.AutoStories,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Text("Pages", style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
+                }
+            }
+
+            // Chapters per page (only for paginated mode)
+            AnimatedVisibility(
+                visible = displayMode == ChapterDisplayMode.PAGINATED,
+                enter = fadeIn() + expandVertically(),
+                exit = fadeOut() + shrinkVertically()
+            ) {
+                ChaptersPerPageSelector(
+                    currentValue = paginationState.chaptersPerPage,
+                    onValueChange = onChaptersPerPageChange
+                )
+            }
+
+            // Quick navigation buttons
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                QuickNavigationButton(
+                    text = "First Unread",
+                    onClick = onJumpToFirstUnread,
+                    modifier = Modifier.weight(1f)
+                )
+                QuickNavigationButton(
+                    text = "Last Read",
+                    onClick = onJumpToLastRead,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ChaptersPerPageSelector(
+    currentValue: ChaptersPerPage,
+    onValueChange: (ChaptersPerPage) -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = "Chapters per page",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+
+        LazyRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            ChaptersPerPage.entries.forEach { option ->
+                item {
+                    FilterChip(
+                        selected = currentValue == option,
+                        onClick = { onValueChange(option) },
+                        label = {
+                            Text(
+                                text = option.label,
+                                style = MaterialTheme.typography.labelSmall
+                            )
+                        },
+                        shape = RoundedCornerShape(8.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun QuickNavigationButton(
+    text: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        onClick = onClick,
+        modifier = modifier,
+        shape = RoundedCornerShape(8.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh
+    ) {
+        Text(
+            text = text,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+        )
     }
 }
 
@@ -372,6 +577,7 @@ private fun ChapterSearchField(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ChapterFilterChips(
     isVisible: Boolean,

@@ -1,28 +1,31 @@
 // com/emptycastle/novery/ui/screens/details/components/ReviewsSection.kt
 package com.emptycastle.novery.ui.screens.details.components
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.RateReview
+import androidx.compose.material.icons.automirrored.filled.Message
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 
@@ -54,17 +57,22 @@ fun ReviewsHeader(
             onClick = onToggleSpoilers,
             label = {
                 Text(
-                    text = if (showSpoilers) "Spoilers On" else "Spoilers Off",
-                    style = MaterialTheme.typography.labelMedium
+                    text = if (showSpoilers) "Spoilers" else "Hidden",
+                    style = MaterialTheme.typography.labelSmall
                 )
             },
             leadingIcon = {
                 Icon(
                     imageVector = if (showSpoilers) Icons.Filled.Visibility else Icons.Filled.VisibilityOff,
                     contentDescription = null,
-                    modifier = Modifier.size(18.dp)
+                    modifier = Modifier.size(16.dp)
                 )
-            }
+            },
+            colors = FilterChipDefaults.filterChipColors(
+                selectedContainerColor = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.7f),
+                selectedLabelColor = MaterialTheme.colorScheme.onTertiaryContainer,
+                selectedLeadingIconColor = MaterialTheme.colorScheme.onTertiaryContainer
+            )
         )
     }
 }
@@ -84,23 +92,39 @@ fun EmptyReviewsMessage(modifier: Modifier = Modifier) {
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Icon(
-                imageVector = Icons.Filled.RateReview,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+            Box(
                 modifier = Modifier
-                    .width(64.dp)
-                    .height(64.dp)
-            )
+                    .size(64.dp)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(
+                        Brush.linearGradient(
+                            colors = listOf(
+                                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f),
+                                MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.4f)
+                            )
+                        )
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.Message,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                    modifier = Modifier.size(32.dp)
+                )
+            }
+
             Text(
                 text = "No reviews yet",
                 style = MaterialTheme.typography.bodyLarge,
+                fontWeight = FontWeight.Medium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+
             Text(
-                text = "Be the first to review this novel!",
+                text = "Be the first to share your thoughts!",
                 style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
             )
         }
     }
@@ -118,7 +142,8 @@ fun ReviewsLoadingIndicator(modifier: Modifier = Modifier) {
         contentAlignment = Alignment.Center
     ) {
         CircularProgressIndicator(
-            modifier = Modifier.size(32.dp)
+            modifier = Modifier.size(28.dp),
+            strokeWidth = 2.dp
         )
     }
 }
@@ -137,8 +162,11 @@ fun LoadMoreReviewsButton(
             .padding(16.dp),
         contentAlignment = Alignment.Center
     ) {
-        OutlinedButton(onClick = onClick) {
-            Text("Load More Reviews")
+        FilledTonalButton(
+            onClick = onClick,
+            shape = RoundedCornerShape(12.dp)
+        ) {
+            Text("Load More")
         }
     }
 }

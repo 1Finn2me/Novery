@@ -89,6 +89,18 @@ data class ReaderSettings(
     // BEHAVIOR
     // =========================================================================
 
+
+    // Screen behavior
+    val immersiveMode: Boolean = true,
+    val screenOrientation: ScreenOrientation = ScreenOrientation.AUTO,
+
+    // Auto-scroll (for hands-free reading)
+    val autoScrollEnabled: Boolean = false,
+    val autoScrollSpeed: Float = 1.0f, // lines per second
+
+    // TTS behavior
+    val ttsAutoAdvanceChapter: Boolean = true,
+
     /** Keep screen on while reading */
     val keepScreenOn: Boolean = true,
 
@@ -105,7 +117,7 @@ data class ReaderSettings(
     val tapZones: TapZoneConfig = TapZoneConfig.DEFAULT,
 
     /** Enable long press for text selection */
-    val longPressSelection: Boolean = true,
+    val longPressSelection: Boolean = false,
 
     /** Auto-hide controls after delay (ms, 0 = never) */
     val autoHideControlsDelay: Long = DEFAULT_AUTO_HIDE_DELAY,
@@ -269,7 +281,11 @@ data class ReaderSettings(
         const val DEFAULT_PARAGRAPH_INDENT = 0f
         const val DEFAULT_MARGIN_HORIZONTAL = 20
         const val DEFAULT_MARGIN_VERTICAL = 16
-        const val DEFAULT_AUTO_HIDE_DELAY = 3000L
+        const val DEFAULT_AUTO_HIDE_DELAY = 10000L
+
+        const val MIN_AUTO_SCROLL_SPEED = 0.5f
+        const val MAX_AUTO_SCROLL_SPEED = 5.0f
+        const val DEFAULT_AUTO_SCROLL_SPEED = 1.0f
 
         // Special values
         const val BRIGHTNESS_SYSTEM = -1f
@@ -405,6 +421,13 @@ data class ReaderSettings(
             "Minimal" to MINIMAL
         )
     }
+}
+
+enum class ScreenOrientation(val displayName: String) {
+    AUTO("Auto"),
+    PORTRAIT("Portrait"),
+    LANDSCAPE("Landscape"),
+    LOCKED("Lock Current")
 }
 
 // =============================================================================
