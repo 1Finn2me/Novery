@@ -1,6 +1,3 @@
-// com/emptycastle/novery/data/repository/LibraryRepository.kt
-// REPLACE with this enhanced version
-
 package com.emptycastle.novery.data.repository
 
 import com.emptycastle.novery.data.local.dao.LibraryDao

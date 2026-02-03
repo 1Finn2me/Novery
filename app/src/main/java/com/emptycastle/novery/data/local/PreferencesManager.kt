@@ -29,6 +29,9 @@ import com.emptycastle.novery.ui.screens.details.ChaptersPerPage
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 
 /**
  * Manages user preferences using SharedPreferences.
@@ -46,6 +49,11 @@ class PreferencesManager(context: Context) {
         Context.MODE_PRIVATE
     )
 
+    private val json = Json {
+        ignoreUnknownKeys = true
+        encodeDefaults = true
+    }
+
     // =========================================================================
     // STATE FLOWS
     // =========================================================================
@@ -55,6 +63,131 @@ class PreferencesManager(context: Context) {
 
     private val _appSettings = MutableStateFlow(loadAppSettings())
     val appSettings: StateFlow<AppSettings> = _appSettings.asStateFlow()
+
+    private val _searchHistory = MutableStateFlow<List<SearchHistoryItem>>(loadSearchHistory())
+    val searchHistory: StateFlow<List<SearchHistoryItem>> = _searchHistory.asStateFlow()
+
+    private val _favoriteProviders = MutableStateFlow<Set<String>>(loadFavoriteProviders())
+    val favoriteProviders: StateFlow<Set<String>> = _favoriteProviders.asStateFlow()
+
+    // =========================================================================
+    // SEARCH HISTORY
+    // =========================================================================
+
+    @Serializable
+    data class SearchHistoryItem(
+        val query: String,
+        val timestamp: Long = System.currentTimeMillis(),
+        val providerName: String? = null, // Optional: track which provider was used
+        val resultCount: Int = 0 // Optional: track how many results were found
+    )
+
+    private fun loadSearchHistory(): List<SearchHistoryItem> {
+        val jsonString = prefs.getString(KEY_SEARCH_HISTORY, null) ?: return emptyList()
+        return try {
+            json.decodeFromString<List<SearchHistoryItem>>(jsonString)
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    fun getSearchHistory(): List<SearchHistoryItem> = _searchHistory.value
+
+    fun saveSearchHistory(history: List<SearchHistoryItem>) {
+        val limitedHistory = history
+            .distinctBy { it.query.lowercase() }
+            .sortedByDescending { it.timestamp }
+            .take(MAX_SEARCH_HISTORY_SIZE)
+
+        prefs.edit()
+            .putString(KEY_SEARCH_HISTORY, json.encodeToString(limitedHistory))
+            .apply()
+        _searchHistory.value = limitedHistory
+    }
+
+    fun addSearchHistoryItem(query: String, providerName: String? = null, resultCount: Int = 0) {
+        if (query.isBlank()) return
+
+        val trimmedQuery = query.trim()
+        val currentHistory = _searchHistory.value.toMutableList()
+
+        // Remove existing entry with same query (case-insensitive)
+        currentHistory.removeAll { it.query.equals(trimmedQuery, ignoreCase = true) }
+
+        // Add new entry at the beginning
+        currentHistory.add(0, SearchHistoryItem(
+            query = trimmedQuery,
+            timestamp = System.currentTimeMillis(),
+            providerName = providerName,
+            resultCount = resultCount
+        ))
+
+        saveSearchHistory(currentHistory)
+    }
+
+    fun removeSearchHistoryItem(query: String) {
+        val currentHistory = _searchHistory.value.toMutableList()
+        currentHistory.removeAll { it.query.equals(query, ignoreCase = true) }
+        saveSearchHistory(currentHistory)
+    }
+
+    fun clearSearchHistory() {
+        prefs.edit().remove(KEY_SEARCH_HISTORY).apply()
+        _searchHistory.value = emptyList()
+    }
+
+    fun getRecentSearchQueries(limit: Int = 10): List<String> {
+        return _searchHistory.value
+            .sortedByDescending { it.timestamp }
+            .take(limit)
+            .map { it.query }
+    }
+
+    // =========================================================================
+    // FAVORITE PROVIDERS
+    // =========================================================================
+
+    private fun loadFavoriteProviders(): Set<String> {
+        return prefs.getStringSet(KEY_FAVORITE_PROVIDERS, emptySet()) ?: emptySet()
+    }
+
+    fun getFavoriteProviders(): Set<String> = _favoriteProviders.value
+
+    fun setFavoriteProviders(favorites: Set<String>) {
+        prefs.edit()
+            .putStringSet(KEY_FAVORITE_PROVIDERS, favorites)
+            .apply()
+        _favoriteProviders.value = favorites
+    }
+
+    fun addFavoriteProvider(providerName: String) {
+        val currentFavorites = _favoriteProviders.value.toMutableSet()
+        currentFavorites.add(providerName)
+        setFavoriteProviders(currentFavorites)
+    }
+
+    fun removeFavoriteProvider(providerName: String) {
+        val currentFavorites = _favoriteProviders.value.toMutableSet()
+        currentFavorites.remove(providerName)
+        setFavoriteProviders(currentFavorites)
+    }
+
+    fun toggleFavoriteProvider(providerName: String) {
+        if (isProviderFavorite(providerName)) {
+            removeFavoriteProvider(providerName)
+        } else {
+            addFavoriteProvider(providerName)
+        }
+    }
+
+    fun isProviderFavorite(providerName: String): Boolean {
+        return _favoriteProviders.value.contains(providerName)
+    }
+
+    fun clearFavoriteProviders() {
+        prefs.edit().remove(KEY_FAVORITE_PROVIDERS).apply()
+        _favoriteProviders.value = emptySet()
+    }
 
     // =========================================================================
     // READING POSITION
@@ -1059,6 +1192,8 @@ class PreferencesManager(context: Context) {
             put("appSettings", exportAppSettings())
             put("ttsSettings", exportTtsSettings())
             put("chapterListSettings", exportChapterListSettings())
+            put("searchHistory", exportSearchHistory())
+            put("favoriteProviders", _favoriteProviders.value.toList())
         }
     }
 
@@ -1144,9 +1279,20 @@ class PreferencesManager(context: Context) {
         }
     }
 
+    private fun exportSearchHistory(): List<Map<String, Any?>> {
+        return _searchHistory.value.map { item ->
+            buildMap {
+                put("query", item.query)
+                put("timestamp", item.timestamp)
+                put("providerName", item.providerName)
+                put("resultCount", item.resultCount)
+            }
+        }
+    }
+
     // =========================================================================
-// RESET TO DEFAULTS
-// =========================================================================
+    // RESET TO DEFAULTS
+    // =========================================================================
 
     /**
      * Resets all settings to their default values.
@@ -1173,6 +1319,10 @@ class PreferencesManager(context: Context) {
 
         // Reset notification settings to defaults
         resetNotificationSettings()
+
+        // Reset search history and favorite providers
+        clearSearchHistory()
+        clearFavoriteProviders()
     }
 
     /**
@@ -1267,6 +1417,14 @@ class PreferencesManager(context: Context) {
     companion object {
         private const val PREFS_NAME = "novery_prefs"
         private const val SCROLL_PREFS_NAME = "novery_scroll_positions"
+        private const val MAX_SEARCH_HISTORY_SIZE = 50
+
+        // =====================================================================
+        // SEARCH HISTORY & FAVORITES KEYS
+        // =====================================================================
+
+        private const val KEY_SEARCH_HISTORY = "search_history"
+        private const val KEY_FAVORITE_PROVIDERS = "favorite_providers"
 
         // =====================================================================
         // READER SETTINGS KEYS
@@ -1438,8 +1596,6 @@ class PreferencesManager(context: Context) {
         private const val KEY_FIRST_RUN = "first_run"
         private const val KEY_ONBOARDING_COMPLETE = "onboarding_complete"
         private const val KEY_APP_VERSION = "app_version"
-
-
 
         // =====================================================================
         // SINGLETON

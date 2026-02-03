@@ -142,6 +142,12 @@ class DetailsViewModel : ViewModel() {
 
             result.fold(
                 onSuccess = { details ->
+                    // If cached details contain no chapters, try a forced network refresh once
+                    if (details.chapters.isEmpty() && !forceRefresh) {
+                        loadNovel(novelUrl, providerName, forceRefresh = true)
+                        return@fold
+                    }
+
                     val hasReviewsSupport = novelRepository.providerHasReviews(providerName)
 
                     _uiState.update {
@@ -156,6 +162,15 @@ class DetailsViewModel : ViewModel() {
                     recomputeFilteredChapters()
                     loadLibraryStatus(novelUrl)
                     observeChapterStatus(novelUrl)
+
+                    // After successfully loading novel details, cache them:
+                    viewModelScope.launch {
+                        try {
+                            RepositoryProvider.getDiscoveryManager().cacheFromDetails(details, providerName)
+                        } catch (e: Exception) {
+                            // Silent fail
+                        }
+                    }
 
                     // Load reviews if supported
                     if (hasReviewsSupport) {

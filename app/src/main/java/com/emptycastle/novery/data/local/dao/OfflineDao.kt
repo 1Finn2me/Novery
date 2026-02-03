@@ -1,6 +1,9 @@
 package com.emptycastle.novery.data.local.dao
 
-import androidx.room.*
+import androidx.room.Dao
+import androidx.room.Insert
+import androidx.room.OnConflictStrategy
+import androidx.room.Query
 import com.emptycastle.novery.data.local.entity.NovelDetailsEntity
 import com.emptycastle.novery.data.local.entity.OfflineChapterEntity
 import com.emptycastle.novery.data.local.entity.OfflineNovelEntity
@@ -59,6 +62,9 @@ interface OfflineDao {
 
     @Query("DELETE FROM novel_details WHERE url = :url")
     suspend fun deleteNovelDetails(url: String)
+
+    @Query("SELECT * FROM novel_details")
+    suspend fun getAllNovelDetails(): List<NovelDetailsEntity>
 }
 
 /**

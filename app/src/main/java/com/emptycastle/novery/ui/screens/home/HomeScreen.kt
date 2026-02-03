@@ -21,7 +21,7 @@ import com.emptycastle.novery.ui.screens.home.tabs.browse.BrowseTab
 import com.emptycastle.novery.ui.screens.home.tabs.history.HistoryTab
 import com.emptycastle.novery.ui.screens.home.tabs.library.LibraryTab
 import com.emptycastle.novery.ui.screens.home.tabs.profile.ProfileTab
-import com.emptycastle.novery.ui.screens.home.tabs.search.SearchTab
+import com.emptycastle.novery.ui.screens.home.tabs.recommendation.RecommendationTab
 
 @Composable
 fun HomeScreen(
@@ -80,15 +80,20 @@ fun HomeScreen(
 
                 composable(HomeTabs.BROWSE.route) {
                     BrowseTab(
-                        onNavigateToProvider = onNavigateToProviderBrowse
+                        appSettings = appSettings,
+                        onNavigateToProvider = onNavigateToProviderBrowse,
+                        onNavigateToDetails = onNavigateToDetails,
+                        onNavigateToReader = onNavigateToReader
                     )
                 }
 
-                composable(HomeTabs.SEARCH.route) {
-                    SearchTab(
-                        appSettings = appSettings,
+                composable(HomeTabs.FOR_YOU.route) {
+                    RecommendationTab(
                         onNavigateToDetails = onNavigateToDetails,
-                        onNavigateToReader = onNavigateToReader
+                        onNavigateToBrowse = {
+                            // Navigate to Browse tab
+                            tabNavState.navigateToTab(HomeTabs.BROWSE)
+                        }
                     )
                 }
 

@@ -468,7 +468,15 @@ class ReaderViewModel : ViewModel() {
             }
 
             detailsResult.onSuccess { details ->
-                val allChapters = details.chapters
+                var allChapters = details.chapters
+
+                // If cached details are empty, try a forced refresh once
+                if (allChapters.isEmpty()) {
+                    val refreshed = novelRepository.loadNovelDetails(provider, novelUrl, forceRefresh = true)
+                    refreshed.onSuccess { refreshedDetails ->
+                        allChapters = refreshedDetails.chapters
+                    }
+                }
                 val chapterIndex = allChapters.indexOfFirst { it.url == chapterUrl }
                     .takeIf { it >= 0 } ?: 0
 

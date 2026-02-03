@@ -1,5 +1,3 @@
-// com/emptycastle/novery/ui/navigation/NavigationHistoryManager.kt
-
 package com.emptycastle.novery.ui.navigation
 
 import androidx.compose.runtime.Composable

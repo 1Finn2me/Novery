@@ -2,8 +2,6 @@ package com.emptycastle.novery.data.local.entity
 
 import androidx.room.Entity
 import androidx.room.PrimaryKey
-import androidx.room.TypeConverters
-import com.emptycastle.novery.data.local.Converters
 import com.emptycastle.novery.domain.model.Chapter
 import com.emptycastle.novery.domain.model.Novel
 import com.emptycastle.novery.domain.model.NovelDetails
@@ -12,12 +10,10 @@ import com.emptycastle.novery.domain.model.NovelDetails
  * Cached novel details for offline access.
  */
 @Entity(tableName = "novel_details")
-@TypeConverters(Converters::class)
 data class NovelDetailsEntity(
     @PrimaryKey
     val url: String,
     val name: String,
-    val chapters: List<ChapterEntity>,
     val author: String? = null,
     val posterUrl: String? = null,
     val synopsis: String? = null,
@@ -26,14 +22,32 @@ data class NovelDetailsEntity(
     val peopleVoted: Int? = null,
     val status: String? = null,
     val views: Int? = null,
-    val relatedNovels: List<RelatedNovelEntity>? = null,
-    val lastUpdated: Long = System.currentTimeMillis()
+    val relatedNovelsJson: String? = null,
+
+    // Persist chapter list so cached novel details include their chapters
+    val chapters: List<ChapterEntity>? = null,
+
+    // ADD THESE NEW FIELDS:
+    val apiName: String = "",           // Provider name
+    val chapterCount: Int = 0,          // Number of chapters
+    val cachedAt: Long = System.currentTimeMillis()
 ) {
     fun toNovelDetails(): NovelDetails {
+        val relatedNovels = relatedNovelsJson?.let { json ->
+            try {
+                // Parse JSON to List<Novel> - implement based on your JSON library
+                parseRelatedNovels(json)
+            } catch (e: Exception) {
+                null
+            }
+        }
+
+        val chapterList = chapters?.map { it.toChapter() } ?: emptyList()
+
         return NovelDetails(
             url = url,
             name = name,
-            chapters = chapters.map { it.toChapter() },
+            chapters = chapterList,
             author = author,
             posterUrl = posterUrl,
             synopsis = synopsis,
@@ -42,16 +56,18 @@ data class NovelDetailsEntity(
             peopleVoted = peopleVoted,
             status = status,
             views = views,
-            relatedNovels = relatedNovels?.map { it.toNovel() }
+            relatedNovels = relatedNovels
         )
     }
 
     companion object {
-        fun fromNovelDetails(details: NovelDetails): NovelDetailsEntity {
+        fun fromNovelDetails(
+            details: NovelDetails,
+            apiName: String = ""  // ADD THIS PARAMETER
+        ): NovelDetailsEntity {
             return NovelDetailsEntity(
                 url = details.url,
                 name = details.name,
-                chapters = details.chapters.map { ChapterEntity.fromChapter(it) },
                 author = details.author,
                 posterUrl = details.posterUrl,
                 synopsis = details.synopsis,
@@ -60,9 +76,21 @@ data class NovelDetailsEntity(
                 peopleVoted = details.peopleVoted,
                 status = details.status,
                 views = details.views,
-                relatedNovels = details.relatedNovels?.map { RelatedNovelEntity.fromNovel(it) },
-                lastUpdated = System.currentTimeMillis()
+                relatedNovelsJson = details.relatedNovels?.let { serializeRelatedNovels(it) },
+                chapters = details.chapters.map { ChapterEntity.fromChapter(it) },
+                apiName = apiName,
+                chapterCount = details.chapters.size
             )
+        }
+
+        private fun parseRelatedNovels(json: String): List<Novel>? {
+            // Implement JSON parsing
+            return null
+        }
+
+        private fun serializeRelatedNovels(novels: List<Novel>): String {
+            // Implement JSON serialization
+            return "[]"
         }
     }
 }

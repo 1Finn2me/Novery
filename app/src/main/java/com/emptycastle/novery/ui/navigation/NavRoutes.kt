@@ -77,8 +77,9 @@ sealed class NavRoutes(val route: String) {
     sealed class Tab(route: String) : NavRoutes(route) {
         object Library : Tab("tab_library")
         object Browse : Tab("tab_browse")
-        object Search : Tab("tab_search")
+        object ForYou : Tab("tab_foryou")  // Renamed from Search
         object History : Tab("tab_history")
+        object Profile : Tab("tab_profile")
     }
 
     companion object {
@@ -96,7 +97,7 @@ enum class HomeTabs(
 ) {
     LIBRARY("tab_library", "Library"),
     BROWSE("tab_browse", "Browse"),
-    SEARCH("tab_search", "Search"),
+    FOR_YOU("tab_foryou", "For You"),  // Renamed from SEARCH
     HISTORY("tab_history", "History"),
     PROFILE("tab_profile", "Profile");
 

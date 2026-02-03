@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.emptycastle.novery.data.repository.RepositoryProvider
 import com.emptycastle.novery.domain.model.Novel
 import com.emptycastle.novery.domain.model.ReadingStatus
+import com.emptycastle.novery.provider.MainProvider
 import com.emptycastle.novery.ui.screens.home.shared.ActionSheetManager
 import com.emptycastle.novery.ui.screens.home.shared.ActionSheetSource
 import com.emptycastle.novery.ui.screens.home.shared.LibraryStateHolder
@@ -16,7 +17,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import com.emptycastle.novery.provider.MainProvider
 
 class ProviderBrowseViewModel(
     private val providerName: String
@@ -309,6 +309,15 @@ class ProviderBrowseViewModel(
                             error = null,
                             isCloudflareError = false
                         )
+                    }
+
+                    // After loading browse results, cache them:
+                    viewModelScope.launch {
+                        try {
+                            RepositoryProvider.getDiscoveryManager().cacheFromBrowse(pageResult.novels, providerName)
+                        } catch (e: Exception) {
+                            // Silent fail
+                        }
                     }
                 },
                 onFailure = { error ->
