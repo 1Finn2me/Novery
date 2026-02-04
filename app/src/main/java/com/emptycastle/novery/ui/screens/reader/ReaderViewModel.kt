@@ -405,12 +405,6 @@ class ReaderViewModel : ViewModel() {
         novelUrl: String,
         providerName: String
     ) {
-        // Increment load generation to invalidate any pending/stale operations
-        currentLoadGeneration++
-        val thisLoadGeneration = currentLoadGeneration
-
-        Log.d(TAG, "loadChapter called: url=$chapterUrl, generation=$thisLoadGeneration")
-
         currentNovelUrl = novelUrl
         currentProvider = novelRepository.getProvider(providerName)
 
@@ -422,68 +416,35 @@ class ReaderViewModel : ViewModel() {
         chapterLoader.configure(provider)
         stopTTS()
 
-        // Cancel any pending loads to prevent race conditions
-        preloadJob?.cancel()
-        savePositionJob?.cancel()
-
-        // Block infinite scroll until we're stable
-        blockInfiniteScrollUntilStable = true
         isInitialLoadComplete = false
         _scrollRestorationState.value = ScrollRestorationState()
 
-        // Immediately show loading state and clear old content
-        _uiState.update {
-            it.copy(
-                isLoading = true,
-                isContentReady = false,
-                pendingScrollReset = true,
-                error = null,
-                currentChapterUrl = chapterUrl,
-                loadedChapters = emptyMap(),
-                displayItems = emptyList(),
-                targetScrollPosition = null,
-                hasRestoredScroll = false,
-                currentScrollIndex = 0,
-                currentScrollOffset = 0,
-                currentSegmentIndex = -1,
-                isTTSActive = false,
-                ttsPosition = TTSPosition(),
-                currentSentenceHighlight = null
-            )
-        }
-
         viewModelScope.launch {
-            // Check if this load is still valid
-            if (currentLoadGeneration != thisLoadGeneration) {
-                Log.d(TAG, "Load generation mismatch, aborting: $thisLoadGeneration vs $currentLoadGeneration")
-                return@launch
+            _uiState.update {
+                it.copy(
+                    isLoading = true,
+                    isContentReady = false, // Explicitly set to false
+                    error = null,
+                    currentChapterUrl = chapterUrl,
+                    loadedChapters = emptyMap(),
+                    displayItems = emptyList(),
+                    targetScrollPosition = null,
+                    hasRestoredScroll = false,
+                    currentScrollIndex = 0,
+                    currentScrollOffset = 0,
+                    currentSegmentIndex = -1,
+                    isTTSActive = false,
+                    ttsPosition = TTSPosition(),
+                    currentSentenceHighlight = null
+                )
             }
 
             val detailsResult = novelRepository.loadNovelDetails(provider, novelUrl)
 
-            // Check again after async operation
-            if (currentLoadGeneration != thisLoadGeneration) {
-                Log.d(TAG, "Load generation mismatch after details load, aborting")
-                return@launch
-            }
-
             detailsResult.onSuccess { details ->
-                var allChapters = details.chapters
-
-                // If cached details are empty, try a forced refresh once
-                if (allChapters.isEmpty()) {
-                    val refreshed = novelRepository.loadNovelDetails(provider, novelUrl, forceRefresh = true)
-                    refreshed.onSuccess { refreshedDetails ->
-                        allChapters = refreshedDetails.chapters
-                    }
-                }
+                val allChapters = details.chapters
                 val chapterIndex = allChapters.indexOfFirst { it.url == chapterUrl }
                     .takeIf { it >= 0 } ?: 0
-
-                Log.d(TAG, "Found chapter at index: $chapterIndex")
-
-                // Store the requested chapter index
-                requestedChapterIndex = chapterIndex
 
                 _uiState.update {
                     it.copy(
@@ -495,13 +456,26 @@ class ReaderViewModel : ViewModel() {
                     )
                 }
 
-                // Determine if we should restore scroll position
-                // Only restore if this is the same chapter as the last-read chapter
-                val existingReadingPos = libraryRepository.getReadingPosition(novelUrl)
-                shouldRestoreScrollPosition = existingReadingPos?.chapterUrl == chapterUrl
+                val requestedChapterUrl = allChapters.getOrNull(chapterIndex)?.url
+                val requestedChapterName = allChapters.getOrNull(chapterIndex)?.name ?: ""
 
-                if (!shouldRestoreScrollPosition) {
-                    // Mark restoration as complete so we open at the start
+                // FIX: Make position clearing SYNCHRONOUS before starting load
+                val existingReadingPos = libraryRepository.getReadingPosition(novelUrl)
+
+                if (existingReadingPos != null && requestedChapterUrl != null &&
+                    existingReadingPos.chapterUrl != requestedChapterUrl
+                ) {
+                    preferencesManager.clearReadingPosition(existingReadingPos.chapterUrl)
+                    preferencesManager.clearReadingPosition(requestedChapterUrl)
+
+                    libraryRepository.updateReadingPosition(
+                        novelUrl = novelUrl,
+                        chapterUrl = requestedChapterUrl,
+                        chapterName = requestedChapterName,
+                        scrollIndex = 0,
+                        scrollOffset = 0
+                    )
+
                     _scrollRestorationState.value = ScrollRestorationState(
                         pendingPosition = null,
                         isWaitingForChapter = false,
@@ -509,99 +483,52 @@ class ReaderViewModel : ViewModel() {
                         lastAttemptTime = 0,
                         hasSuccessfullyRestored = true
                     )
-                    _uiState.update {
-                        it.copy(
-                            // Set targetScrollPosition to 0 so UI knows where to scroll
-                            targetScrollPosition = TargetScrollPosition(displayIndex = 0, offsetPixels = 0)
-                        )
-                    }
-
-                    // Update library to reflect the new last-read chapter at start
-                    val requestedChapter = allChapters.getOrNull(chapterIndex)
-                    if (requestedChapter != null) {
-                        libraryRepository.updateReadingPosition(
-                            novelUrl = novelUrl,
-                            chapterUrl = requestedChapter.url,
-                            chapterName = requestedChapter.name,
-                            scrollIndex = 0,
-                            scrollOffset = 0
-                        )
-                    }
+                    _uiState.update { it.copy(hasRestoredScroll = true, targetScrollPosition = null) }
                 }
 
-                startInitialLoad(chapterIndex, thisLoadGeneration)
+                // NOW start loading after position is cleared
+                startInitialLoad(chapterIndex)
+
             }.onFailure { error ->
                 _uiState.update {
                     it.copy(
                         error = error.message ?: "Failed to load novel details",
                         isLoading = false,
-                        isContentReady = true,
-                        pendingScrollReset = false
+                        isContentReady = true // Set to true even on error so UI can show error
                     )
                 }
             }
         }
     }
 
-    private fun startInitialLoad(chapterIndex: Int, loadGeneration: Long) {
+    private fun startInitialLoad(chapterIndex: Int) {
         preloadJob?.cancel()
         preloadJob = viewModelScope.launch {
-            // Verify load generation is still current
-            if (currentLoadGeneration != loadGeneration) {
-                Log.d(TAG, "startInitialLoad: generation mismatch, aborting")
-                return@launch
-            }
-
             _uiState.update { it.copy(isPreloading = true) }
 
-            loadChapterContent(chapterIndex, isInitialLoad = true, loadGeneration = loadGeneration)
-
-            // Verify again after loading
-            if (currentLoadGeneration != loadGeneration) {
-                Log.d(TAG, "startInitialLoad: generation mismatch after content load, aborting")
-                return@launch
-            }
+            loadChapterContent(chapterIndex, isInitialLoad = true)
 
             val state = _uiState.value
 
-            // Wait for scroll restoration before showing content
-            awaitScrollRestoration()
-
-            // Verify again
-            if (currentLoadGeneration != loadGeneration) {
-                return@launch
-            }
-
-            // Now content is ready to be shown
-            _uiState.update {
-                it.copy(
-                    isLoading = false,
-                    isContentReady = true
-                )
-            }
-
-            // Preload next chapter in background if infinite scroll is enabled
             if (state.infiniteScrollEnabled) {
-                val nextChapterIndex = chapterIndex + 1
-                if (nextChapterIndex < state.allChapters.size) {
-                    loadChapterContent(nextChapterIndex, isInitialLoad = false, loadGeneration = loadGeneration)
-                }
-            }
+                awaitScrollRestoration()
 
-            // Verify one more time
-            if (currentLoadGeneration != loadGeneration) {
-                return@launch
+                // FIX: Only preload FORWARD chapters initially
+                // Previous chapters will load when user scrolls up
+                val chaptersToPreload = infiniteScrollController.getChaptersToPreload(
+                    currentChapterIndex = chapterIndex,
+                    loadedChapterIndices = _uiState.value.loadedChapters.keys,
+                    totalChapters = state.allChapters.size,
+                    isEnabled = true
+                ).filter { it > chapterIndex } // Only chapters AFTER current
+
+                for (preloadIndex in chaptersToPreload) {
+                    loadChapterContent(preloadIndex, isInitialLoad = false)
+                }
             }
 
             isInitialLoadComplete = true
             _uiState.update { it.copy(isPreloading = false) }
-
-            // Allow infinite scroll after a short delay to let the UI stabilize
-            delay(300)
-            if (currentLoadGeneration == loadGeneration) {
-                blockInfiniteScrollUntilStable = false
-                Log.d(TAG, "Infinite scroll enabled, generation: $loadGeneration")
-            }
         }
     }
 
@@ -616,16 +543,9 @@ class ReaderViewModel : ViewModel() {
 
     private suspend fun loadChapterContent(
         chapterIndex: Int,
-        isInitialLoad: Boolean = false,
-        loadGeneration: Long = currentLoadGeneration
+        isInitialLoad: Boolean = false
     ) {
         loadingMutex.withLock {
-            // Verify load generation
-            if (currentLoadGeneration != loadGeneration) {
-                Log.d(TAG, "loadChapterContent: generation mismatch, aborting chapter $chapterIndex")
-                return
-            }
-
             val state = _uiState.value
             val allChapters = state.allChapters
 
@@ -633,8 +553,6 @@ class ReaderViewModel : ViewModel() {
             if (state.loadedChapters.containsKey(chapterIndex)) return
 
             val chapter = allChapters[chapterIndex]
-
-            Log.d(TAG, "Loading chapter content: index=$chapterIndex, name=${chapter.name}")
 
             val isBeforeCurrentChapter = chapterIndex < state.currentChapterIndex
             val itemCountBefore = state.displayItems.size
@@ -646,18 +564,14 @@ class ReaderViewModel : ViewModel() {
             }
             rebuildDisplayItems()
 
-            // Load the actual content
             when (val result = chapterLoader.loadChapter(chapter, chapterIndex)) {
                 is ChapterLoadResult.Success -> {
-                    // Verify generation again after network call
-                    if (currentLoadGeneration != loadGeneration) {
-                        Log.d(TAG, "loadChapterContent: generation mismatch after load, aborting")
-                        return
-                    }
-
                     _uiState.update {
                         it.copy(
                             loadedChapters = it.loadedChapters + (chapterIndex to result.loadedChapter),
+                            isLoading = if (chapterIndex == it.initialChapterIndex) false else it.isLoading,
+                            // Set isContentReady when initial chapter loads
+                            isContentReady = if (chapterIndex == it.initialChapterIndex) true else it.isContentReady,
                             currentChapterName = if (chapterIndex == it.currentChapterIndex) chapter.name else it.currentChapterName,
                             isOfflineMode = result.loadedChapter.isFromCache && it.isOfflineMode
                         )
@@ -665,8 +579,11 @@ class ReaderViewModel : ViewModel() {
 
                     rebuildDisplayItems()
 
-                    // Adjust scroll position if loading before current chapter
-                    if (isBeforeCurrentChapter && !isInitialLoad && isInitialLoadComplete) {
+                    // FIX: Use hasRestoredScroll instead of isInitialLoadComplete
+                    val hasRestoredScroll = _scrollRestorationState.value.hasSuccessfullyRestored ||
+                            _uiState.value.hasRestoredScroll
+
+                    if (isBeforeCurrentChapter && !isInitialLoad && hasRestoredScroll) {
                         val itemCountAfter = _uiState.value.displayItems.size
                         val itemsAdded = itemCountAfter - itemCountBefore
                         if (itemsAdded > 0) {
@@ -683,29 +600,28 @@ class ReaderViewModel : ViewModel() {
                 }
 
                 is ChapterLoadResult.Error -> {
-                    if (currentLoadGeneration != loadGeneration) {
-                        return
-                    }
-
                     val errorChapter = chapterLoader.createErrorChapter(chapter, chapterIndex, result.message)
 
                     _uiState.update {
                         it.copy(
                             loadedChapters = it.loadedChapters + (chapterIndex to errorChapter),
+                            isLoading = if (chapterIndex == it.initialChapterIndex) false else it.isLoading,
+                            isContentReady = if (chapterIndex == it.initialChapterIndex) true else it.isContentReady,
                             error = if (chapterIndex == it.initialChapterIndex) result.message else it.error
                         )
                     }
 
                     rebuildDisplayItems()
 
-                    // If initial chapter failed, mark content as ready so error can be shown
-                    if (chapterIndex == _uiState.value.initialChapterIndex) {
-                        _uiState.update {
-                            it.copy(
-                                isLoading = false,
-                                isContentReady = true,
-                                pendingScrollReset = false
-                            )
+                    // Also adjust for error chapters
+                    val hasRestoredScroll = _scrollRestorationState.value.hasSuccessfullyRestored ||
+                            _uiState.value.hasRestoredScroll
+
+                    if (isBeforeCurrentChapter && !isInitialLoad && hasRestoredScroll) {
+                        val itemCountAfter = _uiState.value.displayItems.size
+                        val itemsAdded = itemCountAfter - itemCountBefore
+                        if (itemsAdded > 0) {
+                            adjustScrollPositionBy(itemsAdded)
                         }
                     }
                 }

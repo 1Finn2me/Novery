@@ -3,8 +3,9 @@ package com.emptycastle.novery.ui.screens.reader.components
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -46,7 +47,6 @@ fun ChapterImageItem(
     val image = item.image
     val resolvedUrl = resolveImageUrl(image.url, baseUrl)
 
-    // Extract referer from URL
     val refererUrl = remember(resolvedUrl) {
         try {
             val uri = android.net.Uri.parse(resolvedUrl)
@@ -61,6 +61,14 @@ fun ChapterImageItem(
 
     var imageState by remember { mutableStateOf<AsyncImagePainter.State>(AsyncImagePainter.State.Empty) }
 
+    // Track if we've determined the actual image size
+    var hasLoadedSize by remember { mutableStateOf(false) }
+    var imageAspectRatio by remember { mutableStateOf(16f / 9f) } // Default aspect ratio
+
+    // Use a STABLE minimum height to prevent layout shifts
+    // Only update size AFTER image loads to avoid jarring shifts
+    val stableHeight = remember { 200.dp } // Fixed stable height during loading
+
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -68,6 +76,15 @@ fun ChapterImageItem(
             .padding(vertical = 8.dp)
             .clip(RoundedCornerShape(8.dp))
             .background(colors.text.copy(alpha = 0.05f))
+            .then(
+                if (!hasLoadedSize) {
+                    // Use stable height during loading to prevent layout shifts
+                    Modifier.height(stableHeight)
+                } else {
+                    // After loading, use natural height with constraints
+                    Modifier.heightIn(min = 100.dp, max = 400.dp)
+                }
+            )
             .clickable(enabled = onImageClick != null) {
                 onImageClick?.invoke(resolvedUrl)
             },
@@ -76,17 +93,20 @@ fun ChapterImageItem(
         AsyncImage(
             model = ImageRequest.Builder(LocalContext.current)
                 .data(resolvedUrl)
-                .crossfade(true)
-                // Add headers to prevent hotlink blocking
+                .crossfade(false) // Disable crossfade to reduce layout changes
                 .addHeader("Referer", refererUrl)
                 .addHeader("User-Agent", "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36")
                 .build(),
             contentDescription = image.altText ?: "Chapter image",
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(min = 100.dp, max = 400.dp),
+            modifier = Modifier.fillMaxSize(),
             contentScale = ContentScale.Fit,
-            onState = { state -> imageState = state }
+            onState = { state ->
+                imageState = state
+                // Mark as loaded when we have the image
+                if (state is AsyncImagePainter.State.Success) {
+                    hasLoadedSize = true
+                }
+            }
         )
 
         // Loading indicator
@@ -98,24 +118,18 @@ fun ChapterImageItem(
             )
         }
 
-        // Error state with debug info (remove in production)
+        // Error state
         if (imageState is AsyncImagePainter.State.Error) {
-            val error = (imageState as AsyncImagePainter.State.Error).result.throwable
             Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 100.dp)
-                    .background(colors.text.copy(alpha = 0.1f)),
+                modifier = Modifier.fillMaxSize(),
                 contentAlignment = Alignment.Center
             ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(
-                        imageVector = Icons.Default.BrokenImage,
-                        contentDescription = "Failed to load image",
-                        modifier = Modifier.size(48.dp),
-                        tint = colors.text.copy(alpha = 0.4f)
-                    )
-                }
+                Icon(
+                    imageVector = Icons.Default.BrokenImage,
+                    contentDescription = "Failed to load image",
+                    modifier = Modifier.size(48.dp),
+                    tint = colors.text.copy(alpha = 0.4f)
+                )
             }
         }
     }

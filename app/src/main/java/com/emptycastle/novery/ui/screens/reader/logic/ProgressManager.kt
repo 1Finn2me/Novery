@@ -52,6 +52,24 @@ class ProgressManager(
                 )
             }
 
+            is ReaderDisplayItem.Image -> {
+                // NEW: Handle images properly
+                val chapter = loadedChapters[visibleItem.chapterIndex]
+                val totalItems = chapter?.contentCount ?: 1
+                val progress = if (totalItems > 0) {
+                    (visibleItem.orderInChapter.toFloat() / totalItems).coerceIn(0f, 1f)
+                } else 0f
+
+                ReadingPosition(
+                    chapterUrl = visibleItem.chapterUrl,
+                    chapterIndex = visibleItem.chapterIndex,
+                    segmentId = "image_${visibleItem.imageIndexInChapter}",
+                    segmentIndexInChapter = visibleItem.orderInChapter, // Use order for images
+                    approximateProgress = progress,
+                    offsetPixels = firstVisibleItemOffset
+                )
+            }
+
             is ReaderDisplayItem.ChapterHeader -> {
                 val chapter = loadedChapters[visibleItem.chapterIndex]
                 ReadingPosition.fromHeader(
@@ -66,13 +84,14 @@ class ProgressManager(
                     chapterUrl = chapter?.chapter?.url ?: "",
                     chapterIndex = visibleItem.chapterIndex,
                     segmentId = "divider",
-                    segmentIndexInChapter = chapter?.segments?.lastIndex ?: 0,
+                    segmentIndexInChapter = chapter?.contentCount ?: 0,
                     approximateProgress = 1f,
                     offsetPixels = firstVisibleItemOffset
                 )
             }
 
-            else -> null
+            is ReaderDisplayItem.LoadingIndicator,
+            is ReaderDisplayItem.ErrorIndicator -> null
         }
     }
 
@@ -151,7 +170,26 @@ class ProgressManager(
             }
         }
 
-        // Find by exact segment ID
+        if (position.segmentId.startsWith("image_")) {
+            val imageIndex = position.segmentId.removePrefix("image_").toIntOrNull() ?: -1
+            if (imageIndex >= 0) {
+                val index = displayItems.indexOfFirst { item ->
+                    item is ReaderDisplayItem.Image &&
+                            item.chapterUrl == position.chapterUrl &&
+                            item.imageIndexInChapter == imageIndex
+                }
+                if (index >= 0) {
+                    return ResolvedScrollPosition(
+                        displayIndex = index,
+                        offsetPixels = position.offsetPixels,
+                        resolutionMethod = ResolutionMethod.EXACT_SEGMENT_ID,
+                        confidence = 1f
+                    )
+                }
+            }
+        }
+
+        // Find by exact segment ID (existing code)
         val index = displayItems.indexOfFirst { item ->
             item is ReaderDisplayItem.Segment &&
                     item.chapterUrl == position.chapterUrl &&
