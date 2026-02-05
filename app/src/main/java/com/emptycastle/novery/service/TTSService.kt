@@ -1,3 +1,4 @@
+// service/TTSService.kt
 package com.emptycastle.novery.service
 
 import android.annotation.SuppressLint
@@ -23,6 +24,7 @@ import android.speech.tts.UtteranceProgressListener
 import android.telephony.PhoneStateListener
 import android.telephony.TelephonyCallback
 import android.telephony.TelephonyManager
+import android.view.KeyEvent
 import androidx.annotation.RequiresApi
 import androidx.core.content.ContextCompat
 import androidx.media.session.MediaButtonReceiver
@@ -48,6 +50,8 @@ import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * High-performance TTS Service with sentence pre-queuing for gapless playback.
+ * Includes silent audio track for Bluetooth/lock screen media button support.
+ * Supports automatic chapter advancement when screen is off.
  */
 class TTSService : Service(), TextToSpeech.OnInitListener {
 
@@ -61,6 +65,8 @@ class TTSService : Service(), TextToSpeech.OnInitListener {
         const val ACTION_STOP = "com.emptycastle.novery.ACTION_TTS_STOP"
         const val ACTION_SET_SLEEP_TIMER = "com.emptycastle.novery.ACTION_SET_SLEEP_TIMER"
         const val ACTION_CANCEL_SLEEP_TIMER = "com.emptycastle.novery.ACTION_CANCEL_SLEEP_TIMER"
+        const val ACTION_NEXT_CHAPTER = "com.emptycastle.novery.ACTION_TTS_NEXT_CHAPTER"
+        const val ACTION_PREVIOUS_CHAPTER = "com.emptycastle.novery.ACTION_TTS_PREVIOUS_CHAPTER"
 
         const val EXTRA_SLEEP_TIMER_MINUTES = "sleep_timer_minutes"
 
@@ -117,6 +123,7 @@ class TTSService : Service(), TextToSpeech.OnInitListener {
         object Starting : ServiceState()
         object Running : ServiceState()
         object Paused : ServiceState()
+        object LoadingNextChapter : ServiceState()
         data class Error(val message: String) : ServiceState()
         data class SleepTimerActive(val remainingMinutes: Int) : ServiceState()
     }
@@ -134,6 +141,14 @@ class TTSService : Service(), TextToSpeech.OnInitListener {
     private var wasPlayingBeforeFocusLoss = false
     private var wasPlayingBeforePhoneCall = false
 
+    // Silent audio player for media button support
+    private var silentAudioPlayer: SilentAudioPlayer? = null
+
+    // Background chapter loader
+    private var backgroundLoader: TTSBackgroundLoader? = null
+    private var chapterLoadJob: Job? = null
+    private var autoAdvanceEnabled = true
+
     private var wakeLock: PowerManager.WakeLock? = null
     private var sleepTimerJob: Job? = null
 
@@ -141,13 +156,14 @@ class TTSService : Service(), TextToSpeech.OnInitListener {
     private var coverBitmap: Bitmap? = null
     private var speechRate = 1.0f
     private var pitch = 1.0f
-    private var useSystemVoice = false // Flag to use system default voice
+    private var useSystemVoice = false
 
     private val currentSentenceIndex = AtomicInteger(0)
     private val queuedUtterances = ConcurrentHashMap<String, Int>()
     private var highestQueuedIndex = -1
     private var isPlaying = false
     private var isPausedByUser = false
+    private var isInBackgroundMode = false
 
     private val _playbackState = MutableStateFlow(TTSPlaybackState())
     val playbackState: StateFlow<TTSPlaybackState> = _playbackState.asStateFlow()
@@ -158,6 +174,9 @@ class TTSService : Service(), TextToSpeech.OnInitListener {
     private val _playbackCompleteEvent = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
     val playbackCompleteEvent: SharedFlow<Unit> = _playbackCompleteEvent.asSharedFlow()
 
+    private val _chapterChangedEvent = MutableSharedFlow<TTSChapterChangeEvent>(extraBufferCapacity = 4)
+    val chapterChangedEvent: SharedFlow<TTSChapterChangeEvent> = _chapterChangedEvent.asSharedFlow()
+
     @Suppress("DEPRECATION")
     private var phoneStateListener: PhoneStateListener? = null
 
@@ -167,6 +186,7 @@ class TTSService : Service(), TextToSpeech.OnInitListener {
     private var actionReceiver: BroadcastReceiver? = null
     private var headphoneReceiver: BroadcastReceiver? = null
     private var bluetoothReceiver: BroadcastReceiver? = null
+    private var mediaButtonReceiver: BroadcastReceiver? = null
 
     private data class PendingPlayRequest(
         val content: TTSContent,
@@ -192,18 +212,35 @@ class TTSService : Service(), TextToSpeech.OnInitListener {
         audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
         tts = TextToSpeech(this, this)
 
+        // Initialize silent audio player for media button support
+        silentAudioPlayer = SilentAudioPlayer(this)
+
+        // Initialize background loader
+        backgroundLoader = TTSBackgroundLoader(this)
+
         registerActionReceiver()
         registerHeadphoneReceiver()
         registerBluetoothReceiver()
+        registerMediaButtonReceiver()
         registerPhoneStateListener()
     }
 
     override fun onBind(intent: Intent?): IBinder = binder
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // Handle media button events from the system
+        if (intent != null && Intent.ACTION_MEDIA_BUTTON == intent.action) {
+            TTSNotifications.mediaSession?.let { session ->
+                MediaButtonReceiver.handleIntent(session, intent)
+            }
+            return START_STICKY
+        }
+
         when (intent?.action) {
             ACTION_START -> { }
             ACTION_STOP -> handleStop()
+            ACTION_NEXT_CHAPTER -> handleNextChapter()
+            ACTION_PREVIOUS_CHAPTER -> handlePreviousChapter()
             ACTION_SET_SLEEP_TIMER -> {
                 val minutes = intent.getIntExtra(EXTRA_SLEEP_TIMER_MINUTES, 0)
                 handleSetSleepTimer(minutes)
@@ -225,6 +262,8 @@ class TTSService : Service(), TextToSpeech.OnInitListener {
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
+        // Keep service running even if app is removed from recents
+        // The wake lock and foreground notification will keep it alive
         super.onTaskRemoved(rootIntent)
     }
 
@@ -238,7 +277,6 @@ class TTSService : Service(), TextToSpeech.OnInitListener {
             tts?.setSpeechRate(speechRate)
             tts?.setPitch(pitch)
 
-            // Only apply saved voice if not using system voice
             if (!useSystemVoice) {
                 applySavedVoice()
             }
@@ -260,7 +298,7 @@ class TTSService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun applySavedVoice() {
-        if (useSystemVoice) return // Don't apply if using system voice
+        if (useSystemVoice) return
 
         val selectedVoice = VoiceManager.selectedVoice.value
         if (selectedVoice != null) {
@@ -271,24 +309,18 @@ class TTSService : Service(), TextToSpeech.OnInitListener {
         }
     }
 
-    /**
-     * Set whether to use system default voice or app-selected voice
-     */
     fun setUseSystemVoice(useSystem: Boolean) {
         useSystemVoice = useSystem
 
         if (useSystem) {
-            // Reset to system default voice by setting language (which uses default voice)
             tts?.let { engine ->
                 val currentLocale = engine.voice?.locale ?: Locale.getDefault()
                 engine.setLanguage(currentLocale)
             }
         } else {
-            // Apply the saved voice from VoiceManager
             applySavedVoice()
         }
 
-        // If playing, restart from current position to apply voice change
         if (isPlaying && !isPausedByUser) {
             val currentIndex = currentSentenceIndex.get()
             queueSentences(currentIndex, clearExisting = true)
@@ -298,13 +330,12 @@ class TTSService : Service(), TextToSpeech.OnInitListener {
     fun isUsingSystemVoice(): Boolean = useSystemVoice
 
     fun setVoice(voiceId: String): Boolean {
-        if (useSystemVoice) return false // Don't change voice if using system voice
+        if (useSystemVoice) return false
 
         val voice = tts?.voices?.find { it.name == voiceId }
         if (voice != null) {
             tts?.voice = voice
 
-            // If playing, restart from current position to apply new voice
             if (isPlaying && !isPausedByUser) {
                 val currentIndex = currentSentenceIndex.get()
                 queueSentences(currentIndex, clearExisting = true)
@@ -329,7 +360,6 @@ class TTSService : Service(), TextToSpeech.OnInitListener {
         pitch = pitchValue.coerceIn(0.5f, 2.0f)
         tts?.setPitch(pitch)
 
-        // If playing, restart from current position to apply new pitch
         if (isPlaying && !isPausedByUser) {
             val currentIndex = currentSentenceIndex.get()
             queueSentences(currentIndex, clearExisting = true)
@@ -337,6 +367,27 @@ class TTSService : Service(), TextToSpeech.OnInitListener {
     }
 
     fun getPitch(): Float = pitch
+
+    fun setAutoAdvanceEnabled(enabled: Boolean) {
+        autoAdvanceEnabled = enabled
+        _playbackState.value = _playbackState.value.copy(autoAdvanceEnabled = enabled)
+    }
+
+    fun isAutoAdvanceEnabled(): Boolean = autoAdvanceEnabled
+
+    /**
+     * Configure the background loader for chapter loading when screen is off.
+     */
+    fun configureBackgroundLoader(
+        novelUrl: String,
+        providerName: String,
+        chapters: List<com.emptycastle.novery.domain.model.Chapter>,
+        currentIndex: Int
+    ) {
+        serviceScope.launch {
+            backgroundLoader?.configure(novelUrl, providerName, chapters, currentIndex)
+        }
+    }
 
     private fun setupUtteranceListener() {
         tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
@@ -394,7 +445,12 @@ class TTSService : Service(), TextToSpeech.OnInitListener {
         val content = currentContent ?: return
 
         if (completedIndex >= content.totalSegments - 1) {
-            onPlaybackComplete()
+            // Chapter complete - try to auto-advance
+            if (autoAdvanceEnabled && content.hasNextChapter) {
+                handleNextChapter()
+            } else {
+                onPlaybackComplete()
+            }
             return
         }
 
@@ -465,10 +521,8 @@ class TTSService : Service(), TextToSpeech.OnInitListener {
             queuedUtterances[utteranceId] = index
             highestQueuedIndex = maxOf(highestQueuedIndex, index)
 
-            // Enqueue a silent utterance to represent the parser-provided pause
             val pauseMs = segment.pauseAfterMs.coerceAtLeast(0)
             if (pauseMs > 0) {
-                // Use a separate utterance id for pauses (ignored by index extraction)
                 val pauseId = "p_$index"
                 engine.playSilentUtterance(pauseMs.toLong(), TextToSpeech.QUEUE_ADD, pauseId)
             }
@@ -518,11 +572,19 @@ class TTSService : Service(), TextToSpeech.OnInitListener {
             isPlaying = true,
             isPaused = false,
             novelName = content.novelName,
+            novelUrl = content.novelUrl,
             chapterName = content.chapterName,
+            chapterUrl = content.chapterUrl,
             currentSegmentIndex = validStartIndex,
             totalSegments = content.totalSegments,
             currentText = content.getSegment(validStartIndex)?.text ?: "",
-            speechRate = speechRate
+            speechRate = speechRate,
+            chapterIndex = content.chapterIndex,
+            totalChapters = content.totalChapters,
+            hasNextChapter = content.hasNextChapter,
+            hasPreviousChapter = content.hasPreviousChapter,
+            isInBackgroundMode = isInBackgroundMode,
+            autoAdvanceEnabled = autoAdvanceEnabled
         )
 
         if (!requestAudioFocus()) {
@@ -536,7 +598,9 @@ class TTSService : Service(), TextToSpeech.OnInitListener {
         isPlaying = true
         isPausedByUser = false
 
-        // Apply current settings
+        // Start silent audio player for media button support
+        silentAudioPlayer?.start()
+
         tts?.setSpeechRate(speechRate)
         tts?.setPitch(pitch)
 
@@ -568,10 +632,16 @@ class TTSService : Service(), TextToSpeech.OnInitListener {
 
         _playbackState.value = _playbackState.value.copy(
             novelName = content.novelName,
+            novelUrl = content.novelUrl,
             chapterName = content.chapterName,
+            chapterUrl = content.chapterUrl,
             totalSegments = content.totalSegments,
             currentSegmentIndex = newIndex,
-            currentText = content.getSegment(newIndex)?.text ?: ""
+            currentText = content.getSegment(newIndex)?.text ?: "",
+            chapterIndex = content.chapterIndex,
+            totalChapters = content.totalChapters,
+            hasNextChapter = content.hasNextChapter,
+            hasPreviousChapter = content.hasPreviousChapter
         )
 
         TTSNotifications.updateMetadata(content, coverBitmap)
@@ -579,6 +649,120 @@ class TTSService : Service(), TextToSpeech.OnInitListener {
 
         if (isPlaying && !isPausedByUser) {
             queueSentences(newIndex, clearExisting = true)
+        }
+    }
+
+    /**
+     * Handle advancing to the next chapter.
+     * This can be called when the screen is off.
+     */
+    private fun handleNextChapter() {
+        val loader = backgroundLoader ?: return
+        if (!loader.hasNextChapter()) {
+            onPlaybackComplete()
+            return
+        }
+
+        chapterLoadJob?.cancel()
+        chapterLoadJob = serviceScope.launch {
+            _serviceState.value = ServiceState.LoadingNextChapter
+
+            val nextContent = loader.loadNextChapter()
+            if (nextContent != null) {
+                // Update cover if needed
+                val newCover = loader.getCoverBitmap()
+                if (newCover != null) {
+                    coverBitmap = newCover
+                }
+
+                // Start playing new chapter
+                currentContent = nextContent
+                currentSentenceIndex.set(0)
+                highestQueuedIndex = -1
+                queuedUtterances.clear()
+
+                _playbackState.value = _playbackState.value.copy(
+                    chapterName = nextContent.chapterName,
+                    chapterUrl = nextContent.chapterUrl,
+                    currentSegmentIndex = 0,
+                    totalSegments = nextContent.totalSegments,
+                    currentText = nextContent.getSegment(0)?.text ?: "",
+                    chapterIndex = nextContent.chapterIndex,
+                    hasNextChapter = nextContent.hasNextChapter,
+                    hasPreviousChapter = nextContent.hasPreviousChapter
+                )
+
+                // Emit chapter change event
+                _chapterChangedEvent.emit(
+                    TTSChapterChangeEvent(
+                        chapterIndex = nextContent.chapterIndex,
+                        chapterUrl = nextContent.chapterUrl,
+                        chapterName = nextContent.chapterName,
+                        totalChapters = nextContent.totalChapters
+                    )
+                )
+
+                TTSNotifications.updateMetadata(nextContent, coverBitmap)
+                updateNotification()
+
+                _serviceState.value = ServiceState.Running
+
+                // Start playing
+                queueSentences(0, clearExisting = true)
+            } else {
+                _serviceState.value = ServiceState.Running
+                onPlaybackComplete()
+            }
+        }
+    }
+
+    /**
+     * Handle going to the previous chapter.
+     */
+    private fun handlePreviousChapter() {
+        val loader = backgroundLoader ?: return
+        if (!loader.hasPreviousChapter()) return
+
+        chapterLoadJob?.cancel()
+        chapterLoadJob = serviceScope.launch {
+            _serviceState.value = ServiceState.LoadingNextChapter
+
+            val prevContent = loader.loadPreviousChapter()
+            if (prevContent != null) {
+                currentContent = prevContent
+                currentSentenceIndex.set(0)
+                highestQueuedIndex = -1
+                queuedUtterances.clear()
+
+                _playbackState.value = _playbackState.value.copy(
+                    chapterName = prevContent.chapterName,
+                    chapterUrl = prevContent.chapterUrl,
+                    currentSegmentIndex = 0,
+                    totalSegments = prevContent.totalSegments,
+                    currentText = prevContent.getSegment(0)?.text ?: "",
+                    chapterIndex = prevContent.chapterIndex,
+                    hasNextChapter = prevContent.hasNextChapter,
+                    hasPreviousChapter = prevContent.hasPreviousChapter
+                )
+
+                _chapterChangedEvent.emit(
+                    TTSChapterChangeEvent(
+                        chapterIndex = prevContent.chapterIndex,
+                        chapterUrl = prevContent.chapterUrl,
+                        chapterName = prevContent.chapterName,
+                        totalChapters = prevContent.totalChapters
+                    )
+                )
+
+                TTSNotifications.updateMetadata(prevContent, coverBitmap)
+                updateNotification()
+
+                _serviceState.value = ServiceState.Running
+
+                queueSentences(0, clearExisting = true)
+            } else {
+                _serviceState.value = ServiceState.Running
+            }
         }
     }
 
@@ -610,6 +794,10 @@ class TTSService : Service(), TextToSpeech.OnInitListener {
         }
 
         acquireWakeLock()
+
+        // Resume silent audio player
+        silentAudioPlayer?.resume()
+
         updateNotification()
 
         queueSentences(currentSentenceIndex.get(), clearExisting = true)
@@ -621,6 +809,9 @@ class TTSService : Service(), TextToSpeech.OnInitListener {
 
         tts?.stop()
         queuedUtterances.clear()
+
+        // Pause silent audio player (keeps resources allocated)
+        silentAudioPlayer?.pause()
 
         _playbackState.value = _playbackState.value.copy(
             isPlaying = false,
@@ -641,8 +832,17 @@ class TTSService : Service(), TextToSpeech.OnInitListener {
         isPlaying = false
         isPausedByUser = false
 
+        chapterLoadJob?.cancel()
+        chapterLoadJob = null
+
         tts?.stop()
         queuedUtterances.clear()
+
+        // Stop silent audio player
+        silentAudioPlayer?.stop()
+
+        // Clear background loader
+        backgroundLoader?.clear()
 
         abandonAudioFocus()
         releaseWakeLock()
@@ -684,6 +884,14 @@ class TTSService : Service(), TextToSpeech.OnInitListener {
         }
     }
 
+    fun nextChapter() {
+        handleNextChapter()
+    }
+
+    fun previousChapter() {
+        handlePreviousChapter()
+    }
+
     fun seekToSegment(index: Int) {
         val content = currentContent ?: return
 
@@ -714,6 +922,9 @@ class TTSService : Service(), TextToSpeech.OnInitListener {
 
     private fun onPlaybackComplete() {
         isPlaying = false
+
+        // Stop silent audio player
+        silentAudioPlayer?.stop()
 
         _playbackState.value = _playbackState.value.copy(
             isPlaying = false,
@@ -816,6 +1027,79 @@ class TTSService : Service(), TextToSpeech.OnInitListener {
         }
     }
 
+    private fun registerMediaButtonReceiver() {
+        mediaButtonReceiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                if (intent?.action == Intent.ACTION_MEDIA_BUTTON) {
+                    val keyEvent = getKeyEvent(intent)
+
+                    if (keyEvent?.action == KeyEvent.ACTION_DOWN) {
+                        handleMediaButtonEvent(keyEvent)
+                    }
+                }
+            }
+
+            private fun getKeyEvent(intent: Intent): KeyEvent? {
+                return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    intent.getParcelableExtra(Intent.EXTRA_KEY_EVENT, KeyEvent::class.java)
+                } else {
+                    @Suppress("DEPRECATION")
+                    intent.getParcelableExtra(Intent.EXTRA_KEY_EVENT)
+                }
+            }
+        }
+
+        val filter = IntentFilter(Intent.ACTION_MEDIA_BUTTON).apply {
+            priority = IntentFilter.SYSTEM_HIGH_PRIORITY
+        }
+
+        try {
+            ContextCompat.registerReceiver(
+                this,
+                mediaButtonReceiver,
+                filter,
+                ContextCompat.RECEIVER_EXPORTED
+            )
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    private fun handleMediaButtonEvent(keyEvent: KeyEvent): Boolean {
+        return when (keyEvent.keyCode) {
+            KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
+            KeyEvent.KEYCODE_HEADSETHOOK -> {
+                togglePlayPause()
+                true
+            }
+            KeyEvent.KEYCODE_MEDIA_PLAY -> {
+                resume()
+                true
+            }
+            KeyEvent.KEYCODE_MEDIA_PAUSE -> {
+                pause()
+                true
+            }
+            KeyEvent.KEYCODE_MEDIA_STOP -> {
+                stop()
+                true
+            }
+            KeyEvent.KEYCODE_MEDIA_NEXT,
+            KeyEvent.KEYCODE_MEDIA_FAST_FORWARD,
+            KeyEvent.KEYCODE_MEDIA_SKIP_FORWARD -> {
+                next()
+                true
+            }
+            KeyEvent.KEYCODE_MEDIA_PREVIOUS,
+            KeyEvent.KEYCODE_MEDIA_REWIND,
+            KeyEvent.KEYCODE_MEDIA_SKIP_BACKWARD -> {
+                previous()
+                true
+            }
+            else -> false
+        }
+    }
+
     private fun registerPhoneStateListener() {
         val telephonyManager = getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
 
@@ -871,7 +1155,7 @@ class TTSService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun unregisterReceivers() {
-        listOf(actionReceiver, headphoneReceiver, bluetoothReceiver).forEach { receiver ->
+        listOf(actionReceiver, headphoneReceiver, bluetoothReceiver, mediaButtonReceiver).forEach { receiver ->
             receiver?.let {
                 try {
                     unregisterReceiver(it)
@@ -881,6 +1165,7 @@ class TTSService : Service(), TextToSpeech.OnInitListener {
         actionReceiver = null
         headphoneReceiver = null
         bluetoothReceiver = null
+        mediaButtonReceiver = null
     }
 
     private fun unregisterPhoneStateListener() {
@@ -1079,6 +1364,7 @@ class TTSService : Service(), TextToSpeech.OnInitListener {
         _isRunning.set(false)
         _serviceState.value = ServiceState.Stopped
 
+        chapterLoadJob?.cancel()
         sleepTimerJob?.cancel()
         serviceScope.cancel()
 
@@ -1087,6 +1373,14 @@ class TTSService : Service(), TextToSpeech.OnInitListener {
 
         abandonAudioFocus()
         releaseWakeLock()
+
+        // Release silent audio player
+        silentAudioPlayer?.release()
+        silentAudioPlayer = null
+
+        // Clear background loader
+        backgroundLoader?.clear()
+        backgroundLoader = null
 
         tts?.stop()
         tts?.shutdown()

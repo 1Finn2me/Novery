@@ -26,6 +26,11 @@
     <!-- Keep device awake for TTS -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
+    <!-- Bluetooth permissions for headphone detection -->
+    <uses-permission android:name="android.permission.BLUETOOTH"
+        android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+
     <application
         android:name=".NoveryApp"
         android:allowBackup="true"
@@ -63,7 +68,21 @@
             android:name=".service.TTSService"
             android:enabled="true"
             android:exported="false"
-            android:foregroundServiceType="mediaPlayback" />
+            android:foregroundServiceType="mediaPlayback">
+            <intent-filter>
+                <action android:name="android.intent.action.MEDIA_BUTTON" />
+            </intent-filter>
+        </service>
+
+        <!-- Media Button Receiver for Bluetooth headphone controls -->
+        <receiver
+            android:name=".service.MediaButtonEventReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter android:priority="2147483647">
+                <action android:name="android.intent.action.MEDIA_BUTTON" />
+            </intent-filter>
+        </receiver>
 
         <!-- File Provider -->
         <provider

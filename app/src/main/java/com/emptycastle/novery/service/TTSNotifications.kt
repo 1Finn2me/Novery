@@ -1,3 +1,4 @@
+// service/TTSNotifications.kt
 package com.emptycastle.novery.service
 
 import android.Manifest
@@ -23,14 +24,23 @@ import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.graphics.ColorUtils
-import androidx.media.session.MediaButtonReceiver
 import androidx.palette.graphics.Palette
 import com.emptycastle.novery.R
 import java.lang.ref.WeakReference
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
+ * TTS Status enum
+ */
+enum class TTSStatus {
+    PLAYING,
+    PAUSED,
+    STOPPED
+}
+
+/**
  * Modern TTS notification manager with rich media controls.
+ * Supports Bluetooth headphone controls and lock screen media controls.
  */
 object TTSNotifications {
 
@@ -134,7 +144,6 @@ object TTSNotifications {
 
     /**
      * Synchronously extracts colors from bitmap using Palette.
-     * Call this on a background thread if bitmap is large.
      */
     private fun extractColorsSync(bitmap: Bitmap?) {
         if (bitmap == null) {
@@ -146,7 +155,7 @@ object TTSNotifications {
 
         val bitmapHash = bitmap.hashCode()
         if (bitmapHash == lastBitmapHashCode && lastBitmapHashCode != 0) {
-            return // Already extracted for this bitmap
+            return
         }
 
         lastBitmapHashCode = bitmapHash
@@ -156,7 +165,6 @@ object TTSNotifications {
                 .maximumColorCount(24)
                 .generate()
 
-            // Priority: Vibrant > Muted > DarkVibrant > DarkMuted
             cachedPrimaryColor = palette.getVibrantColor(
                 palette.getMutedColor(
                     palette.getDarkVibrantColor(
@@ -193,20 +201,35 @@ object TTSNotifications {
 
         serviceRef = WeakReference(service)
 
-        val mediaButtonIntent = MediaButtonReceiver.buildMediaButtonPendingIntent(
+        // Create pending intent for media button receiver
+        val mediaButtonIntent = Intent(Intent.ACTION_MEDIA_BUTTON).apply {
+            setClass(context, MediaButtonEventReceiver::class.java)
+        }
+        val mediaButtonPendingIntent = PendingIntent.getBroadcast(
             context,
-            PlaybackStateCompat.ACTION_PLAY_PAUSE
+            0,
+            mediaButtonIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
         _mediaSession = MediaSessionCompat(
             context,
             MEDIA_SESSION_TAG,
-            ComponentName(context, MediaButtonReceiver::class.java),
-            mediaButtonIntent
+            ComponentName(context, MediaButtonEventReceiver::class.java),
+            mediaButtonPendingIntent
         ).apply {
+            // Set flags for media button support
+            @Suppress("DEPRECATION")
+            setFlags(
+                MediaSessionCompat.FLAG_HANDLES_MEDIA_BUTTONS or
+                        MediaSessionCompat.FLAG_HANDLES_TRANSPORT_CONTROLS
+            )
+
             setCallback(createMediaSessionCallback())
             setMetadata(buildMediaMetadata(content))
             setPlaybackState(buildPlaybackState(TTSStatus.STOPPED, 0, content.totalSegments))
+
+            // This is crucial for receiving media button events
             isActive = true
         }
     }
@@ -218,22 +241,46 @@ object TTSNotifications {
                 val keyEvent = mediaButtonEvent.getKeyEventCompat()
                     ?: return super.onMediaButtonEvent(mediaButtonEvent)
 
+                // Handle both ACTION_DOWN and ignore ACTION_UP
                 if (keyEvent.action != KeyEvent.ACTION_DOWN) {
-                    return super.onMediaButtonEvent(mediaButtonEvent)
+                    return true // Consume ACTION_UP to prevent double triggering
                 }
 
-                return handleMediaKeyEvent(keyEvent.keyCode)
-                        || super.onMediaButtonEvent(mediaButtonEvent)
+                val handled = handleMediaKeyEvent(keyEvent.keyCode)
+                return if (handled) true else super.onMediaButtonEvent(mediaButtonEvent)
             }
 
-            override fun onPlay() { serviceRef?.get()?.resume() }
-            override fun onPause() { serviceRef?.get()?.pause() }
-            override fun onStop() { serviceRef?.get()?.stop() }
-            override fun onFastForward() { serviceRef?.get()?.next() }
-            override fun onRewind() { serviceRef?.get()?.previous() }
-            override fun onSkipToNext() { serviceRef?.get()?.next() }
-            override fun onSkipToPrevious() { serviceRef?.get()?.previous() }
-            override fun onSeekTo(pos: Long) { serviceRef?.get()?.seekToSegment(pos.toInt()) }
+            override fun onPlay() {
+                serviceRef?.get()?.resume()
+            }
+
+            override fun onPause() {
+                serviceRef?.get()?.pause()
+            }
+
+            override fun onStop() {
+                serviceRef?.get()?.stop()
+            }
+
+            override fun onFastForward() {
+                serviceRef?.get()?.next()
+            }
+
+            override fun onRewind() {
+                serviceRef?.get()?.previous()
+            }
+
+            override fun onSkipToNext() {
+                serviceRef?.get()?.next()
+            }
+
+            override fun onSkipToPrevious() {
+                serviceRef?.get()?.previous()
+            }
+
+            override fun onSeekTo(pos: Long) {
+                serviceRef?.get()?.seekToSegment(pos.toInt())
+            }
         }
     }
 
@@ -241,16 +288,35 @@ object TTSNotifications {
         val service = serviceRef?.get() ?: return false
 
         return when (keyCode) {
-            KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> { service.togglePlayPause(); true }
-            KeyEvent.KEYCODE_MEDIA_PAUSE -> { service.pause(); true }
-            KeyEvent.KEYCODE_MEDIA_PLAY -> { service.resume(); true }
-            KeyEvent.KEYCODE_MEDIA_STOP -> { service.stop(); true }
+            KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
+            KeyEvent.KEYCODE_HEADSETHOOK -> {
+                service.togglePlayPause()
+                true
+            }
+            KeyEvent.KEYCODE_MEDIA_PAUSE -> {
+                service.pause()
+                true
+            }
+            KeyEvent.KEYCODE_MEDIA_PLAY -> {
+                service.resume()
+                true
+            }
+            KeyEvent.KEYCODE_MEDIA_STOP -> {
+                service.stop()
+                true
+            }
             KeyEvent.KEYCODE_MEDIA_NEXT,
             KeyEvent.KEYCODE_MEDIA_FAST_FORWARD,
-            KeyEvent.KEYCODE_MEDIA_SKIP_FORWARD -> { service.next(); true }
+            KeyEvent.KEYCODE_MEDIA_SKIP_FORWARD -> {
+                service.next()
+                true
+            }
             KeyEvent.KEYCODE_MEDIA_PREVIOUS,
             KeyEvent.KEYCODE_MEDIA_REWIND,
-            KeyEvent.KEYCODE_MEDIA_SKIP_BACKWARD -> { service.previous(); true }
+            KeyEvent.KEYCODE_MEDIA_SKIP_BACKWARD -> {
+                service.previous()
+                true
+            }
             else -> false
         }
     }
@@ -364,10 +430,8 @@ object TTSNotifications {
 
         ensureNotificationChannel(context)
 
-        // Extract colors synchronously (should be quick for notification-sized bitmaps)
         extractColorsSync(coverBitmap)
 
-        val progressPercent = calculateProgress(currentSegment, content.totalSegments)
         val contentText = buildContentText(content.novelName, currentSegment, content.totalSegments)
         val subText = buildSubText()
 
@@ -384,15 +448,12 @@ object TTSNotifications {
             .setColorized(true)
             .setColor(cachedPrimaryColor)
 
-        // Add subtext with speed/timer indicators
         if (subText.isNotBlank()) {
             builder.setSubText(subText)
         }
 
-        // Set cover art
         coverBitmap?.let { builder.setLargeIcon(it) }
 
-        // Content intent
         context.packageManager
             .getLaunchIntentForPackage(context.packageName)?.let { intent ->
                 intent.flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
@@ -403,34 +464,24 @@ object TTSNotifications {
                 builder.setContentIntent(pendingIntent)
             }
 
-        // Delete intent
         val deleteIntent = createActionPendingIntent(context, ACTION_STOP)
         builder.setDeleteIntent(deleteIntent)
 
-        // Add actions
         addMediaActions(builder, status, context)
 
-        // Configure media style
         configureMediaStyle(builder, context)
 
         return builder.build()
     }
 
-    /**
-     * Builds content text with segment progress.
-     */
     private fun buildContentText(novelName: String, currentSegment: Int, totalSegments: Int): String {
         val progress = "${currentSegment + 1}/$totalSegments"
         return "$novelName • $progress"
     }
 
-    /**
-     * Builds subtext with optional speed and timer indicators.
-     */
     private fun buildSubText(): String {
         val parts = mutableListOf<String>()
 
-        // Speech rate (if not default)
         if (currentSpeechRate != 1.0f) {
             val rateStr = if (currentSpeechRate == currentSpeechRate.toInt().toFloat()) {
                 "${currentSpeechRate.toInt()}x"
@@ -440,7 +491,6 @@ object TTSNotifications {
             parts.add("⚡ $rateStr")
         }
 
-        // Sleep timer
         sleepTimerRemaining?.let { minutes ->
             if (minutes > 0) {
                 parts.add("⏰ ${minutes}m")
@@ -448,11 +498,6 @@ object TTSNotifications {
         }
 
         return parts.joinToString(" • ")
-    }
-
-    private fun calculateProgress(currentSegment: Int, totalSegments: Int): Int {
-        if (totalSegments <= 1) return 0
-        return ((currentSegment.toFloat() / (totalSegments - 1)) * 100).toInt().coerceIn(0, 100)
     }
 
     private fun addMediaActions(
@@ -465,7 +510,7 @@ object TTSNotifications {
         when (status) {
             TTSStatus.PLAYING -> builder.addAction(MediaAction.PAUSE.toNotificationAction(context))
             TTSStatus.PAUSED -> builder.addAction(MediaAction.PLAY.toNotificationAction(context))
-            TTSStatus.STOPPED -> { /* No action */ }
+            TTSStatus.STOPPED -> { /* No action needed */ }
         }
 
         builder.addAction(MediaAction.NEXT.toNotificationAction(context))
@@ -577,13 +622,4 @@ object TTSNotifications {
     }
 
     //endregion
-}
-
-/**
- * TTS Status enum
- */
-enum class TTSStatus {
-    PLAYING,
-    PAUSED,
-    STOPPED
 }
