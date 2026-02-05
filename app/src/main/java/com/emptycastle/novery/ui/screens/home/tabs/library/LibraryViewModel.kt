@@ -416,10 +416,32 @@ class LibraryViewModel : ViewModel() {
         if (_uiState.value.isRefreshing) return
 
         viewModelScope.launch {
+            val currentFilter = _uiState.value.filter
+            val currentDownloadCounts = _uiState.value.downloadCounts
+
+            // Determine the display text for the filter being refreshed
+            val filterDisplayName = when (currentFilter) {
+                LibraryFilter.ALL -> "all novels"
+                LibraryFilter.DOWNLOADED -> "downloaded novels"
+                LibraryFilter.READING -> "reading novels"
+                LibraryFilter.COMPLETED -> "completed novels"
+                LibraryFilter.ON_HOLD -> "on-hold novels"
+                LibraryFilter.PLAN_TO_READ -> "plan-to-read novels"
+                LibraryFilter.DROPPED -> "dropped novels"
+            }
+
+            Log.d(TAG, "Refreshing library with filter: $currentFilter ($filterDisplayName)")
+
             _uiState.update {
                 it.copy(
                     isRefreshing = true,
-                    refreshProgress = RefreshProgress(0, 0, "Starting...", 0, 0),
+                    refreshProgress = RefreshProgress(
+                        current = 0,
+                        total = 0,
+                        currentNovelName = "Preparing to refresh $filterDisplayName...",
+                        novelsWithNewChapters = 0,
+                        newChaptersFound = 0
+                    ),
                     error = null
                 )
             }
@@ -428,10 +450,12 @@ class LibraryViewModel : ViewModel() {
                 var novelsWithNewChapters = 0
                 var totalNewChapters = 0
 
-                val result = libraryRepository.refreshAllNovels(
+                val result = libraryRepository.refreshNovelsWithFilter(
                     getProvider = { providerName ->
                         novelRepository.getProvider(providerName)
                     },
+                    filter = currentFilter,
+                    downloadCounts = currentDownloadCounts,
                     onProgress = { current, total, novelName ->
                         _uiState.update {
                             it.copy(
@@ -463,19 +487,29 @@ class LibraryViewModel : ViewModel() {
 
                 val counts = offlineRepository.getAllDownloadCounts()
 
+                // Build completion message
+                val completionMessage = buildString {
+                    append("Complete!")
+                    if (result.skippedCount > 0) {
+                        append(" (${result.skippedCount} skipped)")
+                    }
+                }
+
                 _uiState.update {
                     it.copy(
                         downloadCounts = counts,
                         refreshProgress = RefreshProgress(
-                            current = result.updatedCount + result.errors.size,
-                            total = result.updatedCount + result.errors.size,
-                            currentNovelName = "Complete!",
+                            current = result.totalChecked,
+                            total = result.totalChecked,
+                            currentNovelName = completionMessage,
                             novelsWithNewChapters = novelsWithNewChapters,
                             newChaptersFound = totalNewChapters
                         ),
                         showNewChaptersCard = totalNewChapters > 0
                     )
                 }
+
+                Log.d(TAG, "Refresh complete: checked=${result.totalChecked}, skipped=${result.skippedCount}, updated=$novelsWithNewChapters, newChapters=$totalNewChapters")
 
                 kotlinx.coroutines.delay(1500)
 

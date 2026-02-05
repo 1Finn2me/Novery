@@ -73,6 +73,9 @@ class DownloadService : Service() {
     private val isForegroundStarted = AtomicBoolean(false)
     private val hasReceivedWork = AtomicBoolean(false)
 
+    // Current notification ID - unique per novel
+    private var currentNotificationId: Int = NotificationHelper.NOTIFICATION_ID_PREPARING
+
     // Speed calculation
     private var lastSpeedCalculationTime = 0L
     private var lastBytesDownloaded = 0L
@@ -143,16 +146,17 @@ class DownloadService : Service() {
         Log.d(TAG, "Starting initial foreground notification")
 
         val notification = NotificationHelper.buildPreparingNotification(this)
+        currentNotificationId = NotificationHelper.NOTIFICATION_ID_PREPARING
 
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 startForeground(
-                    NotificationHelper.NOTIFICATION_ID_DOWNLOAD,
+                    currentNotificationId,
                     notification,
                     ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
                 )
             } else {
-                startForeground(NotificationHelper.NOTIFICATION_ID_DOWNLOAD, notification)
+                startForeground(currentNotificationId, notification)
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error starting foreground", e)
@@ -183,6 +187,8 @@ class DownloadService : Service() {
 
     private fun safeStopSelf() {
         try {
+            // Cancel the current notification
+            NotificationHelper.cancelNotification(this, currentNotificationId)
             stopForeground(STOP_FOREGROUND_REMOVE)
         } catch (e: Exception) {
             Log.e(TAG, "Error stopping foreground", e)
@@ -368,7 +374,12 @@ class DownloadService : Service() {
     private fun beginDownload(request: DownloadRequest) {
         Log.d(TAG, "beginDownload: ${request.novelName}")
 
+        // Generate unique notification ID for this novel
+        val newNotificationId = NotificationHelper.getProgressNotificationId(request.novelUrl)
+        val previousNotificationId = currentNotificationId
+
         currentRequest = request
+        currentNotificationId = newNotificationId
         pausedAtIndex = 0
         failedChapters.clear()
         speedHistory.clear()
@@ -401,11 +412,41 @@ class DownloadService : Service() {
 
             // Update notification with actual download info
             withContext(Dispatchers.Main) {
-                updateDownloadNotification()
+                // Cancel previous notification if different
+                if (previousNotificationId != newNotificationId) {
+                    NotificationHelper.cancelNotification(this@DownloadService, previousNotificationId)
+                }
+                updateForegroundNotification()
             }
 
             // Execute download
             executeDownload(0)
+        }
+    }
+
+    /**
+     * Update the foreground notification with the current novel's unique ID
+     */
+    private fun updateForegroundNotification() {
+        val state = _downloadState.value
+        val notification = NotificationHelper.buildDownloadProgressNotification(
+            context = this,
+            state = state,
+            coverBitmap = cachedCoverBitmap
+        )
+
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(
+                    currentNotificationId,
+                    notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+                )
+            } else {
+                startForeground(currentNotificationId, notification)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error updating foreground notification", e)
         }
     }
 
@@ -514,7 +555,8 @@ class DownloadService : Service() {
         cachedCoverBitmap = null
 
         try {
-            NotificationHelper.cancelNotification(this, NotificationHelper.NOTIFICATION_ID_DOWNLOAD)
+            // Cancel the current progress notification
+            NotificationHelper.cancelNotification(this, currentNotificationId)
         } catch (e: Exception) {
             Log.e(TAG, "Error cancelling notification", e)
         }
@@ -848,8 +890,14 @@ class DownloadService : Service() {
 
         stopPeriodicNotificationUpdates()
 
+        // Get the progress notification ID for this novel to cancel it
+        val progressNotificationId = NotificationHelper.getProgressNotificationId(result.novelUrl)
+
         serviceScope.launch {
             try {
+                // Cancel the progress notification first
+                NotificationHelper.cancelNotification(this@DownloadService, progressNotificationId)
+
                 val notification = NotificationHelper.buildDownloadCompleteNotification(
                     context = this@DownloadService,
                     novelName = result.novelName,
@@ -861,12 +909,11 @@ class DownloadService : Service() {
                     queueRemaining = downloadQueue.size
                 )
 
-                // Use a unique notification ID for each novel
-                val notificationId = NotificationHelper.NOTIFICATION_ID_DOWNLOAD_COMPLETE +
-                        (result.novelUrl.hashCode() and 0x7FFFFFFF) % 1000
+                // Use a unique notification ID for completion based on novel URL
+                val completeNotificationId = NotificationHelper.getCompleteNotificationId(result.novelUrl)
 
                 NotificationHelper.getNotificationManager(this@DownloadService).notify(
-                    notificationId,
+                    completeNotificationId,
                     notification
                 )
             } catch (e: Exception) {
@@ -900,6 +947,10 @@ class DownloadService : Service() {
         }
 
         if (request != null) {
+            // Cancel the progress notification
+            val progressNotificationId = NotificationHelper.getProgressNotificationId(request.novelUrl)
+            NotificationHelper.cancelNotification(this, progressNotificationId)
+
             serviceScope.launch {
                 try {
                     val notification = NotificationHelper.buildDownloadErrorNotification(
@@ -911,8 +962,11 @@ class DownloadService : Service() {
                         totalChapters = request.totalChapters
                     )
 
+                    // Use unique error notification ID
+                    val errorNotificationId = NotificationHelper.getErrorNotificationId(request.novelUrl)
+
                     NotificationHelper.getNotificationManager(this@DownloadService).notify(
-                        NotificationHelper.NOTIFICATION_ID_DOWNLOAD_COMPLETE,
+                        errorNotificationId,
                         notification
                     )
                 } catch (e: Exception) {
@@ -941,7 +995,7 @@ class DownloadService : Service() {
 
         try {
             NotificationManagerCompat.from(this).notify(
-                NotificationHelper.NOTIFICATION_ID_DOWNLOAD,
+                currentNotificationId,
                 notification
             )
         } catch (e: SecurityException) {
@@ -970,7 +1024,7 @@ class DownloadService : Service() {
 
         try {
             NotificationManagerCompat.from(this).notify(
-                NotificationHelper.NOTIFICATION_ID_DOWNLOAD,
+                currentNotificationId,
                 notification
             )
         } catch (e: SecurityException) {

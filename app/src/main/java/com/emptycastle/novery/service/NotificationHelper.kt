@@ -20,9 +20,23 @@ object NotificationHelper {
     const val CHANNEL_DOWNLOAD_COMPLETE = "novery_download_complete_channel"
     const val CHANNEL_TTS = "novery_tts_channel"
 
+    // ID ranges to avoid collisions:
+    // 1001 = preparing/initial notification
+    // 2000-2999 = progress notifications (unique per novel)
+    // 3000-3999 = completion notifications (unique per novel)
+    // 4000-4999 = error notifications (unique per novel)
+    // 5000 = TTS notification
+    const val NOTIFICATION_ID_PREPARING = 1001
+    private const val NOTIFICATION_ID_PROGRESS_BASE = 2000
+    private const val NOTIFICATION_ID_COMPLETE_BASE = 3000
+    private const val NOTIFICATION_ID_ERROR_BASE = 4000
+    const val NOTIFICATION_ID_TTS = 5000
+
+    // Keep old constants for backward compatibility, but mark as deprecated
+    @Deprecated("Use getProgressNotificationId() instead")
     const val NOTIFICATION_ID_DOWNLOAD = 1001
+    @Deprecated("Use getCompleteNotificationId() instead")
     const val NOTIFICATION_ID_DOWNLOAD_COMPLETE = 1002
-    const val NOTIFICATION_ID_TTS = 1003
 
     const val ACTION_DOWNLOAD_PAUSE = "com.emptycastle.novery.action.DOWNLOAD_PAUSE"
     const val ACTION_DOWNLOAD_RESUME = "com.emptycastle.novery.action.DOWNLOAD_RESUME"
@@ -33,6 +47,30 @@ object NotificationHelper {
     const val ACTION_TTS_STOP = "com.emptycastle.novery.action.TTS_STOP"
     const val ACTION_TTS_NEXT = "com.emptycastle.novery.action.TTS_NEXT"
     const val ACTION_TTS_PREVIOUS = "com.emptycastle.novery.action.TTS_PREVIOUS"
+
+    /**
+     * Generate a unique notification ID for download progress based on novel URL.
+     * Returns an ID in range 2000-2999.
+     */
+    fun getProgressNotificationId(novelUrl: String): Int {
+        return NOTIFICATION_ID_PROGRESS_BASE + (novelUrl.hashCode() and 0x7FFFFFFF) % 1000
+    }
+
+    /**
+     * Generate a unique notification ID for download completion based on novel URL.
+     * Returns an ID in range 3000-3999.
+     */
+    fun getCompleteNotificationId(novelUrl: String): Int {
+        return NOTIFICATION_ID_COMPLETE_BASE + (novelUrl.hashCode() and 0x7FFFFFFF) % 1000
+    }
+
+    /**
+     * Generate a unique notification ID for download error based on novel URL.
+     * Returns an ID in range 4000-4999.
+     */
+    fun getErrorNotificationId(novelUrl: String): Int {
+        return NOTIFICATION_ID_ERROR_BASE + (novelUrl.hashCode() and 0x7FFFFFFF) % 1000
+    }
 
     fun createNotificationChannels(context: Context) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
