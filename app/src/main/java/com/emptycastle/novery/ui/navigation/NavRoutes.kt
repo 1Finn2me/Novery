@@ -16,6 +16,8 @@ sealed class NavRoutes(val route: String) {
 
     object Settings : NavRoutes("settings")
 
+    object Storage : NavRoutes("settings/storage")
+
     object Notifications : NavRoutes("notifications")
 
     // ================================================================

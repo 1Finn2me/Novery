@@ -1,11 +1,17 @@
 package com.emptycastle.novery.ui.navigation
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
+import androidx.compose.ui.platform.LocalContext
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.navArgument
+import com.emptycastle.novery.data.backup.BackupManager
+import com.emptycastle.novery.data.cache.CacheManager
+import com.emptycastle.novery.data.local.NovelDatabase
+import com.emptycastle.novery.data.local.PreferencesManager
 import com.emptycastle.novery.domain.model.AppSettings
 import com.emptycastle.novery.ui.screens.details.DetailsScreen
 import com.emptycastle.novery.ui.screens.home.HomeScreen
@@ -15,6 +21,7 @@ import com.emptycastle.novery.ui.screens.notification.NotificationScreen
 import com.emptycastle.novery.ui.screens.reader.ReaderScreen
 import com.emptycastle.novery.ui.screens.reader.settings.ReaderSettingsScreen
 import com.emptycastle.novery.ui.screens.settings.SettingsScreen
+import com.emptycastle.novery.ui.screens.settings.StorageScreen
 
 @Composable
 fun NoveryNavGraph(
@@ -79,6 +86,26 @@ fun NoveryNavGraph(
         // ================================================================
         composable(route = NavRoutes.Settings.route) {
             SettingsScreen(
+                onBack = { navController.popBackStack() },
+                onNavigateToStorage = {
+                    navController.navigate(NavRoutes.Storage.route)
+                }
+            )
+        }
+
+        // ================================================================
+        // STORAGE & BACKUP
+        // ================================================================
+        composable(route = NavRoutes.Storage.route) {
+            val context = LocalContext.current
+            val database = remember { NovelDatabase.getInstance(context) }
+            val preferencesManager = remember { PreferencesManager(context) }
+            val cacheManager = remember { CacheManager(context, database) }
+            val backupManager = remember { BackupManager(context, database, preferencesManager) }
+
+            StorageScreen(
+                cacheManager = cacheManager,
+                backupManager = backupManager,
                 onBack = { navController.popBackStack() }
             )
         }

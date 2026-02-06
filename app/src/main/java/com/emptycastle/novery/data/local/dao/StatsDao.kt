@@ -1,5 +1,3 @@
-// com/emptycastle/novery/data/local/dao/StatsDao.kt
-
 package com.emptycastle.novery.data.local.dao
 
 import androidx.room.Dao
@@ -62,6 +60,15 @@ interface StatsDao {
 
     @Query("SELECT * FROM reading_streak WHERE id = 1")
     fun observeStreak(): Flow<ReadingStreakEntity?>
+
+    @Query("SELECT * FROM reading_stats")
+    suspend fun getAllStats(): List<ReadingStatsEntity>
+
+    @Query("DELETE FROM reading_stats")
+    suspend fun deleteAllStats()
+
+    @Query("DELETE FROM reading_streak")
+    suspend fun deleteStreak()
 }
 
 data class AggregatedStats(

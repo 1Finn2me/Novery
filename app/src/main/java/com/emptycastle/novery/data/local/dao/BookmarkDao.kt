@@ -50,6 +50,12 @@ interface BookmarkDao {
     @Query("SELECT COUNT(*) FROM bookmarks WHERE novelUrl = :novelUrl")
     suspend fun countForNovel(novelUrl: String): Int
 
+    @Query("SELECT * FROM bookmarks")
+    suspend fun getAll(): List<BookmarkEntity>
+
+    @Query("DELETE FROM bookmarks")
+    suspend fun deleteAll()
+
     @Query("""
         SELECT * FROM bookmarks 
         WHERE note LIKE '%' || :query || '%' 

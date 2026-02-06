@@ -1,4 +1,3 @@
-// com/emptycastle/novery/data/repository/BookmarkRepository.kt
 package com.emptycastle.novery.data.repository
 
 import com.emptycastle.novery.data.local.dao.BookmarkDao

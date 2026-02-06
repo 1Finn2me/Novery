@@ -1,4 +1,3 @@
-// com/emptycastle/novery/data/local/dao/LibraryDao.kt
 package com.emptycastle.novery.data.local.dao
 
 import androidx.room.Dao

@@ -1,5 +1,3 @@
-// com/emptycastle/novery/util/ImageLoader.kt
-
 package com.emptycastle.novery.util
 
 import android.content.Context

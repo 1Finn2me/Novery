@@ -59,6 +59,7 @@ import androidx.compose.material.icons.outlined.SettingsSuggest
 import androidx.compose.material.icons.outlined.Sort
 import androidx.compose.material.icons.outlined.SpaceDashboard
 import androidx.compose.material.icons.outlined.Star
+import androidx.compose.material.icons.outlined.Storage
 import androidx.compose.material.icons.outlined.SwapVert
 import androidx.compose.material.icons.outlined.ViewComfy
 import androidx.compose.material.icons.outlined.ViewCompact
@@ -123,7 +124,10 @@ import sh.calvin.reorderable.rememberReorderableLazyListState
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(onBack: () -> Unit) {
+fun SettingsScreen(
+    onBack: () -> Unit,
+    onNavigateToStorage: () -> Unit
+) {
     val preferencesManager = remember { RepositoryProvider.getPreferencesManager() }
     val settings by preferencesManager.appSettings.collectAsStateWithLifecycle()
     val haptics = LocalHapticFeedback.current
@@ -409,6 +413,21 @@ fun SettingsScreen(onBack: () -> Unit) {
                         preferencesManager.setProviderEnabled(name, enabled)
                     }
                 )
+            }
+
+            // ═══════════════════════════════════════════════════════════
+            // STORAGE & BACKUP (Data Management)
+            // ═══════════════════════════════════════════════════════════
+            item { SectionHeader("Data", Icons.Outlined.Storage) }
+            item {
+                SettingsCard {
+                    NavigationItem(
+                        icon = Icons.Outlined.Storage,
+                        title = "Storage & Backup",
+                        subtitle = "Manage downloads, cache, and backups",
+                        onClick = onNavigateToStorage
+                    )
+                }
             }
 
             // ═══════════════════════════════════════════════════════════
@@ -800,6 +819,47 @@ private fun ClickableItem(
                 color = tint.copy(alpha = 0.7f)
             )
         }
+    }
+}
+
+@Composable
+private fun NavigationItem(
+    icon: ImageVector,
+    title: String,
+    subtitle: String,
+    onClick: () -> Unit
+) {
+    val haptics = LocalHapticFeedback.current
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .clickable {
+                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                onClick()
+            }
+            .padding(vertical = 8.dp, horizontal = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(icon, null, Modifier.size(24.dp), MaterialTheme.colorScheme.onSurfaceVariant)
+        Column(Modifier.weight(1f)) {
+            Text(
+                title,
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = FontWeight.Medium
+            )
+            Text(
+                subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Icon(
+            Icons.Outlined.ChevronRight,
+            null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant
+        )
     }
 }
 

@@ -65,6 +65,18 @@ interface OfflineDao {
 
     @Query("SELECT * FROM novel_details")
     suspend fun getAllNovelDetails(): List<NovelDetailsEntity>
+
+    @Query("SELECT * FROM offline_chapters")
+    suspend fun getAllChapters(): List<OfflineChapterEntity>
+
+    @Query("DELETE FROM offline_chapters")
+    suspend fun deleteAllChapters()
+
+    @Query("DELETE FROM offline_novels")
+    suspend fun deleteAllNovels()
+
+    @Query("DELETE FROM novel_details")
+    suspend fun deleteAllNovelDetails()
 }
 
 /**

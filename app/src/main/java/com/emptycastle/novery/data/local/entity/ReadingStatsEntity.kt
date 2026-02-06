@@ -1,5 +1,3 @@
-// com/emptycastle/novery/data/local/entity/ReadingStatsEntity.kt
-
 package com.emptycastle.novery.data.local.entity
 
 import androidx.room.Entity

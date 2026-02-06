@@ -53,4 +53,8 @@ interface HistoryDao {
 
     @Query("SELECT COUNT(*) FROM read_chapters WHERE novelUrl = :novelUrl")
     suspend fun getReadCountForNovel(novelUrl: String): Int
+
+    @Query("SELECT * FROM read_chapters")
+    suspend fun getAllReadChapters(): List<ReadChapterEntity>
+
 }
