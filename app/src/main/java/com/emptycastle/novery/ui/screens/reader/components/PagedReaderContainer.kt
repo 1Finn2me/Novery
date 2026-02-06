@@ -45,6 +45,7 @@ import com.emptycastle.novery.domain.model.MaxWidth
 import com.emptycastle.novery.domain.model.PageAnimation
 import com.emptycastle.novery.domain.model.ReadingDirection
 import com.emptycastle.novery.domain.model.ScrollMode
+import com.emptycastle.novery.ui.screens.reader.logic.BlockType
 import com.emptycastle.novery.ui.screens.reader.logic.ReaderPage
 import com.emptycastle.novery.ui.screens.reader.logic.rememberPaginatedContent
 import com.emptycastle.novery.ui.screens.reader.model.ReaderDisplayItem
@@ -505,23 +506,67 @@ private fun PageContent(
                     }
 
                     is ReaderDisplayItem.Segment -> {
-                        SegmentItem(
-                            item = item,
-                            displayIndex = pageItem.displayIndex,
-                            currentSentenceHighlight = null,
-                            isTTSActive = false,
-                            highlightEnabled = false,
-                            settings = settings,
-                            fontFamily = fontFamily,
-                            fontWeight = fontWeight,
-                            textAlign = textAlign,
-                            textColor = colors.text,
-                            highlightColor = colors.sentenceHighlight,
-                            horizontalPadding = 0.dp,
-                            paragraphSpacing = paragraphSpacing,
-                            linkColor = colors.linkColor, // Pass the link color
-                            onLinkClick = null // Use default browser behavior
-                        )
+                        when (item.segment.blockType) {
+                            BlockType.BLOCKQUOTE -> {
+                                BlockquoteSegmentItem(
+                                    item = item,
+                                    settings = settings,
+                                    fontFamily = fontFamily,
+                                    fontWeight = fontWeight,
+                                    textColor = colors.text,
+                                    horizontalPadding = 0.dp,
+                                    paragraphSpacing = paragraphSpacing,
+                                    colors = colors
+                                )
+                            }
+                            BlockType.CODE_BLOCK -> {
+                                CodeBlockSegmentItem(
+                                    item = item,
+                                    displayIndex = pageItem.displayIndex,
+                                    currentSentenceHighlight = null,
+                                    isTTSActive = false,
+                                    highlightEnabled = false,
+                                    settings = settings,
+                                    textColor = colors.text,
+                                    highlightColor = colors.sentenceHighlight,
+                                    horizontalPadding = 0.dp,
+                                    paragraphSpacing = paragraphSpacing
+                                )
+                            }
+                            BlockType.SYSTEM_MESSAGE -> {
+                                SystemMessageSegmentItem(
+                                    item = item,
+                                    displayIndex = pageItem.displayIndex,
+                                    currentSentenceHighlight = null,
+                                    isTTSActive = false,
+                                    highlightEnabled = false,
+                                    settings = settings,
+                                    textColor = colors.text,
+                                    highlightColor = colors.sentenceHighlight,
+                                    horizontalPadding = 0.dp,
+                                    paragraphSpacing = paragraphSpacing
+                                )
+                            }
+                            BlockType.NORMAL -> {
+                                SegmentItem(
+                                    item = item,
+                                    displayIndex = pageItem.displayIndex,
+                                    currentSentenceHighlight = null,
+                                    isTTSActive = false,
+                                    highlightEnabled = false,
+                                    settings = settings,
+                                    fontFamily = fontFamily,
+                                    fontWeight = fontWeight,
+                                    textAlign = textAlign,
+                                    textColor = colors.text,
+                                    highlightColor = colors.sentenceHighlight,
+                                    horizontalPadding = 0.dp,
+                                    paragraphSpacing = paragraphSpacing,
+                                    linkColor = colors.linkColor,
+                                    onLinkClick = null
+                                )
+                            }
+                        }
                     }
 
                     is ReaderDisplayItem.Image -> {
@@ -531,6 +576,22 @@ private fun PageContent(
                             horizontalPadding = 0.dp,
                             baseUrl = currentChapterUrl,
                             onImageClick = onImageClick
+                        )
+                    }
+
+                    is ReaderDisplayItem.HorizontalRule -> {
+                        HorizontalRuleItem(
+                            item = item,
+                            colors = colors,
+                            horizontalPadding = 0.dp
+                        )
+                    }
+
+                    is ReaderDisplayItem.SceneBreak -> {
+                        SceneBreakItem(
+                            item = item,
+                            colors = colors,
+                            horizontalPadding = 0.dp
                         )
                     }
 

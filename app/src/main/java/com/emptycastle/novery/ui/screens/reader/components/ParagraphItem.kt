@@ -2,10 +2,13 @@ package com.emptycastle.novery.ui.screens.reader.components
 
 import android.content.Intent
 import android.net.Uri
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -30,6 +33,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
@@ -38,6 +42,7 @@ import androidx.compose.ui.text.ParagraphStyle
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.Hyphens
 import androidx.compose.ui.text.style.LineBreak
@@ -51,6 +56,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.emptycastle.novery.domain.model.ReaderSettings
 import com.emptycastle.novery.ui.components.GhostButton
+import com.emptycastle.novery.ui.screens.reader.logic.RuleStyle
+import com.emptycastle.novery.ui.screens.reader.logic.SceneBreakStyle
 import com.emptycastle.novery.ui.screens.reader.model.ReaderDisplayItem
 import com.emptycastle.novery.ui.screens.reader.model.SentenceHighlight
 import com.emptycastle.novery.ui.screens.reader.theme.ReaderColors
@@ -602,5 +609,332 @@ fun ChapterNavButton(
                 )
             }
         }
+    }
+}
+
+// =============================================================================
+// HORIZONTAL RULE
+// =============================================================================
+
+@Composable
+fun HorizontalRuleItem(
+    item: ReaderDisplayItem.HorizontalRule,
+    colors: ReaderColors,
+    horizontalPadding: Dp
+) {
+    val ruleColor = colors.divider.copy(alpha = 0.6f)
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = horizontalPadding)
+            .padding(vertical = 24.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        when (item.rule.style) {
+            RuleStyle.SOLID -> {
+                HorizontalDivider(
+                    modifier = Modifier.fillMaxWidth(0.6f),
+                    thickness = 1.dp,
+                    color = ruleColor
+                )
+            }
+            RuleStyle.DASHED -> {
+                Canvas(
+                    modifier = Modifier
+                        .fillMaxWidth(0.6f)
+                        .height(1.dp)
+                ) {
+                    val dashWidth = 8.dp.toPx()
+                    val gapWidth = 4.dp.toPx()
+                    var x = 0f
+                    while (x < size.width) {
+                        drawLine(
+                            color = ruleColor,
+                            start = Offset(x, 0f),
+                            end = Offset(minOf(x + dashWidth, size.width), 0f),
+                            strokeWidth = 1.dp.toPx()
+                        )
+                        x += dashWidth + gapWidth
+                    }
+                }
+            }
+            RuleStyle.DOTTED -> {
+                Canvas(
+                    modifier = Modifier
+                        .fillMaxWidth(0.6f)
+                        .height(4.dp)
+                ) {
+                    val dotRadius = 2.dp.toPx()
+                    val gapWidth = 8.dp.toPx()
+                    var x = dotRadius
+                    while (x < size.width) {
+                        drawCircle(
+                            color = ruleColor,
+                            radius = dotRadius,
+                            center = Offset(x, size.height / 2)
+                        )
+                        x += dotRadius * 2 + gapWidth
+                    }
+                }
+            }
+        }
+    }
+}
+
+// =============================================================================
+// SCENE BREAK
+// =============================================================================
+
+@Composable
+fun SceneBreakItem(
+    item: ReaderDisplayItem.SceneBreak,
+    colors: ReaderColors,
+    horizontalPadding: Dp
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = horizontalPadding)
+            .padding(vertical = 32.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        when (item.sceneBreak.style) {
+            SceneBreakStyle.ASTERISKS -> {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    repeat(3) {
+                        Text(
+                            text = "✦",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = colors.accent.copy(alpha = 0.7f)
+                        )
+                    }
+                }
+            }
+            SceneBreakStyle.DASHES -> {
+                HorizontalDivider(
+                    modifier = Modifier.fillMaxWidth(0.4f),
+                    thickness = 2.dp,
+                    color = colors.divider
+                )
+            }
+            SceneBreakStyle.ORNAMENT -> {
+                Text(
+                    text = item.sceneBreak.symbol,
+                    style = MaterialTheme.typography.headlineSmall,
+                    color = colors.accent.copy(alpha = 0.8f)
+                )
+            }
+            SceneBreakStyle.CUSTOM -> {
+                Text(
+                    text = item.sceneBreak.symbol,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = colors.textSecondary,
+                    textAlign = TextAlign.Center
+                )
+            }
+        }
+    }
+}
+
+// =============================================================================
+// BLOCKQUOTE SEGMENT
+// =============================================================================
+
+@Composable
+fun BlockquoteSegmentItem(
+    item: ReaderDisplayItem.Segment,
+    settings: ReaderSettings,
+    fontFamily: FontFamily,
+    fontWeight: FontWeight,
+    textColor: Color,
+    horizontalPadding: Dp,
+    paragraphSpacing: Dp,
+    colors: ReaderColors
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = horizontalPadding)
+            .padding(vertical = paragraphSpacing / 2)
+    ) {
+        // Left border
+        Box(
+            modifier = Modifier
+                .width(4.dp)
+                .height(IntrinsicSize.Min)
+                .background(
+                    colors.accent.copy(alpha = 0.5f),
+                    RoundedCornerShape(2.dp)
+                )
+        )
+
+        Spacer(modifier = Modifier.width(16.dp))
+
+        // Quoted content
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .background(
+                    colors.surface.copy(alpha = 0.3f),
+                    RoundedCornerShape(4.dp)
+                )
+                .padding(12.dp)
+        ) {
+            Text(
+                text = item.segment.styledText,
+                style = MaterialTheme.typography.bodyLarge.copy(
+                    fontSize = settings.fontSize.sp,
+                    fontFamily = fontFamily,
+                    fontWeight = fontWeight,
+                    fontStyle = FontStyle.Italic,
+                    lineHeight = (settings.fontSize * settings.lineHeight).sp,
+                    color = textColor.copy(alpha = 0.85f)
+                )
+            )
+        }
+    }
+}
+
+// =============================================================================
+// CODE BLOCK SEGMENT (simplified - just monospace font)
+// =============================================================================
+
+@Composable
+fun CodeBlockSegmentItem(
+    item: ReaderDisplayItem.Segment,
+    displayIndex: Int,
+    currentSentenceHighlight: SentenceHighlight?,
+    isTTSActive: Boolean,
+    highlightEnabled: Boolean,
+    settings: ReaderSettings,
+    textColor: Color,
+    highlightColor: Color,
+    horizontalPadding: Dp,
+    paragraphSpacing: Dp
+) {
+    val segment = item.segment
+
+    val hasSentenceHighlight = isTTSActive &&
+            highlightEnabled &&
+            currentSentenceHighlight != null &&
+            currentSentenceHighlight.segmentDisplayIndex == displayIndex
+
+    // Build annotated string with TTS highlight support
+    val annotatedText = remember(
+        segment.styledText,
+        hasSentenceHighlight,
+        currentSentenceHighlight,
+        textColor
+    ) {
+        buildAnnotatedString {
+            append(segment.styledText)
+
+            // Apply TTS highlight if active
+            if (hasSentenceHighlight && currentSentenceHighlight != null) {
+                val sentence = currentSentenceHighlight.sentence
+                val textLength = segment.styledText.length
+                val start = sentence.startIndex.coerceIn(0, textLength)
+                val end = sentence.endIndex.coerceIn(0, textLength)
+
+                if (start < end) {
+                    addStyle(
+                        style = SpanStyle(background = highlightColor),
+                        start = start,
+                        end = end
+                    )
+                }
+            }
+        }
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = horizontalPadding)
+            .padding(vertical = paragraphSpacing / 2)
+    ) {
+        Text(
+            text = annotatedText,
+            style = MaterialTheme.typography.bodyLarge.copy(
+                fontFamily = FontFamily.Monospace,
+                fontSize = settings.fontSize.sp,
+                lineHeight = (settings.fontSize * settings.lineHeight).sp,
+                color = textColor
+            )
+        )
+    }
+}
+
+// =============================================================================
+// SYSTEM MESSAGE SEGMENT (simplified - just monospace font)
+// =============================================================================
+
+@Composable
+fun SystemMessageSegmentItem(
+    item: ReaderDisplayItem.Segment,
+    displayIndex: Int,
+    currentSentenceHighlight: SentenceHighlight?,
+    isTTSActive: Boolean,
+    highlightEnabled: Boolean,
+    settings: ReaderSettings,
+    textColor: Color,
+    highlightColor: Color,
+    horizontalPadding: Dp,
+    paragraphSpacing: Dp
+) {
+    val segment = item.segment
+
+    val hasSentenceHighlight = isTTSActive &&
+            highlightEnabled &&
+            currentSentenceHighlight != null &&
+            currentSentenceHighlight.segmentDisplayIndex == displayIndex
+
+    // Build annotated string with TTS highlight support
+    val annotatedText = remember(
+        segment.styledText,
+        hasSentenceHighlight,
+        currentSentenceHighlight,
+        textColor
+    ) {
+        buildAnnotatedString {
+            append(segment.styledText)
+
+            // Apply TTS highlight if active
+            if (hasSentenceHighlight && currentSentenceHighlight != null) {
+                val sentence = currentSentenceHighlight.sentence
+                val textLength = segment.styledText.length
+                val start = sentence.startIndex.coerceIn(0, textLength)
+                val end = sentence.endIndex.coerceIn(0, textLength)
+
+                if (start < end) {
+                    addStyle(
+                        style = SpanStyle(background = highlightColor),
+                        start = start,
+                        end = end
+                    )
+                }
+            }
+        }
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = horizontalPadding)
+            .padding(vertical = paragraphSpacing / 2)
+    ) {
+        Text(
+            text = annotatedText,
+            style = MaterialTheme.typography.bodyLarge.copy(
+                fontFamily = FontFamily.Monospace,
+                fontSize = settings.fontSize.sp,
+                lineHeight = (settings.fontSize * settings.lineHeight).sp,
+                color = textColor
+            )
+        )
     }
 }

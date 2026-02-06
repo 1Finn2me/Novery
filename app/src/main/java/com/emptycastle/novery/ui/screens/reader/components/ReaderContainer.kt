@@ -30,6 +30,7 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import com.emptycastle.novery.domain.model.MaxWidth
 import com.emptycastle.novery.domain.model.ReadingDirection
+import com.emptycastle.novery.ui.screens.reader.logic.BlockType
 import com.emptycastle.novery.ui.screens.reader.model.ReaderDisplayItem
 import com.emptycastle.novery.ui.screens.reader.model.ReaderUiState
 import com.emptycastle.novery.ui.screens.reader.theme.FontProvider
@@ -176,29 +177,86 @@ fun ReaderContainer(
                                 )
                             }
 
-                            is ReaderDisplayItem.Segment -> {
-                                SegmentItem(
+                            is ReaderDisplayItem.HorizontalRule -> {
+                                HorizontalRuleItem(
                                     item = item,
-                                    displayIndex = index,
-                                    currentSentenceHighlight = uiState.currentSentenceHighlight,
-                                    isTTSActive = uiState.isTTSActive,
-                                    highlightEnabled = uiState.ttsSettings.highlightSentence,
-                                    settings = settings,
-                                    fontFamily = fontFamily,
-                                    fontWeight = fontWeight,
-                                    textAlign = textAlign,
-                                    textColor = effectiveColors.text,
-                                    highlightColor = effectiveColors.sentenceHighlight,
-                                    horizontalPadding = horizontalPadding,
-                                    paragraphSpacing = paragraphSpacing,
-                                    linkColor = effectiveColors.linkColor, // Pass the link color
-                                    onLinkClick = { url ->
-                                        // Optional: custom link handling
-                                        // You could navigate to an in-app browser, show a dialog, etc.
-                                    }
+                                    colors = effectiveColors,
+                                    horizontalPadding = horizontalPadding
                                 )
                             }
 
+                            is ReaderDisplayItem.SceneBreak -> {
+                                SceneBreakItem(
+                                    item = item,
+                                    colors = effectiveColors,
+                                    horizontalPadding = horizontalPadding
+                                )
+                            }
+
+                            is ReaderDisplayItem.Segment -> {
+                                // Check block type for special rendering
+                                when (item.segment.blockType) {
+                                    BlockType.BLOCKQUOTE -> {
+                                        BlockquoteSegmentItem(
+                                            item = item,
+                                            settings = settings,
+                                            fontFamily = fontFamily,
+                                            fontWeight = fontWeight,
+                                            textColor = effectiveColors.text,
+                                            horizontalPadding = horizontalPadding,
+                                            paragraphSpacing = paragraphSpacing,
+                                            colors = effectiveColors,
+                                        )
+                                    }
+                                    BlockType.CODE_BLOCK -> {
+                                        CodeBlockSegmentItem(
+                                            item = item,
+                                            displayIndex = index,
+                                            currentSentenceHighlight = uiState.currentSentenceHighlight,
+                                            isTTSActive = uiState.isTTSActive,
+                                            highlightEnabled = uiState.ttsSettings.highlightSentence,
+                                            settings = settings,
+                                            textColor = effectiveColors.text,
+                                            highlightColor = effectiveColors.sentenceHighlight,
+                                            horizontalPadding = horizontalPadding,
+                                            paragraphSpacing = paragraphSpacing
+                                        )
+                                    }
+                                    BlockType.SYSTEM_MESSAGE -> {
+                                        SystemMessageSegmentItem(
+                                            item = item,
+                                            displayIndex = index,
+                                            currentSentenceHighlight = uiState.currentSentenceHighlight,
+                                            isTTSActive = uiState.isTTSActive,
+                                            highlightEnabled = uiState.ttsSettings.highlightSentence,
+                                            settings = settings,
+                                            textColor = effectiveColors.text,
+                                            highlightColor = effectiveColors.sentenceHighlight,
+                                            horizontalPadding = horizontalPadding,
+                                            paragraphSpacing = paragraphSpacing
+                                        )
+                                    }
+                                    BlockType.NORMAL -> {
+                                        SegmentItem(
+                                            item = item,
+                                            displayIndex = index,
+                                            currentSentenceHighlight = uiState.currentSentenceHighlight,
+                                            isTTSActive = uiState.isTTSActive,
+                                            highlightEnabled = uiState.ttsSettings.highlightSentence,
+                                            settings = settings,
+                                            fontFamily = fontFamily,
+                                            fontWeight = fontWeight,
+                                            textAlign = textAlign,
+                                            textColor = effectiveColors.text,
+                                            highlightColor = effectiveColors.sentenceHighlight,
+                                            horizontalPadding = horizontalPadding,
+                                            paragraphSpacing = paragraphSpacing,
+                                            linkColor = effectiveColors.linkColor,
+                                            onLinkClick = null
+                                        )
+                                    }
+                                }
+                            }
 
                             is ReaderDisplayItem.Image -> {
                                 ChapterImageItem(

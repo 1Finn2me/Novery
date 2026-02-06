@@ -161,6 +161,38 @@ class ReaderViewModel : ViewModel() {
     val volumeScrollAction: SharedFlow<Boolean> = _volumeScrollAction.asSharedFlow()
 
     // =========================================================================
+    // VISIBILITY TRACKING FOR TTS BACKGROUND SYNC
+    // =========================================================================
+
+    private var isReaderVisible = true
+
+    /**
+     * Call when reader screen becomes visible (onResume)
+     */
+    fun onReaderBecameVisible() {
+        isReaderVisible = true
+
+        val state = _uiState.value
+        val ttsState = TTSServiceManager.playbackState.value
+
+        // Only sync if TTS actually changed chapters while we were away
+        if (ttsState.isActive &&
+            ttsState.chapterIndex >= 0 &&
+            ttsState.chapterIndex != state.currentChapterIndex &&
+            ttsState.chapterUrl.isNotBlank()) {
+            Log.d(TAG, "Reader visible - syncing to TTS chapter ${ttsState.chapterIndex}")
+            syncWithTTSService()
+        }
+    }
+
+    /**
+     * Call when reader screen becomes invisible (onPause/onStop)
+     */
+    fun onReaderBecameInvisible() {
+        isReaderVisible = false
+    }
+
+    // =========================================================================
     // INITIALIZATION
     // =========================================================================
 
@@ -203,7 +235,7 @@ class ReaderViewModel : ViewModel() {
                             ttsState.isPaused -> TTSStatus.PAUSED
                             else -> TTSStatus.STOPPED
                         },
-                        // Sync chapter info from service when returning from background
+                        // Only update TTS chapter index, not main chapter index
                         currentTTSChapterIndex = if (ttsState.isActive) ttsState.chapterIndex else it.currentTTSChapterIndex
                     )
                 }
@@ -222,7 +254,6 @@ class ReaderViewModel : ViewModel() {
             }
         }
 
-        // Observe chapter changes from the service
         viewModelScope.launch {
             TTSServiceManager.chapterChanged.collect { event ->
                 handleTTSChapterChange(event)
@@ -235,16 +266,30 @@ class ReaderViewModel : ViewModel() {
      * This is called when TTS auto-advances to the next chapter while screen is off.
      */
     private fun handleTTSChapterChange(event: TTSChapterChangeEvent) {
-        val state = _uiState.value
         val chapterIndex = event.chapterIndex
 
-        // Update the UI state to reflect the new chapter
+        // Always track the TTS chapter position
+        _uiState.update {
+            it.copy(currentTTSChapterIndex = chapterIndex)
+        }
+
+        // If reader isn't visible, don't touch the main state
+        // This prevents breaking infinite scroll and other reader state
+        if (!isReaderVisible) {
+            Log.d(TAG, "TTS chapter changed to $chapterIndex while reader invisible - deferring sync")
+            return
+        }
+
+        // Reader is visible, safe to update main state
+        Log.d(TAG, "TTS chapter changed to $chapterIndex while reader visible - updating state")
+
+        val state = _uiState.value
+
         _uiState.update {
             it.copy(
                 currentChapterIndex = chapterIndex,
                 currentChapterUrl = event.chapterUrl,
                 currentChapterName = event.chapterName,
-                currentTTSChapterIndex = chapterIndex,
                 previousChapter = it.allChapters.getOrNull(chapterIndex - 1),
                 nextChapter = it.allChapters.getOrNull(chapterIndex + 1)
             )
@@ -273,33 +318,9 @@ class ReaderViewModel : ViewModel() {
 
         if (!ttsState.isActive) return
 
-        // Check if TTS has moved to a different chapter
         val currentState = _uiState.value
-        if (ttsState.chapterIndex != currentState.currentChapterIndex && ttsState.chapterUrl.isNotBlank()) {
-            // Service is on a different chapter - sync to it
-            _uiState.update {
-                it.copy(
-                    currentChapterIndex = ttsState.chapterIndex,
-                    currentChapterUrl = ttsState.chapterUrl,
-                    currentChapterName = ttsState.chapterName,
-                    currentTTSChapterIndex = ttsState.chapterIndex,
-                    previousChapter = it.allChapters.getOrNull(ttsState.chapterIndex - 1),
-                    nextChapter = it.allChapters.getOrNull(ttsState.chapterIndex + 1)
-                )
-            }
 
-            // Load the chapter content if not loaded
-            if (!currentState.loadedChapters.containsKey(ttsState.chapterIndex)) {
-                viewModelScope.launch {
-                    loadChapterContent(ttsState.chapterIndex, isInitialLoad = false)
-                }
-            }
-
-            // Rebuild TTS list for correct highlighting
-            rebuildTTSSentenceList()
-        }
-
-        // Update current TTS position
+        // Update TTS playback status first
         _uiState.update {
             it.copy(
                 isTTSActive = ttsState.isActive,
@@ -310,6 +331,62 @@ class ReaderViewModel : ViewModel() {
                     else -> TTSStatus.STOPPED
                 }
             )
+        }
+
+        // Check if TTS has moved to a different chapter
+        if (ttsState.chapterIndex != currentState.currentChapterIndex &&
+            ttsState.chapterIndex >= 0 &&
+            ttsState.chapterUrl.isNotBlank()) {
+
+            Log.d(TAG, "Syncing reader to TTS chapter ${ttsState.chapterIndex}")
+
+            viewModelScope.launch {
+                // Load the chapter content if not loaded
+                if (!currentState.loadedChapters.containsKey(ttsState.chapterIndex)) {
+                    loadChapterContent(ttsState.chapterIndex, isInitialLoad = false)
+                }
+
+                // Small delay for content to be ready
+                delay(100)
+
+                // Now update the main state
+                _uiState.update {
+                    it.copy(
+                        currentChapterIndex = ttsState.chapterIndex,
+                        currentChapterUrl = ttsState.chapterUrl,
+                        currentChapterName = ttsState.chapterName,
+                        currentTTSChapterIndex = ttsState.chapterIndex,
+                        previousChapter = it.allChapters.getOrNull(ttsState.chapterIndex - 1),
+                        nextChapter = it.allChapters.getOrNull(ttsState.chapterIndex + 1)
+                    )
+                }
+
+                // Rebuild TTS list for correct highlighting
+                rebuildTTSSentenceList()
+
+                // Scroll to current TTS position
+                scrollToCurrentTTSPosition()
+            }
+        }
+    }
+
+    /**
+     * Helper to scroll to current TTS sentence position
+     */
+    private fun scrollToCurrentTTSPosition() {
+        val state = _uiState.value
+        val globalIndex = state.currentGlobalSentenceIndex
+
+        if (globalIndex >= 0 && globalIndex < ttsSentenceList.size) {
+            val sentenceInfo = ttsSentenceList[globalIndex]
+            _uiState.update {
+                it.copy(
+                    targetScrollPosition = TargetScrollPosition(
+                        displayIndex = sentenceInfo.displayItemIndex,
+                        offsetPixels = 0
+                    )
+                )
+            }
         }
     }
 
@@ -510,6 +587,7 @@ class ReaderViewModel : ViewModel() {
         stopTTS()
 
         isInitialLoadComplete = false
+        blockInfiniteScrollUntilStable = true
         _scrollRestorationState.value = ScrollRestorationState()
 
         viewModelScope.launch {
@@ -538,6 +616,8 @@ class ReaderViewModel : ViewModel() {
                 val allChapters = details.chapters
                 val chapterIndex = allChapters.indexOfFirst { it.url == chapterUrl }
                     .takeIf { it >= 0 } ?: 0
+
+                requestedChapterIndex = chapterIndex
 
                 _uiState.update {
                     it.copy(
@@ -617,6 +697,7 @@ class ReaderViewModel : ViewModel() {
             }
 
             isInitialLoadComplete = true
+            blockInfiniteScrollUntilStable = false
             _uiState.update { it.copy(isPreloading = false) }
         }
     }
@@ -840,6 +921,8 @@ class ReaderViewModel : ViewModel() {
             var chapterWordCount = 0
             var segmentIndexInChapter = 0
             var imageIndexInChapter = 0
+            var ruleIndexInChapter = 0
+            var breakIndexInChapter = 0
 
             items.add(
                 ReaderDisplayItem.ChapterHeader(
@@ -890,6 +973,28 @@ class ReaderViewModel : ViewModel() {
                                     )
                                 )
                                 imageIndexInChapter++
+                            }
+
+                            is ChapterContentItem.HorizontalRule -> {
+                                items.add(
+                                    ReaderDisplayItem.HorizontalRule(
+                                        chapterIndex = chapterIndex,
+                                        rule = contentItem.rule,
+                                        orderInChapter = orderInChapter
+                                    )
+                                )
+                                ruleIndexInChapter++
+                            }
+
+                            is ChapterContentItem.SceneBreak -> {
+                                items.add(
+                                    ReaderDisplayItem.SceneBreak(
+                                        chapterIndex = chapterIndex,
+                                        sceneBreak = contentItem.sceneBreak,
+                                        orderInChapter = orderInChapter
+                                    )
+                                )
+                                breakIndexInChapter++
                             }
                         }
                     }
@@ -1463,7 +1568,6 @@ class ReaderViewModel : ViewModel() {
 
             TTSServiceManager.setSpeechRate(state.ttsSettings.speed)
 
-            // Start playback with chapter info for background operation
             TTSServiceManager.startPlayback(
                 context = context,
                 content = content,

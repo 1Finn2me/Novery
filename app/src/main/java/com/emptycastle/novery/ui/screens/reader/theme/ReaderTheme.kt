@@ -269,8 +269,17 @@ data class ReaderColors(
     // METADATA
     // =========================================================================
 
-    val metadata: ThemeMetadata
+    val metadata: ThemeMetadata,
 
+    // Code block colors
+    val codeBackground: Color = Color(0xFF1E1E1E),
+    val codeText: Color = Color(0xFFD4D4D4),
+
+    // System message colors (LitRPG)
+    val systemMessageBackground: Color = Color(0xFF0D1117),
+    val systemMessageBorder: Color = Color(0xFF30363D),
+    val systemMessageText: Color = Color(0xFFC9D1D9),
+    val systemMessageAccent: Color = Color(0xFF58A6FF)
 
 ) {
     val isDarkTheme: Boolean get() = metadata.isDark
@@ -432,6 +441,13 @@ data class ReaderColors(
             chapterDividerBackground = Color(0xFFF0F0F0),
             chapterHeaderText = Color(0xFF49454F),
 
+            codeBackground = Color(0xFFF6F8FA),
+            codeText = Color(0xFF24292F),
+            systemMessageBackground = Color(0xFFF0F6FC),
+            systemMessageBorder = Color(0xFFD0D7DE),
+            systemMessageText = Color(0xFF24292F),
+            systemMessageAccent = Color(0xFF0969DA),
+
             progressTrack = Color(0xFFE0E0E0),
             progressIndicator = AccentColors.Orange,
 
@@ -581,6 +597,12 @@ data class ReaderColors(
             scrim = Color(0xFF3D2E1F).copy(alpha = 0.32f),
             controlsBackground = Color(0xFFF4ECD8).copy(alpha = ReaderDefaults.ControlsBackgroundAlpha),
 
+            codeBackground = Color(0xFFE8DCC8),
+            codeText = Color(0xFF433422),
+            systemMessageBackground = Color(0xFFEDE5D6),
+            systemMessageBorder = Color(0xFFCDC4B5),
+            systemMessageText = Color(0xFF433422),
+            systemMessageAccent = Color(0xFF8B7355),
             metadata = ThemeMetadata(
                 id = "sepia",
                 displayName = "Sepia",
@@ -673,6 +695,13 @@ data class ReaderColors(
 
             progressTrack = Color(0xFF49454F),
             progressIndicator = AccentColors.Orange,
+
+            codeBackground = Color(0xFF1E1E1E),
+            codeText = Color(0xFFD4D4D4),
+            systemMessageBackground = Color(0xFF0D1117),
+            systemMessageBorder = Color(0xFF30363D),
+            systemMessageText = Color(0xFFC9D1D9),
+            systemMessageAccent = Color(0xFF58A6FF),
 
             scrim = Color.Black.copy(alpha = 0.5f),
             controlsBackground = Color(0xFF1C1B1F).copy(alpha = ReaderDefaults.ControlsBackgroundAlpha),

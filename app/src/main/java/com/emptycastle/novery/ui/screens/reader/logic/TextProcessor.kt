@@ -2,22 +2,20 @@ package com.emptycastle.novery.ui.screens.reader.logic
 
 import androidx.compose.ui.text.AnnotatedString
 import com.emptycastle.novery.ui.screens.reader.model.ChapterContentItem
+import com.emptycastle.novery.ui.screens.reader.model.ContentHorizontalRule
 import com.emptycastle.novery.ui.screens.reader.model.ContentImage
+import com.emptycastle.novery.ui.screens.reader.model.ContentSceneBreak
 import com.emptycastle.novery.ui.screens.reader.model.ContentSegment
 import com.emptycastle.novery.util.HtmlUtils
 import com.emptycastle.novery.util.SentenceParser
 
 /**
  * Processes raw HTML content into structured segments for the reader.
- * Each segment represents a paragraph with parsed sentences for TTS.
- * Images are extracted and placed in their original positions.
  */
 object TextProcessor {
 
     /**
      * Parses HTML content into an ordered list of content items.
-     * Text and images are interleaved in their original HTML order.
-     * This is the primary method to use for proper content ordering.
      */
     fun parseHtmlToOrderedContent(html: String): List<ChapterContentItem> {
         val cleanedHtml = HtmlUtils.sanitize(html)
@@ -27,6 +25,8 @@ object TextProcessor {
 
         var segmentIndex = 0
         var imageIndex = 0
+        var ruleIndex = 0
+        var breakIndex = 0
         var orderIndex = 0
 
         parsedContent.forEach { content ->
@@ -40,7 +40,8 @@ object TextProcessor {
                             html = "",
                             text = content.plainText,
                             styledText = content.annotatedString,
-                            sentences = parsedParagraph.sentences
+                            sentences = parsedParagraph.sentences,
+                            blockType = content.blockType
                         )
 
                         items.add(
@@ -72,10 +73,45 @@ object TextProcessor {
                     imageIndex++
                     orderIndex++
                 }
+
+                is ParsedContent.HorizontalRule -> {
+                    val rule = ContentHorizontalRule(
+                        id = "rule-$ruleIndex",
+                        style = content.style
+                    )
+
+                    items.add(
+                        ChapterContentItem.HorizontalRule(
+                            id = "hrule-$orderIndex",
+                            orderIndex = orderIndex,
+                            rule = rule
+                        )
+                    )
+                    ruleIndex++
+                    orderIndex++
+                }
+
+                is ParsedContent.SceneBreak -> {
+                    val sceneBreak = ContentSceneBreak(
+                        id = "break-$breakIndex",
+                        symbol = content.symbol,
+                        style = content.style
+                    )
+
+                    items.add(
+                        ChapterContentItem.SceneBreak(
+                            id = "sbreak-$orderIndex",
+                            orderIndex = orderIndex,
+                            sceneBreak = sceneBreak
+                        )
+                    )
+                    breakIndex++
+                    orderIndex++
+                }
             }
         }
 
-        // Fallback: if no items were created but we have content
+        // Fallback
         if (items.isEmpty() && cleanedHtml.isNotBlank()) {
             val text = HtmlUtils.extractText(cleanedHtml)
             val parsedParagraph = SentenceParser.parse(text)
@@ -102,7 +138,6 @@ object TextProcessor {
 
     /**
      * Legacy method for backward compatibility.
-     * Parses HTML content into segments only (no images).
      */
     fun parseHtmlToSegments(html: String): List<ContentSegment> {
         return parseHtmlToOrderedContent(html)

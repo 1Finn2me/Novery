@@ -1,6 +1,9 @@
 package com.emptycastle.novery.ui.screens.reader.model
 
 import androidx.compose.ui.text.AnnotatedString
+import com.emptycastle.novery.ui.screens.reader.logic.BlockType
+import com.emptycastle.novery.ui.screens.reader.logic.RuleStyle
+import com.emptycastle.novery.ui.screens.reader.logic.SceneBreakStyle
 import com.emptycastle.novery.util.ParsedSentence
 
 /**
@@ -11,7 +14,8 @@ data class ContentSegment(
     val html: String,
     val text: String,
     val styledText: AnnotatedString = AnnotatedString(text),
-    val sentences: List<ParsedSentence> = emptyList()
+    val sentences: List<ParsedSentence> = emptyList(),
+    val blockType: BlockType = BlockType.NORMAL
 ) {
     val sentenceCount: Int get() = sentences.size
     fun getSentenceText(index: Int): String? = sentences.getOrNull(index)?.text
@@ -28,12 +32,28 @@ data class ContentImage(
 )
 
 /**
+ * Represents a horizontal rule/divider
+ */
+data class ContentHorizontalRule(
+    val id: String,
+    val style: RuleStyle = RuleStyle.SOLID
+)
+
+/**
+ * Represents a scene break (centered ornament or text)
+ */
+data class ContentSceneBreak(
+    val id: String,
+    val symbol: String = "* * *",
+    val style: SceneBreakStyle = SceneBreakStyle.ASTERISKS
+)
+
+/**
  * Unified content item that preserves order from HTML parsing.
- * Can be either text or an image.
  */
 sealed class ChapterContentItem {
     abstract val id: String
-    abstract val orderIndex: Int // Position in the original HTML
+    abstract val orderIndex: Int
 
     data class Text(
         override val id: String,
@@ -45,6 +65,18 @@ sealed class ChapterContentItem {
         override val id: String,
         override val orderIndex: Int,
         val image: ContentImage
+    ) : ChapterContentItem()
+
+    data class HorizontalRule(
+        override val id: String,
+        override val orderIndex: Int,
+        val rule: ContentHorizontalRule
+    ) : ChapterContentItem()
+
+    data class SceneBreak(
+        override val id: String,
+        override val orderIndex: Int,
+        val sceneBreak: ContentSceneBreak
     ) : ChapterContentItem()
 }
 
@@ -66,7 +98,7 @@ sealed class ReaderDisplayItem(open val itemId: String) {
         val segment: ContentSegment,
         val segmentIndexInChapter: Int,
         val globalSegmentIndex: Int = 0,
-        val orderInChapter: Int = 0 // Position including images
+        val orderInChapter: Int = 0
     ) : ReaderDisplayItem("segment_${chapterIndex}_${segment.id}")
 
     data class Image(
@@ -74,8 +106,20 @@ sealed class ReaderDisplayItem(open val itemId: String) {
         val chapterUrl: String,
         val image: ContentImage,
         val imageIndexInChapter: Int,
-        val orderInChapter: Int = 0 // Position including text segments
+        val orderInChapter: Int = 0
     ) : ReaderDisplayItem("image_${chapterIndex}_${image.id}")
+
+    data class HorizontalRule(
+        val chapterIndex: Int,
+        val rule: ContentHorizontalRule,
+        val orderInChapter: Int = 0
+    ) : ReaderDisplayItem("rule_${chapterIndex}_${rule.id}")
+
+    data class SceneBreak(
+        val chapterIndex: Int,
+        val sceneBreak: ContentSceneBreak,
+        val orderInChapter: Int = 0
+    ) : ReaderDisplayItem("scenebreak_${chapterIndex}_${sceneBreak.id}")
 
     data class ChapterDivider(
         val chapterIndex: Int,

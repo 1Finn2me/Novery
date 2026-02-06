@@ -76,6 +76,16 @@ object ReaderPaginator {
                 250.dp
             }
 
+            is ReaderDisplayItem.HorizontalRule -> {
+                // Horizontal rules have padding of 24dp top and bottom
+                50.dp
+            }
+
+            is ReaderDisplayItem.SceneBreak -> {
+                // Scene breaks have padding of 32dp top and bottom
+                80.dp
+            }
+
             is ReaderDisplayItem.ChapterDivider -> {
                 // Chapter dividers are typically ~250-300dp
                 280.dp
@@ -122,6 +132,8 @@ object ReaderPaginator {
                 is ReaderDisplayItem.ChapterHeader -> item.chapterIndex
                 is ReaderDisplayItem.Segment -> item.chapterIndex
                 is ReaderDisplayItem.Image -> item.chapterIndex
+                is ReaderDisplayItem.HorizontalRule -> item.chapterIndex
+                is ReaderDisplayItem.SceneBreak -> item.chapterIndex
                 is ReaderDisplayItem.ChapterDivider -> item.chapterIndex
                 is ReaderDisplayItem.LoadingIndicator -> item.chapterIndex
                 is ReaderDisplayItem.ErrorIndicator -> item.chapterIndex

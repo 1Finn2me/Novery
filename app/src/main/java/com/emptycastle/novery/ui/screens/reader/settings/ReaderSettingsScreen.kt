@@ -50,30 +50,43 @@ import androidx.compose.material.icons.filled.Animation
 import androidx.compose.material.icons.filled.Brightness4
 import androidx.compose.material.icons.filled.Brightness6
 import androidx.compose.material.icons.filled.BrightnessAuto
+import androidx.compose.material.icons.filled.CenterFocusStrong
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.CleaningServices
 import androidx.compose.material.icons.filled.Coffee
 import androidx.compose.material.icons.filled.Contrast
 import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.Dashboard
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.FormatAlignCenter
 import androidx.compose.material.icons.filled.FormatAlignJustify
 import androidx.compose.material.icons.filled.FormatLineSpacing
 import androidx.compose.material.icons.filled.FormatSize
+import androidx.compose.material.icons.filled.Fullscreen
+import androidx.compose.material.icons.filled.FullscreenExit
+import androidx.compose.material.icons.filled.Gesture
 import androidx.compose.material.icons.filled.LightMode
+import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.RecordVoiceOver
 import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.ScreenRotation
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.SkipNext
+import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.SpaceBar
 import androidx.compose.material.icons.filled.Speed
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Swipe
 import androidx.compose.material.icons.filled.TextDecrease
 import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material.icons.filled.TextIncrease
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material.icons.filled.TouchApp
+import androidx.compose.material.icons.filled.Vibration
 import androidx.compose.material.icons.filled.ViewColumn
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VolumeUp
@@ -81,6 +94,7 @@ import androidx.compose.material.icons.filled.WbSunny
 import androidx.compose.material.icons.outlined.Brightness4
 import androidx.compose.material.icons.outlined.Gesture
 import androidx.compose.material.icons.outlined.Palette
+import androidx.compose.material.icons.outlined.RecordVoiceOver
 import androidx.compose.material.icons.outlined.SpaceBar
 import androidx.compose.material.icons.outlined.TextFields
 import androidx.compose.material.icons.outlined.Tune
@@ -111,6 +125,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -129,6 +144,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.emptycastle.novery.data.local.PreferencesManager
 import com.emptycastle.novery.data.repository.RepositoryProvider
 import com.emptycastle.novery.domain.model.FontCategory
 import com.emptycastle.novery.domain.model.FontFamily
@@ -160,6 +176,7 @@ enum class SettingsTab(
     TYPOGRAPHY("Text", Icons.Outlined.TextFields),
     LAYOUT("Layout", Icons.Outlined.SpaceBar),
     READING("Reading", Icons.Outlined.Gesture),
+    TTS("TTS", Icons.Outlined.RecordVoiceOver),
     ADVANCED("More", Icons.Outlined.Tune)
 }
 
@@ -303,6 +320,10 @@ fun ReaderSettingsScreen(
                             colors = colors,
                             onSettingsChange = { preferencesManager.updateReaderSettings(it) }
                         )
+                        SettingsTab.TTS -> TTSSettings(
+                            colors = colors,
+                            preferencesManager = preferencesManager
+                        )
                         SettingsTab.ADVANCED -> AdvancedSettings(
                             settings = settings,
                             colors = colors,
@@ -341,7 +362,6 @@ private fun countModifiedSettings(current: ReaderSettings, default: ReaderSettin
     if (current.volumeKeyDirection != default.volumeKeyDirection) count++
     if (current.autoHideControlsDelay != default.autoHideControlsDelay) count++
     if (current.edgeGestures != default.edgeGestures) count++
-    // Add more as needed
     return count
 }
 
@@ -1138,7 +1158,6 @@ private fun WarmthControl(
         )
     }
 }
-
 // =============================================================================
 // TYPOGRAPHY SETTINGS
 // =============================================================================
@@ -1622,7 +1641,6 @@ private fun LetterSpacingControl(
     }
 }
 
-// NEW: Word Spacing Control
 @Composable
 private fun WordSpacingControl(
     wordSpacing: Float,
@@ -1978,9 +1996,8 @@ private fun ParagraphIndentControl(
         }
     }
 }
-
 // =============================================================================
-// READING SETTINGS (NEW TAB)
+// READING SETTINGS
 // =============================================================================
 
 @Composable
@@ -2638,7 +2655,7 @@ private fun AdvancedSettings(
             }
         }
 
-        // Progress Style (existing)
+        // Progress Style
         AnimatedVisibility(visible = settings.showProgress) {
             SettingSection(
                 title = "Progress Style",
@@ -2666,7 +2683,7 @@ private fun AdvancedSettings(
             )
         }
 
-        // Auto-hide Controls (existing)
+        // Auto-hide Controls
         SettingSection(
             title = "Auto-hide Controls",
             icon = Icons.Default.Timer,
@@ -2679,7 +2696,7 @@ private fun AdvancedSettings(
             )
         }
 
-        // Auto-scroll (NEW)
+        // Auto-scroll
         SettingSection(
             title = "Auto-Scroll",
             subtitle = "Hands-free reading",
@@ -2738,7 +2755,7 @@ private fun AdvancedSettings(
             }
         }
 
-        // Accessibility (existing)
+        // Accessibility
         SettingSection(
             title = "Accessibility",
             icon = Icons.Default.AccessibilityNew,
@@ -2771,7 +2788,7 @@ private fun AdvancedSettings(
             }
         }
 
-        // About section (existing)
+        // About section
         SettingSection(
             title = "About These Settings",
             icon = Icons.AutoMirrored.Filled.MenuBook,
@@ -2801,7 +2818,6 @@ private fun AdvancedSettings(
     }
 }
 
-// NEW: Screen Orientation Selector
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ScreenOrientationSelector(
@@ -2831,7 +2847,6 @@ private fun ScreenOrientationSelector(
     }
 }
 
-// NEW: Auto-scroll Speed Control
 @Composable
 private fun AutoScrollSpeedControl(
     speed: Float,
@@ -2984,47 +2999,301 @@ private fun AutoHideDelaySelector(
         }
     }
 }
+// =============================================================================
+// TTS SETTINGS
+// =============================================================================
 
 @Composable
-private fun SettingSwitch(
-    title: String,
-    checked: Boolean,
+private fun TTSSettings(
     colors: ReaderColors,
-    onCheckedChange: (Boolean) -> Unit,
-    subtitle: String? = null
+    preferencesManager: PreferencesManager
 ) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(
-                role = Role.Switch,
-                onClick = { onCheckedChange(!checked) }
-            )
-            .padding(vertical = 4.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.bodyMedium,
-                color = colors.text
-            )
-            if (subtitle != null) {
-                Text(
-                    text = subtitle,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = colors.textSecondary
+    // TTS playback settings
+    var ttsSpeed by remember { mutableFloatStateOf(preferencesManager.getTtsSpeed()) }
+    var ttsPitch by remember { mutableFloatStateOf(preferencesManager.getTtsPitch()) }
+    var ttsAutoScroll by remember { mutableStateOf(preferencesManager.getTtsAutoScroll()) }
+    var ttsHighlightSentence by remember { mutableStateOf(preferencesManager.getTtsHighlightSentence()) }
+    var ttsContinueOnChapterEnd by remember { mutableStateOf(preferencesManager.getTtsContinueOnChapterEnd()) }
+    var ttsPauseOnCalls by remember { mutableStateOf(preferencesManager.getTtsPauseOnCalls()) }
+    var ttsUseSystemVoice by remember { mutableStateOf(preferencesManager.getTtsUseSystemVoice()) }
+
+    Column(verticalArrangement = Arrangement.spacedBy(24.dp)) {
+        // Playback Settings Section
+        SettingSection(
+            title = "Playback",
+            icon = Icons.Default.PlayArrow,
+            colors = colors
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                SettingSwitch(
+                    title = "Auto-Scroll with TTS",
+                    subtitle = "Scroll to follow the current sentence",
+                    checked = ttsAutoScroll,
+                    colors = colors,
+                    onCheckedChange = {
+                        ttsAutoScroll = it
+                        preferencesManager.setTtsAutoScroll(it)
+                    }
+                )
+
+                SettingSwitch(
+                    title = "Highlight Sentence",
+                    subtitle = "Visually highlight the sentence being read",
+                    checked = ttsHighlightSentence,
+                    colors = colors,
+                    onCheckedChange = {
+                        ttsHighlightSentence = it
+                        preferencesManager.setTtsHighlightSentence(it)
+                    }
+                )
+
+                SettingSwitch(
+                    title = "Auto-Advance Chapter",
+                    subtitle = "Automatically start next chapter when finished",
+                    checked = ttsContinueOnChapterEnd,
+                    colors = colors,
+                    onCheckedChange = {
+                        ttsContinueOnChapterEnd = it
+                        preferencesManager.setTtsContinueOnChapterEnd(it)
+                    }
+                )
+
+                SettingSwitch(
+                    title = "Pause on Phone Calls",
+                    subtitle = "Automatically pause when receiving calls",
+                    checked = ttsPauseOnCalls,
+                    colors = colors,
+                    onCheckedChange = {
+                        ttsPauseOnCalls = it
+                        preferencesManager.setTtsPauseOnCalls(it)
+                    }
+                )
+
+                SettingSwitch(
+                    title = "Use System Voice",
+                    subtitle = "Use system default TTS voice instead of app selection",
+                    checked = ttsUseSystemVoice,
+                    colors = colors,
+                    onCheckedChange = {
+                        ttsUseSystemVoice = it
+                        preferencesManager.setTtsUseSystemVoice(it)
+                    }
                 )
             }
         }
 
-        Switch(
-            checked = checked,
-            onCheckedChange = onCheckedChange,
-            colors = SwitchDefaults.colors(
-                checkedThumbColor = colors.accent,
-                checkedTrackColor = colors.accent.copy(alpha = 0.3f)
+        // Voice Settings Section
+        SettingSection(
+            title = "Voice Settings",
+            icon = Icons.Default.RecordVoiceOver,
+            colors = colors
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                // Speed Control
+                TTSSpeedControl(
+                    speed = ttsSpeed,
+                    colors = colors,
+                    onSpeedChange = {
+                        ttsSpeed = it
+                        preferencesManager.setTtsSpeed(it)
+                    }
+                )
+
+                HorizontalDivider(color = colors.divider.copy(alpha = 0.5f))
+
+                // Pitch Control
+                TTSPitchControl(
+                    pitch = ttsPitch,
+                    colors = colors,
+                    onPitchChange = {
+                        ttsPitch = it
+                        preferencesManager.setTtsPitch(it)
+                    }
+                )
+            }
+        }
+    }
+}
+
+// =============================================================================
+// TTS SPEED CONTROL
+// =============================================================================
+
+@Composable
+private fun TTSSpeedControl(
+    speed: Float,
+    colors: ReaderColors,
+    onSpeedChange: (Float) -> Unit
+) {
+    var localSpeed by remember(speed) { mutableFloatStateOf(speed) }
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Speed,
+                    contentDescription = null,
+                    modifier = Modifier.size(20.dp),
+                    tint = colors.iconSecondary
+                )
+                Text(
+                    text = "Speed",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = colors.text
+                )
+            }
+            Text(
+                text = "×${String.format("%.1f", localSpeed)}",
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Medium,
+                color = colors.accent
+            )
+        }
+
+        // Quick preset buttons
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            listOf(
+                "0.5×" to 0.5f,
+                "0.75×" to 0.75f,
+                "1×" to 1.0f,
+                "1.25×" to 1.25f,
+                "1.5×" to 1.5f,
+                "2×" to 2.0f
+            ).forEach { (label, value) ->
+                val isSelected = kotlin.math.abs(localSpeed - value) < 0.05f
+
+                Surface(
+                    onClick = {
+                        localSpeed = value
+                        onSpeedChange(value)
+                    },
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(8.dp),
+                    color = if (isSelected) colors.accent else colors.surface,
+                    border = BorderStroke(1.dp, if (isSelected) colors.accent else colors.border)
+                ) {
+                    Text(
+                        text = label,
+                        style = MaterialTheme.typography.labelSmall,
+                        textAlign = TextAlign.Center,
+                        color = if (isSelected) colors.onAccent else colors.textSecondary,
+                        modifier = Modifier.padding(vertical = 8.dp)
+                    )
+                }
+            }
+        }
+
+        // Fine-tune slider
+        Slider(
+            value = localSpeed,
+            onValueChange = { localSpeed = it },
+            onValueChangeFinished = { onSpeedChange(localSpeed) },
+            valueRange = 0.5f..2.5f,
+            colors = SliderDefaults.colors(
+                thumbColor = colors.accent,
+                activeTrackColor = colors.accent,
+                inactiveTrackColor = colors.progressTrack
+            )
+        )
+    }
+}
+
+// =============================================================================
+// TTS PITCH CONTROL
+// =============================================================================
+
+@Composable
+private fun TTSPitchControl(
+    pitch: Float,
+    colors: ReaderColors,
+    onPitchChange: (Float) -> Unit
+) {
+    var localPitch by remember(pitch) { mutableFloatStateOf(pitch) }
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Default.MusicNote,
+                    contentDescription = null,
+                    modifier = Modifier.size(20.dp),
+                    tint = colors.iconSecondary
+                )
+                Text(
+                    text = "Pitch",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = colors.text
+                )
+            }
+            Text(
+                text = "×${String.format("%.1f", localPitch)}",
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Medium,
+                color = colors.accent
+            )
+        }
+
+        // Quick preset buttons
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            listOf(
+                "Low" to 0.5f,
+                "Normal" to 1.0f,
+                "High" to 1.5f,
+                "Higher" to 2.0f
+            ).forEach { (label, value) ->
+                val isSelected = kotlin.math.abs(localPitch - value) < 0.05f
+
+                Surface(
+                    onClick = {
+                        localPitch = value
+                        onPitchChange(value)
+                    },
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(8.dp),
+                    color = if (isSelected) colors.accent else colors.surface,
+                    border = BorderStroke(1.dp, if (isSelected) colors.accent else colors.border)
+                ) {
+                    Text(
+                        text = label,
+                        style = MaterialTheme.typography.labelSmall,
+                        textAlign = TextAlign.Center,
+                        color = if (isSelected) colors.onAccent else colors.textSecondary,
+                        modifier = Modifier.padding(vertical = 8.dp)
+                    )
+                }
+            }
+        }
+
+        // Fine-tune slider
+        Slider(
+            value = localPitch,
+            onValueChange = { localPitch = it },
+            onValueChangeFinished = { onPitchChange(localPitch) },
+            valueRange = 0.5f..2.0f,
+            colors = SliderDefaults.colors(
+                thumbColor = colors.accent,
+                activeTrackColor = colors.accent,
+                inactiveTrackColor = colors.progressTrack
             )
         )
     }
@@ -3080,5 +3349,53 @@ private fun SettingSection(
         }
 
         content()
+    }
+}
+
+@Composable
+private fun SettingSwitch(
+    title: String,
+    checked: Boolean,
+    colors: ReaderColors,
+    onCheckedChange: (Boolean) -> Unit,
+    subtitle: String? = null,
+    enabled: Boolean = true
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(
+                enabled = enabled,
+                role = Role.Switch,
+                onClick = { onCheckedChange(!checked) }
+            )
+            .padding(vertical = 4.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (enabled) colors.text else colors.text.copy(alpha = 0.5f)
+            )
+            if (subtitle != null) {
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (enabled) colors.textSecondary else colors.textSecondary.copy(alpha = 0.5f)
+                )
+            }
+        }
+
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            enabled = enabled,
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = colors.accent,
+                checkedTrackColor = colors.accent.copy(alpha = 0.3f)
+            )
+        )
     }
 }

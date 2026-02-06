@@ -156,12 +156,18 @@ fun ReaderScreen(
         }
     }
 
-    // Lifecycle handling for reading time tracking
+    // Lifecycle handling for reading time tracking AND TTS visibility sync
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
-                Lifecycle.Event.ON_PAUSE -> viewModel.onPauseReading()
-                Lifecycle.Event.ON_RESUME -> viewModel.onResumeReading()
+                Lifecycle.Event.ON_PAUSE -> {
+                    viewModel.onPauseReading()
+                    viewModel.onReaderBecameInvisible()
+                }
+                Lifecycle.Event.ON_RESUME -> {
+                    viewModel.onResumeReading()
+                    viewModel.onReaderBecameVisible()
+                }
                 else -> {}
             }
         }
@@ -227,10 +233,12 @@ fun ReaderScreen(
                     is ReaderDisplayItem.ChapterHeader -> item.chapterIndex
                     is ReaderDisplayItem.Segment -> item.chapterIndex
                     is ReaderDisplayItem.Image -> item.chapterIndex
+                    is ReaderDisplayItem.HorizontalRule -> item.chapterIndex
+                    is ReaderDisplayItem.SceneBreak -> item.chapterIndex
                     is ReaderDisplayItem.ChapterDivider -> item.chapterIndex
                     is ReaderDisplayItem.LoadingIndicator -> item.chapterIndex
                     is ReaderDisplayItem.ErrorIndicator -> item.chapterIndex
-                    else -> return@collect
+                    null -> return@collect
                 }
 
                 val chapter = uiState.allChapters.getOrNull(chapterIndex)
@@ -254,9 +262,42 @@ fun ReaderScreen(
                     is ReaderDisplayItem.ChapterHeader -> firstItem.chapterIndex
                     is ReaderDisplayItem.Segment -> firstItem.chapterIndex
                     is ReaderDisplayItem.Image -> firstItem.chapterIndex
-                    else -> return@collect
+                    is ReaderDisplayItem.HorizontalRule -> firstItem.chapterIndex
+                    is ReaderDisplayItem.SceneBreak -> firstItem.chapterIndex
+                    is ReaderDisplayItem.ChapterDivider -> firstItem.chapterIndex
+                    is ReaderDisplayItem.LoadingIndicator -> firstItem.chapterIndex
+                    is ReaderDisplayItem.ErrorIndicator -> firstItem.chapterIndex
+                    null -> return@collect
                 }
                 viewModel.onApproachingBeginning(chapterIndex)
+            }
+        }
+    }
+
+    LaunchedEffect(listState, uiState.isContentReady) {
+        if (!uiState.isContentReady) return@LaunchedEffect
+
+        snapshotFlow {
+            val layoutInfo = listState.layoutInfo
+            val lastVisibleIndex = layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
+            val totalItems = layoutInfo.totalItemsCount
+            Pair(lastVisibleIndex, totalItems)
+        }.collect { (lastVisibleIndex, totalItems) ->
+            if (totalItems > 0 && lastVisibleIndex >= totalItems - ReaderDefaults.PRELOAD_THRESHOLD_ITEMS) {
+                val displayItems = uiState.displayItems
+                val lastItem = displayItems.getOrNull(lastVisibleIndex)
+                val chapterIndex = when (lastItem) {
+                    is ReaderDisplayItem.Segment -> lastItem.chapterIndex
+                    is ReaderDisplayItem.Image -> lastItem.chapterIndex
+                    is ReaderDisplayItem.HorizontalRule -> lastItem.chapterIndex
+                    is ReaderDisplayItem.SceneBreak -> lastItem.chapterIndex
+                    is ReaderDisplayItem.ChapterDivider -> lastItem.chapterIndex
+                    is ReaderDisplayItem.ChapterHeader -> lastItem.chapterIndex
+                    is ReaderDisplayItem.LoadingIndicator -> lastItem.chapterIndex
+                    is ReaderDisplayItem.ErrorIndicator -> lastItem.chapterIndex
+                    null -> return@collect
+                }
+                viewModel.onApproachingEnd(chapterIndex)
             }
         }
     }
@@ -463,6 +504,8 @@ private fun calculateChapterProgress(
             is ReaderDisplayItem.ChapterHeader -> item.chapterIndex
             is ReaderDisplayItem.Segment -> item.chapterIndex
             is ReaderDisplayItem.Image -> item.chapterIndex
+            is ReaderDisplayItem.HorizontalRule -> item.chapterIndex
+            is ReaderDisplayItem.SceneBreak -> item.chapterIndex
             is ReaderDisplayItem.ChapterDivider -> item.chapterIndex
             is ReaderDisplayItem.LoadingIndicator -> item.chapterIndex
             is ReaderDisplayItem.ErrorIndicator -> item.chapterIndex

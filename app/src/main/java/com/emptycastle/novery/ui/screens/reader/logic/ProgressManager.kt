@@ -53,7 +53,6 @@ class ProgressManager(
             }
 
             is ReaderDisplayItem.Image -> {
-                // NEW: Handle images properly
                 val chapter = loadedChapters[visibleItem.chapterIndex]
                 val totalItems = chapter?.contentCount ?: 1
                 val progress = if (totalItems > 0) {
@@ -64,7 +63,41 @@ class ProgressManager(
                     chapterUrl = visibleItem.chapterUrl,
                     chapterIndex = visibleItem.chapterIndex,
                     segmentId = "image_${visibleItem.imageIndexInChapter}",
-                    segmentIndexInChapter = visibleItem.orderInChapter, // Use order for images
+                    segmentIndexInChapter = visibleItem.orderInChapter,
+                    approximateProgress = progress,
+                    offsetPixels = firstVisibleItemOffset
+                )
+            }
+
+            is ReaderDisplayItem.HorizontalRule -> {
+                val chapter = loadedChapters[visibleItem.chapterIndex]
+                val totalItems = chapter?.contentCount ?: 1
+                val progress = if (totalItems > 0) {
+                    (visibleItem.orderInChapter.toFloat() / totalItems).coerceIn(0f, 1f)
+                } else 0f
+
+                ReadingPosition(
+                    chapterUrl = chapter?.chapter?.url ?: "",
+                    chapterIndex = visibleItem.chapterIndex,
+                    segmentId = "hrule_${visibleItem.orderInChapter}",
+                    segmentIndexInChapter = visibleItem.orderInChapter,
+                    approximateProgress = progress,
+                    offsetPixels = firstVisibleItemOffset
+                )
+            }
+
+            is ReaderDisplayItem.SceneBreak -> {
+                val chapter = loadedChapters[visibleItem.chapterIndex]
+                val totalItems = chapter?.contentCount ?: 1
+                val progress = if (totalItems > 0) {
+                    (visibleItem.orderInChapter.toFloat() / totalItems).coerceIn(0f, 1f)
+                } else 0f
+
+                ReadingPosition(
+                    chapterUrl = chapter?.chapter?.url ?: "",
+                    chapterIndex = visibleItem.chapterIndex,
+                    segmentId = "scenebreak_${visibleItem.orderInChapter}",
+                    segmentIndexInChapter = visibleItem.orderInChapter,
                     approximateProgress = progress,
                     offsetPixels = firstVisibleItemOffset
                 )
