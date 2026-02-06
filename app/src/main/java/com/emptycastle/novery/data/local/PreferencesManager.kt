@@ -26,6 +26,7 @@ import com.emptycastle.novery.domain.model.VolumeKeyDirection
 import com.emptycastle.novery.provider.MainProvider
 import com.emptycastle.novery.ui.screens.details.ChapterDisplayMode
 import com.emptycastle.novery.ui.screens.details.ChaptersPerPage
+import com.emptycastle.novery.ui.screens.reader.logic.AuthorNoteDisplayMode
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -69,6 +70,19 @@ class PreferencesManager(context: Context) {
 
     private val _favoriteProviders = MutableStateFlow<Set<String>>(loadFavoriteProviders())
     val favoriteProviders: StateFlow<Set<String>> = _favoriteProviders.asStateFlow()
+
+    // =========================================================================
+    // AUTHOR NOTE SETTINGS
+    // =========================================================================
+
+    fun getAuthorNoteDisplayMode(): AuthorNoteDisplayMode {
+        val id = prefs.getString(KEY_AUTHOR_NOTE_DISPLAY_MODE, AuthorNoteDisplayMode.COLLAPSED.id)
+        return AuthorNoteDisplayMode.fromId(id ?: AuthorNoteDisplayMode.COLLAPSED.id)
+    }
+
+    fun setAuthorNoteDisplayMode(mode: AuthorNoteDisplayMode) {
+        prefs.edit().putString(KEY_AUTHOR_NOTE_DISPLAY_MODE, mode.id).apply()
+    }
 
     // =========================================================================
     // SEARCH HISTORY
@@ -1429,6 +1443,8 @@ class PreferencesManager(context: Context) {
         // =====================================================================
         // READER SETTINGS KEYS
         // =====================================================================
+
+        private const val KEY_AUTHOR_NOTE_DISPLAY_MODE = "author_note_display_mode"
 
         // Typography
         private const val KEY_FONT_SIZE = "reader_font_size"

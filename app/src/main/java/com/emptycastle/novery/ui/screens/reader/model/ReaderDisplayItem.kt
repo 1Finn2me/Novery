@@ -1,14 +1,13 @@
 package com.emptycastle.novery.ui.screens.reader.model
 
 import androidx.compose.ui.text.AnnotatedString
+import com.emptycastle.novery.ui.screens.reader.logic.AuthorNotePosition
+import com.emptycastle.novery.ui.screens.reader.logic.AuthorNoteSection
 import com.emptycastle.novery.ui.screens.reader.logic.BlockType
 import com.emptycastle.novery.ui.screens.reader.logic.RuleStyle
 import com.emptycastle.novery.ui.screens.reader.logic.SceneBreakStyle
 import com.emptycastle.novery.util.ParsedSentence
 
-/**
- * Content segment representing a parsed paragraph with sentences for TTS
- */
 data class ContentSegment(
     val id: String,
     val html: String,
@@ -22,26 +21,17 @@ data class ContentSegment(
     fun getSentence(index: Int): ParsedSentence? = sentences.getOrNull(index)
 }
 
-/**
- * Represents an image extracted from chapter content
- */
 data class ContentImage(
     val id: String,
     val url: String,
     val altText: String? = null
 )
 
-/**
- * Represents a horizontal rule/divider
- */
 data class ContentHorizontalRule(
     val id: String,
     val style: RuleStyle = RuleStyle.SOLID
 )
 
-/**
- * Represents a scene break (centered ornament or text)
- */
 data class ContentSceneBreak(
     val id: String,
     val symbol: String = "* * *",
@@ -49,8 +39,17 @@ data class ContentSceneBreak(
 )
 
 /**
- * Unified content item that preserves order from HTML parsing.
+ * Represents an author's note section with potentially multiple paragraphs and images
  */
+data class ContentAuthorNote(
+    val id: String,
+    val sections: List<AuthorNoteSection>,
+    val plainText: String,
+    val position: AuthorNotePosition = AuthorNotePosition.INLINE,
+    val noteType: String = "Author's Note",
+    val authorName: String? = null
+)
+
 sealed class ChapterContentItem {
     abstract val id: String
     abstract val orderIndex: Int
@@ -78,11 +77,14 @@ sealed class ChapterContentItem {
         override val orderIndex: Int,
         val sceneBreak: ContentSceneBreak
     ) : ChapterContentItem()
+
+    data class AuthorNote(
+        override val id: String,
+        override val orderIndex: Int,
+        val authorNote: ContentAuthorNote
+    ) : ChapterContentItem()
 }
 
-/**
- * Sealed class representing different types of items displayed in the reader's LazyColumn
- */
 sealed class ReaderDisplayItem(open val itemId: String) {
 
     data class ChapterHeader(
@@ -120,6 +122,12 @@ sealed class ReaderDisplayItem(open val itemId: String) {
         val sceneBreak: ContentSceneBreak,
         val orderInChapter: Int = 0
     ) : ReaderDisplayItem("scenebreak_${chapterIndex}_${sceneBreak.id}")
+
+    data class AuthorNote(
+        val chapterIndex: Int,
+        val authorNote: ContentAuthorNote,
+        val orderInChapter: Int = 0
+    ) : ReaderDisplayItem("authornote_${chapterIndex}_${authorNote.id}")
 
     data class ChapterDivider(
         val chapterIndex: Int,

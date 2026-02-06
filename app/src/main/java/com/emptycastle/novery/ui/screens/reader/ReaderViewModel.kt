@@ -923,6 +923,7 @@ class ReaderViewModel : ViewModel() {
             var imageIndexInChapter = 0
             var ruleIndexInChapter = 0
             var breakIndexInChapter = 0
+            var noteIndexInChapter = 0
 
             items.add(
                 ReaderDisplayItem.ChapterHeader(
@@ -995,6 +996,19 @@ class ReaderViewModel : ViewModel() {
                                     )
                                 )
                                 breakIndexInChapter++
+                            }
+
+                            // NEW: Handle AuthorNote
+                            is ChapterContentItem.AuthorNote -> {
+                                items.add(
+                                    ReaderDisplayItem.AuthorNote(
+                                        chapterIndex = chapterIndex,
+                                        authorNote = contentItem.authorNote,
+                                        orderInChapter = orderInChapter
+                                    )
+                                )
+                                noteIndexInChapter++
+                                // Don't count author notes in word count for reading time
                             }
                         }
                     }

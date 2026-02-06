@@ -1,4 +1,3 @@
-// com/emptycastle/novery/provider/RoyalRoadProvider.kt
 package com.emptycastle.novery.provider
 
 import com.emptycastle.novery.R

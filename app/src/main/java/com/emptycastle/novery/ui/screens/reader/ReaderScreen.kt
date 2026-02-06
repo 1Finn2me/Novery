@@ -235,6 +235,7 @@ fun ReaderScreen(
                     is ReaderDisplayItem.Image -> item.chapterIndex
                     is ReaderDisplayItem.HorizontalRule -> item.chapterIndex
                     is ReaderDisplayItem.SceneBreak -> item.chapterIndex
+                    is ReaderDisplayItem.AuthorNote -> item.chapterIndex
                     is ReaderDisplayItem.ChapterDivider -> item.chapterIndex
                     is ReaderDisplayItem.LoadingIndicator -> item.chapterIndex
                     is ReaderDisplayItem.ErrorIndicator -> item.chapterIndex
@@ -264,6 +265,7 @@ fun ReaderScreen(
                     is ReaderDisplayItem.Image -> firstItem.chapterIndex
                     is ReaderDisplayItem.HorizontalRule -> firstItem.chapterIndex
                     is ReaderDisplayItem.SceneBreak -> firstItem.chapterIndex
+                    is ReaderDisplayItem.AuthorNote -> firstItem.chapterIndex
                     is ReaderDisplayItem.ChapterDivider -> firstItem.chapterIndex
                     is ReaderDisplayItem.LoadingIndicator -> firstItem.chapterIndex
                     is ReaderDisplayItem.ErrorIndicator -> firstItem.chapterIndex
@@ -291,6 +293,7 @@ fun ReaderScreen(
                     is ReaderDisplayItem.Image -> lastItem.chapterIndex
                     is ReaderDisplayItem.HorizontalRule -> lastItem.chapterIndex
                     is ReaderDisplayItem.SceneBreak -> lastItem.chapterIndex
+                    is ReaderDisplayItem.AuthorNote -> lastItem.chapterIndex
                     is ReaderDisplayItem.ChapterDivider -> lastItem.chapterIndex
                     is ReaderDisplayItem.ChapterHeader -> lastItem.chapterIndex
                     is ReaderDisplayItem.LoadingIndicator -> lastItem.chapterIndex
@@ -495,7 +498,6 @@ private fun calculateChapterProgress(
 ): Float {
     if (displayItems.isEmpty()) return 0f
 
-    // Find first and last item indices for the current chapter
     var chapterFirstIndex = -1
     var chapterLastIndex = -1
 
@@ -506,6 +508,7 @@ private fun calculateChapterProgress(
             is ReaderDisplayItem.Image -> item.chapterIndex
             is ReaderDisplayItem.HorizontalRule -> item.chapterIndex
             is ReaderDisplayItem.SceneBreak -> item.chapterIndex
+            is ReaderDisplayItem.AuthorNote -> item.chapterIndex
             is ReaderDisplayItem.ChapterDivider -> item.chapterIndex
             is ReaderDisplayItem.LoadingIndicator -> item.chapterIndex
             is ReaderDisplayItem.ErrorIndicator -> item.chapterIndex

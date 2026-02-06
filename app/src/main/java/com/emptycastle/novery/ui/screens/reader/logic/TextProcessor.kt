@@ -2,6 +2,7 @@ package com.emptycastle.novery.ui.screens.reader.logic
 
 import androidx.compose.ui.text.AnnotatedString
 import com.emptycastle.novery.ui.screens.reader.model.ChapterContentItem
+import com.emptycastle.novery.ui.screens.reader.model.ContentAuthorNote
 import com.emptycastle.novery.ui.screens.reader.model.ContentHorizontalRule
 import com.emptycastle.novery.ui.screens.reader.model.ContentImage
 import com.emptycastle.novery.ui.screens.reader.model.ContentSceneBreak
@@ -9,14 +10,8 @@ import com.emptycastle.novery.ui.screens.reader.model.ContentSegment
 import com.emptycastle.novery.util.HtmlUtils
 import com.emptycastle.novery.util.SentenceParser
 
-/**
- * Processes raw HTML content into structured segments for the reader.
- */
 object TextProcessor {
 
-    /**
-     * Parses HTML content into an ordered list of content items.
-     */
     fun parseHtmlToOrderedContent(html: String): List<ChapterContentItem> {
         val cleanedHtml = HtmlUtils.sanitize(html)
         val items = mutableListOf<ChapterContentItem>()
@@ -27,6 +22,7 @@ object TextProcessor {
         var imageIndex = 0
         var ruleIndex = 0
         var breakIndex = 0
+        var noteIndex = 0
         var orderIndex = 0
 
         parsedContent.forEach { content ->
@@ -52,6 +48,29 @@ object TextProcessor {
                             )
                         )
                         segmentIndex++
+                        orderIndex++
+                    }
+                }
+
+                is ParsedContent.AuthorNote -> {
+                    if (content.plainText.isNotBlank()) {
+                        val authorNote = ContentAuthorNote(
+                            id = "note-$noteIndex",
+                            sections = content.sections,
+                            plainText = content.plainText,
+                            position = content.position,
+                            noteType = content.noteType,
+                            authorName = content.authorName
+                        )
+
+                        items.add(
+                            ChapterContentItem.AuthorNote(
+                                id = "authornote-$orderIndex",
+                                orderIndex = orderIndex,
+                                authorNote = authorNote
+                            )
+                        )
+                        noteIndex++
                         orderIndex++
                     }
                 }
@@ -111,7 +130,6 @@ object TextProcessor {
             }
         }
 
-        // Fallback
         if (items.isEmpty() && cleanedHtml.isNotBlank()) {
             val text = HtmlUtils.extractText(cleanedHtml)
             val parsedParagraph = SentenceParser.parse(text)
@@ -136,18 +154,12 @@ object TextProcessor {
         return items
     }
 
-    /**
-     * Legacy method for backward compatibility.
-     */
     fun parseHtmlToSegments(html: String): List<ContentSegment> {
         return parseHtmlToOrderedContent(html)
             .filterIsInstance<ChapterContentItem.Text>()
             .map { it.segment }
     }
 
-    /**
-     * Extracts plain text from HTML content.
-     */
     fun extractPlainText(html: String): String {
         return HtmlUtils.extractText(html)
     }

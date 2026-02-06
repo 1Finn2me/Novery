@@ -30,6 +30,7 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import com.emptycastle.novery.domain.model.MaxWidth
 import com.emptycastle.novery.domain.model.ReadingDirection
+import com.emptycastle.novery.ui.screens.reader.logic.AuthorNoteDisplayMode
 import com.emptycastle.novery.ui.screens.reader.logic.BlockType
 import com.emptycastle.novery.ui.screens.reader.model.ReaderDisplayItem
 import com.emptycastle.novery.ui.screens.reader.model.ReaderUiState
@@ -190,6 +191,24 @@ fun ReaderContainer(
                                     item = item,
                                     colors = effectiveColors,
                                     horizontalPadding = horizontalPadding
+                                )
+                            }
+
+                            is ReaderDisplayItem.AuthorNote -> {
+                                // Get display mode from preferences
+                                val authorNoteDisplayMode = remember {
+                                    // This should come from ViewModel/preferences
+                                    AuthorNoteDisplayMode.COLLAPSED
+                                }
+
+                                AuthorNoteItem(
+                                    item = item,
+                                    colors = effectiveColors,
+                                    displayMode = authorNoteDisplayMode,
+                                    fontFamily = fontFamily,
+                                    fontSize = settings.fontSize,
+                                    horizontalPadding = horizontalPadding,
+                                    paragraphSpacing = paragraphSpacing
                                 )
                             }
 

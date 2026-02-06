@@ -45,6 +45,7 @@ import com.emptycastle.novery.domain.model.MaxWidth
 import com.emptycastle.novery.domain.model.PageAnimation
 import com.emptycastle.novery.domain.model.ReadingDirection
 import com.emptycastle.novery.domain.model.ScrollMode
+import com.emptycastle.novery.ui.screens.reader.logic.AuthorNoteDisplayMode
 import com.emptycastle.novery.ui.screens.reader.logic.BlockType
 import com.emptycastle.novery.ui.screens.reader.logic.ReaderPage
 import com.emptycastle.novery.ui.screens.reader.logic.rememberPaginatedContent
@@ -567,6 +568,24 @@ private fun PageContent(
                                 )
                             }
                         }
+                    }
+
+                    is ReaderDisplayItem.AuthorNote -> {
+                        // Get display mode from preferences
+                        val authorNoteDisplayMode = remember {
+                            // This should come from ViewModel/preferences
+                            AuthorNoteDisplayMode.COLLAPSED
+                        }
+
+                        AuthorNoteItem(
+                            item = item,
+                            colors = colors,
+                            displayMode = authorNoteDisplayMode,
+                            fontFamily = fontFamily,
+                            fontSize = settings.fontSize,
+                            horizontalPadding = horizontalPadding,
+                            paragraphSpacing = paragraphSpacing
+                        )
                     }
 
                     is ReaderDisplayItem.Image -> {

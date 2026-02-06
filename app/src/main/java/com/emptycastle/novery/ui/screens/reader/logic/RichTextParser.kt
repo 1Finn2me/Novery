@@ -15,7 +15,22 @@ import org.jsoup.nodes.Element
 import org.jsoup.nodes.TextNode
 
 /**
- * Represents a parsed content item - text, image, or structural element
+ * A section within an author note - can be text or image
+ */
+sealed class AuthorNoteSection {
+    data class TextSection(
+        val annotatedString: AnnotatedString,
+        val plainText: String
+    ) : AuthorNoteSection()
+
+    data class ImageSection(
+        val url: String,
+        val altText: String? = null
+    ) : AuthorNoteSection()
+}
+
+/**
+ * Represents a parsed content item
  */
 sealed class ParsedContent {
     data class Text(
@@ -37,40 +52,36 @@ sealed class ParsedContent {
         val symbol: String = "* * *",
         val style: SceneBreakStyle = SceneBreakStyle.ASTERISKS
     ) : ParsedContent()
+
+    data class AuthorNote(
+        val sections: List<AuthorNoteSection>,
+        val plainText: String,
+        val position: AuthorNotePosition = AuthorNotePosition.INLINE,
+        val noteType: String = "Author's Note",
+        val authorName: String? = null
+    ) : ParsedContent()
 }
 
-/**
- * Type of text block for special rendering
- */
 enum class BlockType {
     NORMAL,
     BLOCKQUOTE,
     CODE_BLOCK,
-    SYSTEM_MESSAGE  // For LitRPG [System] messages
+    SYSTEM_MESSAGE
 }
 
-/**
- * Style of horizontal rule
- */
 enum class RuleStyle {
     SOLID,
     DASHED,
     DOTTED
 }
 
-/**
- * Style of scene break
- */
 enum class SceneBreakStyle {
-    ASTERISKS,      // * * * or ***
-    DASHES,         // ---
-    ORNAMENT,       // ⁂ or other symbols
+    ASTERISKS,
+    DASHES,
+    ORNAMENT,
     CUSTOM
 }
 
-/**
- * Style state tracking during HTML parsing
- */
 private data class StyleState(
     val isBold: Boolean = false,
     val isItalic: Boolean = false,
@@ -85,101 +96,163 @@ private data class StyleState(
     val backgroundColor: Color? = null
 )
 
-/**
- * Parses HTML content into styled AnnotatedString and extracts images.
- * Images are placed in their exact position within the content flow.
- */
 object RichTextParser {
 
-    // Tags that indicate bold text
     private val boldTags = setOf("b", "strong")
-
-    // Tags that indicate italic text
     private val italicTags = setOf("i", "em", "cite", "dfn", "var")
-
-    // Tags that indicate underline
     private val underlineTags = setOf("u", "ins")
-
-    // Tags that indicate strikethrough
     private val strikethroughTags = setOf("s", "del", "strike")
-
-    // Tags that indicate code/monospace
     private val codeTags = setOf("code", "kbd", "samp", "tt")
-
-    // Block-level tags that create paragraph breaks
     private val blockTags = setOf(
         "p", "div", "h1", "h2", "h3", "h4", "h5", "h6",
         "li", "tr", "article", "section", "aside",
         "figure", "figcaption", "header", "footer", "main", "nav"
     )
-
-    // Special block tags that need different rendering
     private val blockquoteTags = setOf("blockquote")
     private val preformattedTags = setOf("pre")
-
-    // Tags that should be treated as line breaks
     private val breakTags = setOf("br")
 
-    // Scene break patterns (plain text)
     private val sceneBreakPatterns = listOf(
-        Regex("""^\s*[*]{3,}\s*$"""),                    // ***
-        Regex("""^\s*[-]{3,}\s*$"""),                    // ---
-        Regex("""^\s*[_]{3,}\s*$"""),                    // ___
-        Regex("""^\s*\*\s+\*\s+\*\s*$"""),              // * * *
-        Regex("""^\s*-\s+-\s+-\s*$"""),                  // - - -
-        Regex("""^\s*[⁂✧◇❧§†‡•◆★☆♦♠♣♥]\s*$"""),        // Single ornament
-        Regex("""^\s*~+\s*$"""),                         // ~~~
-        Regex("""^\s*#\s*#\s*#\s*$"""),                  // # # #
-        Regex("""^\s*[=]{3,}\s*$""")                     // ===
+        Regex("""^\s*[*]{3,}\s*$"""),
+        Regex("""^\s*[-]{3,}\s*$"""),
+        Regex("""^\s*[_]{3,}\s*$"""),
+        Regex("""^\s*\*\s+\*\s+\*\s*$"""),
+        Regex("""^\s*-\s+-\s+-\s*$"""),
+        Regex("""^\s*[⁂✧◇❧§†‡•◆★☆♦♠♣♥]\s*$"""),
+        Regex("""^\s*~+\s*$"""),
+        Regex("""^\s*#\s*#\s*#\s*$"""),
+        Regex("""^\s*[=]{3,}\s*$""")
     )
 
-    // LitRPG system message patterns
     private val systemMessagePatterns = listOf(
-        Regex("""^\s*\[.*?\]\s*$""", RegexOption.DOT_MATCHES_ALL),  // [System Message]
-        Regex("""^\s*<.*?>\s*$""", RegexOption.DOT_MATCHES_ALL),    // <System>
-        Regex("""^\s*『.*?』\s*$""", RegexOption.DOT_MATCHES_ALL),  // 『Status』
-        Regex("""^\s*【.*?】\s*$""", RegexOption.DOT_MATCHES_ALL)   // 【Skill】
+        Regex("""^\s*\[.*?\]\s*$""", RegexOption.DOT_MATCHES_ALL),
+        Regex("""^\s*<.*?>\s*$""", RegexOption.DOT_MATCHES_ALL),
+        Regex("""^\s*『.*?』\s*$""", RegexOption.DOT_MATCHES_ALL),
+        Regex("""^\s*【.*?】\s*$""", RegexOption.DOT_MATCHES_ALL)
     )
 
-    /**
-     * Parses an HTML string into a list of ParsedContent items.
-     * Text and images are returned in their exact document order.
-     */
     fun parseHtml(html: String): List<ParsedContent> {
         if (html.isBlank()) return emptyList()
 
         val document = Jsoup.parse(html)
         val results = mutableListOf<ParsedContent>()
 
-        // Process the body using ordered traversal
         processNodeChildren(document.body(), results, StyleState(), BlockType.NORMAL)
 
-        // Post-process to detect scene breaks in text
         return postProcessResults(results)
     }
 
     /**
-     * Post-process results to detect scene breaks in plain text
+     * Post-process to detect scene breaks, merge author notes, and handle text patterns
      */
     private fun postProcessResults(results: List<ParsedContent>): List<ParsedContent> {
-        return results.flatMap { content ->
+        val processed = mutableListOf<ParsedContent>()
+
+        // First pass: only convert EXPLICIT text-based author notes
+        val firstPass = mutableListOf<ParsedContent>()
+
+        results.forEachIndexed { index, content ->
             when (content) {
                 is ParsedContent.Text -> {
                     val trimmedText = content.plainText.trim()
 
-                    // Check if this is a scene break
+                    // Check for scene breaks
                     val sceneBreak = detectSceneBreak(trimmedText)
                     if (sceneBreak != null) {
-                        listOf(sceneBreak)
-                    } else {
-                        listOf(content)
+                        firstPass.add(sceneBreak)
+                    } else if (AuthorNoteDetector.isSeparatorLine(trimmedText)) {
+                        // It's just a separator line, add as horizontal rule
+                        firstPass.add(ParsedContent.HorizontalRule(RuleStyle.SOLID))
+                    } else if (trimmedText.isNotBlank()) {
+                        // Only convert to author note if it EXPLICITLY starts with author note markers
+                        // This is very conservative - most text will pass through as normal
+                        if (AuthorNoteDetector.isExplicitAuthorNote(trimmedText)) {
+                            val position = AuthorNoteDetector.detectPosition(
+                                itemIndex = index,
+                                totalItems = results.size
+                            )
+                            val noteType = AuthorNoteDetector.extractNoteTypeLabel(trimmedText)
+                            val cleanedText = AuthorNoteDetector.cleanNoteText(trimmedText)
+
+                            firstPass.add(ParsedContent.AuthorNote(
+                                sections = listOf(AuthorNoteSection.TextSection(
+                                    AnnotatedString(cleanedText),
+                                    cleanedText
+                                )),
+                                plainText = cleanedText,
+                                position = position,
+                                noteType = noteType
+                            ))
+                        } else {
+                            // Normal text - keep as is
+                            firstPass.add(content)
+                        }
                     }
                 }
-                else -> listOf(content)
+
+                is ParsedContent.AuthorNote -> {
+                    // CSS-detected author notes pass through
+                    firstPass.add(content)
+                }
+
+                is ParsedContent.HorizontalRule -> {
+                    firstPass.add(content)
+                }
+
+                else -> {
+                    firstPass.add(content)
+                }
             }
-        }.filter { content ->
+        }
+
+        // Second pass: merge consecutive author notes
+        var i = 0
+        while (i < firstPass.size) {
+            val current = firstPass[i]
+
+            if (current is ParsedContent.AuthorNote) {
+                // Collect consecutive author notes
+                val consecutiveNotes = mutableListOf(current)
+                var j = i + 1
+
+                while (j < firstPass.size) {
+                    val next = firstPass[j]
+                    if (next is ParsedContent.AuthorNote) {
+                        consecutiveNotes.add(next)
+                        j++
+                    } else {
+                        break
+                    }
+                }
+
+                if (consecutiveNotes.size > 1) {
+                    // Merge all consecutive notes into one
+                    val mergedSections = consecutiveNotes.flatMap { it.sections }
+                    val mergedPlainText = consecutiveNotes.joinToString("\n\n") { it.plainText }
+                    val firstNote = consecutiveNotes.first()
+
+                    processed.add(ParsedContent.AuthorNote(
+                        sections = mergedSections,
+                        plainText = mergedPlainText,
+                        position = firstNote.position,
+                        noteType = firstNote.noteType,
+                        authorName = consecutiveNotes.firstNotNullOfOrNull { it.authorName }
+                    ))
+                    i = j
+                } else {
+                    processed.add(current)
+                    i++
+                }
+            } else {
+                processed.add(current)
+                i++
+            }
+        }
+
+        return processed.filter { content ->
             when (content) {
                 is ParsedContent.Text -> content.plainText.isNotBlank()
+                is ParsedContent.AuthorNote -> content.plainText.isNotBlank()
                 is ParsedContent.Image -> content.url.isNotBlank()
                 is ParsedContent.HorizontalRule -> true
                 is ParsedContent.SceneBreak -> true
@@ -187,9 +260,6 @@ object RichTextParser {
         }
     }
 
-    /**
-     * Detect if text is a scene break pattern
-     */
     private fun detectSceneBreak(text: String): ParsedContent.SceneBreak? {
         val trimmed = text.trim()
 
@@ -201,25 +271,16 @@ object RichTextParser {
                     trimmed.any { it in "⁂✧◇❧§†‡•◆★☆♦♠♣♥" } -> SceneBreakStyle.ORNAMENT
                     else -> SceneBreakStyle.CUSTOM
                 }
-                return ParsedContent.SceneBreak(
-                    symbol = trimmed,
-                    style = style
-                )
+                return ParsedContent.SceneBreak(symbol = trimmed, style = style)
             }
         }
         return null
     }
 
-    /**
-     * Detect if text is a LitRPG system message
-     */
     private fun isSystemMessage(text: String): Boolean {
         return systemMessagePatterns.any { it.matches(text.trim()) }
     }
 
-    /**
-     * Process all children of a node in document order.
-     */
     private fun processNodeChildren(
         parent: Element,
         results: MutableList<ParsedContent>,
@@ -235,13 +296,11 @@ object RichTextParser {
             val plain = currentPlainBuilder?.toString()?.trim()
 
             if (annotated != null && !plain.isNullOrBlank()) {
-                // Check if this looks like a system message
                 val finalBlockType = if (currentBlockType == BlockType.NORMAL && isSystemMessage(plain)) {
                     BlockType.SYSTEM_MESSAGE
                 } else {
                     currentBlockType
                 }
-
                 results.add(ParsedContent.Text(annotated, plain, finalBlockType))
             }
 
@@ -291,8 +350,18 @@ object RichTextParser {
 
                 is Element -> {
                     val tagName = node.tagName().lowercase()
+                    val classAttr = node.attr("class")
 
                     when {
+                        // Handle author note CONTAINERS (extract entire content as one unit)
+                        AuthorNoteDetector.isAuthorNoteContainer(classAttr) -> {
+                            flushText()
+                            val authorNote = parseAuthorNoteContainer(node)
+                            if (authorNote != null) {
+                                results.add(authorNote)
+                            }
+                        }
+
                         // Handle images
                         tagName == "img" -> {
                             flushText()
@@ -309,41 +378,34 @@ object RichTextParser {
                             results.add(ParsedContent.HorizontalRule(RuleStyle.SOLID))
                         }
 
-                        // Handle line breaks
                         tagName in breakTags -> {
                             val (annotatedBuilder, plainBuilder) = ensureTextBuilder()
                             annotatedBuilder.append("\n")
                             plainBuilder.append("\n")
                         }
 
-                        // Handle blockquotes
                         tagName in blockquoteTags -> {
                             flushText()
                             currentBlockType = BlockType.BLOCKQUOTE
-                            val newStyle = updateStyleForTag(inheritedStyle, node)
-                                .copy(isItalic = true)  // Blockquotes are often italic
+                            val newStyle = updateStyleForTag(inheritedStyle, node).copy(isItalic = true)
                             processNodeChildren(node, results, newStyle, BlockType.BLOCKQUOTE)
                             currentBlockType = blockType
                         }
 
-                        // Handle preformatted/code blocks
                         tagName in preformattedTags -> {
                             flushText()
                             currentBlockType = BlockType.CODE_BLOCK
-                            val newStyle = updateStyleForTag(inheritedStyle, node)
-                                .copy(isCode = true)
+                            val newStyle = updateStyleForTag(inheritedStyle, node).copy(isCode = true)
                             processNodeChildren(node, results, newStyle, BlockType.CODE_BLOCK)
                             currentBlockType = blockType
                         }
 
-                        // Handle block elements
                         tagName in blockTags -> {
                             flushText()
                             val newStyle = updateStyleForTag(inheritedStyle, node)
                             processNodeChildren(node, results, newStyle, currentBlockType)
                         }
 
-                        // Handle inline elements
                         else -> {
                             val newStyle = updateStyleForTag(inheritedStyle, node)
                             processInlineNode(node, newStyle, ::appendText, ::flushText, results, currentBlockType)
@@ -357,8 +419,140 @@ object RichTextParser {
     }
 
     /**
-     * Process an inline element and its children.
+     * Parse an entire author note container as a single unit
      */
+    private fun parseAuthorNoteContainer(container: Element): ParsedContent.AuthorNote? {
+        val sections = mutableListOf<AuthorNoteSection>()
+        val plainTextBuilder = StringBuilder()
+        var authorName: String? = null
+        var noteType = "Author's Note"
+
+        // Try to extract author name from title elements (RoyalRoad style)
+        container.selectFirst(".portlet-title .caption-subject, .author-note-title, .note-title")?.let { titleElement ->
+            val titleText = titleElement.text()
+            authorName = AuthorNoteDetector.extractAuthorName(titleText)
+            noteType = AuthorNoteDetector.extractNoteTypeLabel(titleText)
+        }
+
+        // Find the content element(s)
+        val contentElements = container.select(".portlet-body, .author-note-content, .author-note")
+            .ifEmpty { listOf(container) }
+
+        for (contentElement in contentElements) {
+            parseAuthorNoteContent(contentElement, sections, plainTextBuilder)
+        }
+
+        if (sections.isEmpty()) {
+            return null
+        }
+
+        return ParsedContent.AuthorNote(
+            sections = sections,
+            plainText = plainTextBuilder.toString().trim(),
+            position = AuthorNotePosition.INLINE,
+            noteType = noteType,
+            authorName = authorName
+        )
+    }
+
+    /**
+     * Recursively parse content inside an author note, collecting text and images
+     */
+    private fun parseAuthorNoteContent(
+        element: Element,
+        sections: MutableList<AuthorNoteSection>,
+        plainTextBuilder: StringBuilder
+    ) {
+        // Process all child nodes
+        for (node in element.childNodes()) {
+            when (node) {
+                is TextNode -> {
+                    val text = node.wholeText.trim()
+                    if (text.isNotBlank()) {
+                        // Add to current text section or create new one
+                        addTextToSections(text, sections, plainTextBuilder)
+                    }
+                }
+
+                is Element -> {
+                    val tagName = node.tagName().lowercase()
+
+                    when {
+                        // Handle images inside author notes
+                        tagName == "img" -> {
+                            val src = node.attr("src")
+                            if (src.isNotBlank()) {
+                                val alt = node.attr("alt").takeIf { it.isNotBlank() }
+                                sections.add(AuthorNoteSection.ImageSection(src, alt))
+                            }
+                        }
+
+                        // Handle paragraphs and divs - process their content
+                        tagName in setOf("p", "div", "span", "a", "strong", "b", "em", "i", "u") -> {
+                            parseAuthorNoteContent(node, sections, plainTextBuilder)
+                            // Add paragraph break after block elements
+                            if (tagName == "p" || tagName == "div") {
+                                if (plainTextBuilder.isNotEmpty() && !plainTextBuilder.endsWith("\n\n")) {
+                                    plainTextBuilder.append("\n\n")
+                                }
+                            }
+                        }
+
+                        // Handle line breaks
+                        tagName == "br" -> {
+                            plainTextBuilder.append("\n")
+                        }
+
+                        // Handle tables and other complex elements - extract text
+                        tagName in setOf("table", "tbody", "tr", "td", "th") -> {
+                            parseAuthorNoteContent(node, sections, plainTextBuilder)
+                        }
+
+                        // Skip separator elements
+                        tagName == "hr" || node.hasClass("author-note-separator") -> {
+                            // Skip
+                        }
+
+                        else -> {
+                            // For other elements, try to get text content
+                            parseAuthorNoteContent(node, sections, plainTextBuilder)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Add text to sections, merging with the last text section if possible
+     */
+    private fun addTextToSections(
+        text: String,
+        sections: MutableList<AuthorNoteSection>,
+        plainTextBuilder: StringBuilder
+    ) {
+        val lastSection = sections.lastOrNull()
+
+        if (lastSection is AuthorNoteSection.TextSection) {
+            // Merge with existing text section
+            val combinedText = lastSection.plainText + " " + text
+            val combinedAnnotated = buildAnnotatedString {
+                append(lastSection.annotatedString)
+                append(" ")
+                append(text)
+            }
+            sections[sections.lastIndex] = AuthorNoteSection.TextSection(combinedAnnotated, combinedText)
+        } else {
+            // Create new text section
+            sections.add(AuthorNoteSection.TextSection(AnnotatedString(text), text))
+        }
+
+        if (plainTextBuilder.isNotEmpty() && !plainTextBuilder.endsWith(" ") && !plainTextBuilder.endsWith("\n")) {
+            plainTextBuilder.append(" ")
+        }
+        plainTextBuilder.append(text)
+    }
+
     private fun processInlineNode(
         element: Element,
         style: StyleState,
@@ -378,8 +572,17 @@ object RichTextParser {
 
                 is Element -> {
                     val tagName = node.tagName().lowercase()
+                    val classAttr = node.attr("class")
 
                     when {
+                        AuthorNoteDetector.isAuthorNoteContainer(classAttr) -> {
+                            flushText()
+                            val authorNote = parseAuthorNoteContainer(node)
+                            if (authorNote != null) {
+                                results.add(authorNote)
+                            }
+                        }
+
                         tagName == "img" -> {
                             flushText()
                             val src = node.attr("src")
@@ -419,9 +622,6 @@ object RichTextParser {
         }
     }
 
-    /**
-     * Update the style state based on the current element's tag
-     */
     private fun updateStyleForTag(current: StyleState, element: Element): StyleState {
         val tagName = element.tagName().lowercase()
 
@@ -445,14 +645,12 @@ object RichTextParser {
             }
         }
 
-        // Check for CSS classes that might indicate special styling
         val classAttr = element.attr("class").lowercase()
         if (classAttr.contains("system") || classAttr.contains("status") ||
             classAttr.contains("notification") || classAttr.contains("alert")) {
             style = style.copy(isCode = true)
         }
 
-        // Check inline styles
         val styleAttr = element.attr("style")
         if (styleAttr.isNotBlank()) {
             style = parseInlineStyle(style, styleAttr)
@@ -461,12 +659,8 @@ object RichTextParser {
         return style
     }
 
-    /**
-     * Parse CSS inline styles
-     */
     private fun parseInlineStyle(current: StyleState, styleAttr: String): StyleState {
         var style = current
-
         val declarations = styleAttr.split(";").map { it.trim() }
 
         for (declaration in declarations) {
@@ -488,17 +682,11 @@ object RichTextParser {
                     }
                 }
                 "text-decoration" -> {
-                    if ("underline" in value) {
-                        style = style.copy(isUnderline = true)
-                    }
-                    if ("line-through" in value) {
-                        style = style.copy(isStrikethrough = true)
-                    }
+                    if ("underline" in value) style = style.copy(isUnderline = true)
+                    if ("line-through" in value) style = style.copy(isStrikethrough = true)
                 }
                 "font-variant" -> {
-                    if ("small-caps" in value) {
-                        style = style.copy(isSmallCaps = true)
-                    }
+                    if ("small-caps" in value) style = style.copy(isSmallCaps = true)
                 }
                 "font-family" -> {
                     if ("monospace" in value || "courier" in value || "consolas" in value) {
@@ -506,14 +694,10 @@ object RichTextParser {
                     }
                 }
                 "color" -> {
-                    parseColor(value)?.let { color ->
-                        style = style.copy(textColor = color)
-                    }
+                    parseColor(value)?.let { color -> style = style.copy(textColor = color) }
                 }
                 "background-color", "background" -> {
-                    parseColor(value)?.let { color ->
-                        style = style.copy(backgroundColor = color)
-                    }
+                    parseColor(value)?.let { color -> style = style.copy(backgroundColor = color) }
                 }
             }
         }
@@ -521,9 +705,6 @@ object RichTextParser {
         return style
     }
 
-    /**
-     * Parse a CSS color value
-     */
     private fun parseColor(value: String): Color? {
         return try {
             when {
@@ -536,9 +717,7 @@ object RichTextParser {
                             val b = hex[2].toString().repeat(2).toInt(16)
                             Color(r, g, b)
                         }
-                        6, 8 -> {
-                            Color(android.graphics.Color.parseColor(value))
-                        }
+                        6, 8 -> Color(android.graphics.Color.parseColor(value))
                         else -> null
                     }
                 }
@@ -556,9 +735,6 @@ object RichTextParser {
         }
     }
 
-    /**
-     * Build a SpanStyle from the current style state
-     */
     private fun buildSpanStyle(state: StyleState): SpanStyle {
         val decorations = mutableListOf<TextDecoration>()
         if (state.isUnderline) decorations.add(TextDecoration.Underline)
@@ -578,27 +754,31 @@ object RichTextParser {
                 state.isSubscript -> BaselineShift.Subscript
                 else -> null
             },
-            textDecoration = if (decorations.isNotEmpty()) {
-                TextDecoration.combine(decorations)
-            } else null,
+            textDecoration = if (decorations.isNotEmpty()) TextDecoration.combine(decorations) else null,
             color = state.textColor ?: Color.Unspecified,
             background = state.backgroundColor ?: Color.Unspecified,
             fontFeatureSettings = if (state.isSmallCaps) "smcp" else null
         )
     }
 
-    /**
-     * Simple helper to parse a single paragraph of HTML into an AnnotatedString.
-     */
     fun parseToAnnotatedString(html: String): AnnotatedString {
         if (html.isBlank()) return AnnotatedString("")
 
         val results = parseHtml(html)
 
         return buildAnnotatedString {
-            results.filterIsInstance<ParsedContent.Text>().forEachIndexed { index, text ->
-                if (index > 0) append("\n\n")
-                append(text.annotatedString)
+            results.forEachIndexed { index, content ->
+                when (content) {
+                    is ParsedContent.Text -> {
+                        if (index > 0) append("\n\n")
+                        append(content.annotatedString)
+                    }
+                    is ParsedContent.AuthorNote -> {
+                        if (index > 0) append("\n\n")
+                        append(content.plainText)
+                    }
+                    else -> { }
+                }
             }
         }
     }

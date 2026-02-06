@@ -103,6 +103,23 @@ class ProgressManager(
                 )
             }
 
+            is ReaderDisplayItem.AuthorNote -> {
+                val chapter = loadedChapters[visibleItem.chapterIndex]
+                val totalItems = chapter?.contentCount ?: 1
+                val progress = if (totalItems > 0) {
+                    (visibleItem.orderInChapter.toFloat() / totalItems).coerceIn(0f, 1f)
+                } else 0f
+
+                ReadingPosition(
+                    chapterUrl = chapter?.chapter?.url ?: "",
+                    chapterIndex = visibleItem.chapterIndex,
+                    segmentId = "authornote_${visibleItem.authorNote.id}",
+                    segmentIndexInChapter = visibleItem.orderInChapter,
+                    approximateProgress = progress,
+                    offsetPixels = firstVisibleItemOffset
+                )
+            }
+
             is ReaderDisplayItem.ChapterHeader -> {
                 val chapter = loadedChapters[visibleItem.chapterIndex]
                 ReadingPosition.fromHeader(
@@ -219,6 +236,24 @@ class ProgressManager(
                         confidence = 1f
                     )
                 }
+            }
+        }
+
+        // Handle author note segment IDs
+        if (position.segmentId.startsWith("authornote_")) {
+            val noteId = position.segmentId.removePrefix("authornote_")
+            val index = displayItems.indexOfFirst { item ->
+                item is ReaderDisplayItem.AuthorNote &&
+                        item.chapterIndex == position.chapterIndex &&
+                        item.authorNote.id == noteId
+            }
+            if (index >= 0) {
+                return ResolvedScrollPosition(
+                    displayIndex = index,
+                    offsetPixels = position.offsetPixels,
+                    resolutionMethod = ResolutionMethod.EXACT_SEGMENT_ID,
+                    confidence = 1f
+                )
             }
         }
 

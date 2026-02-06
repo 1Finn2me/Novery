@@ -51,7 +51,6 @@ object ReaderPaginator {
     ): Dp {
         return when (item) {
             is ReaderDisplayItem.ChapterHeader -> {
-                // Chapter headers are typically ~150-200dp
                 160.dp
             }
 
@@ -59,11 +58,9 @@ object ReaderPaginator {
                 val text = item.segment.text
                 val charCount = text.length
 
-                // Estimate characters per line based on viewport width and font size
                 val charsPerLine = estimateCharsPerLine(config.viewportWidth, config.fontSize)
                 val lineCount = (charCount / charsPerLine).coerceAtLeast(1)
 
-                // Calculate height: lines * lineHeight + paragraph spacing
                 val lineHeightDp = (config.fontSize * config.lineHeight).dp
                 val paragraphSpacing = (config.fontSize * config.paragraphSpacing * 0.5f).dp
 
@@ -71,23 +68,36 @@ object ReaderPaginator {
             }
 
             is ReaderDisplayItem.Image -> {
-                // Images have variable height but we estimate based on typical display
-                // The actual height is constrained between 100dp and 400dp in ChapterImageItem
                 250.dp
             }
 
             is ReaderDisplayItem.HorizontalRule -> {
-                // Horizontal rules have padding of 24dp top and bottom
                 50.dp
             }
 
             is ReaderDisplayItem.SceneBreak -> {
-                // Scene breaks have padding of 32dp top and bottom
                 80.dp
             }
 
+            is ReaderDisplayItem.AuthorNote -> {
+                // Author notes have header + content, estimate based on text length
+                val text = item.authorNote.plainText
+                val charCount = text.length
+                val charsPerLine = estimateCharsPerLine(config.viewportWidth, config.fontSize - 1)
+                val lineCount = (charCount / charsPerLine).coerceAtLeast(1)
+
+                // Header height (~40dp) + content lines + padding
+                val headerHeight = 44.dp
+                val lineHeightDp = ((config.fontSize - 1) * config.lineHeight).dp
+                val padding = 24.dp // top + bottom padding
+
+                // For collapsed state, show ~2 lines preview
+                // For expanded state, show full content
+                // Estimate average as collapsed + some buffer
+                (headerHeight + (lineHeightDp * 2.coerceAtMost(lineCount)) + padding)
+            }
+
             is ReaderDisplayItem.ChapterDivider -> {
-                // Chapter dividers are typically ~250-300dp
                 280.dp
             }
 
@@ -100,9 +110,8 @@ object ReaderPaginator {
      * Estimates characters per line based on viewport width and font size.
      */
     private fun estimateCharsPerLine(viewportWidth: Dp, fontSize: Int): Int {
-        // Rough estimate: average character width is ~0.5 * fontSize
         val avgCharWidth = fontSize * 0.5f
-        val usableWidth = viewportWidth.value - 48 // Account for margins
+        val usableWidth = viewportWidth.value - 48
         return (usableWidth / avgCharWidth).toInt().coerceAtLeast(20)
     }
 
@@ -121,27 +130,24 @@ object ReaderPaginator {
         var currentChapterIndex = -1
         var isChapterStart = false
 
-        // Available height for content (minus top/bottom margins)
         val availableHeight = config.viewportHeight - (config.marginVertical * 2).dp - 100.dp
 
         displayItems.forEachIndexed { index, item ->
             val itemHeight = estimateItemHeight(item, config)
 
-            // Track chapter changes
             val itemChapterIndex = when (item) {
                 is ReaderDisplayItem.ChapterHeader -> item.chapterIndex
                 is ReaderDisplayItem.Segment -> item.chapterIndex
                 is ReaderDisplayItem.Image -> item.chapterIndex
                 is ReaderDisplayItem.HorizontalRule -> item.chapterIndex
                 is ReaderDisplayItem.SceneBreak -> item.chapterIndex
+                is ReaderDisplayItem.AuthorNote -> item.chapterIndex
                 is ReaderDisplayItem.ChapterDivider -> item.chapterIndex
                 is ReaderDisplayItem.LoadingIndicator -> item.chapterIndex
                 is ReaderDisplayItem.ErrorIndicator -> item.chapterIndex
             }
 
-            // Check if this starts a new chapter
             if (itemChapterIndex != currentChapterIndex) {
-                // If we have content, save current page first
                 if (currentPageItems.isNotEmpty()) {
                     pages.add(
                         ReaderPage(
@@ -159,9 +165,7 @@ object ReaderPaginator {
                 isChapterStart = true
             }
 
-            // Check if item fits on current page
             if (currentHeight + itemHeight > availableHeight && currentPageItems.isNotEmpty()) {
-                // Save current page and start new one
                 pages.add(
                     ReaderPage(
                         pageIndex = pages.size,
@@ -176,12 +180,10 @@ object ReaderPaginator {
                 isChapterStart = false
             }
 
-            // Add item to current page
             currentPageItems.add(PageItem(displayItem = item, displayIndex = index))
             currentHeight += itemHeight
         }
 
-        // Add final page
         if (currentPageItems.isNotEmpty()) {
             pages.add(
                 ReaderPage(
