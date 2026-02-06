@@ -35,7 +35,6 @@ class LibraryViewModel : ViewModel() {
     private val _uiState = MutableStateFlow(LibraryUiState())
     val uiState: StateFlow<LibraryUiState> = _uiState.asStateFlow()
 
-    // Each ViewModel has its own ActionSheetManager instance
     private val actionSheetManager = ActionSheetManager()
     val actionSheetState: StateFlow<com.emptycastle.novery.ui.screens.home.shared.ActionSheetState> = actionSheetManager.state
 
@@ -43,7 +42,6 @@ class LibraryViewModel : ViewModel() {
         initialize()
         observeNewChapterCount()
 
-        // Observe app settings so changes (like default sort/filter) apply instantly
         viewModelScope.launch {
             preferencesManager.appSettings.collect { settings ->
                 _uiState.update {
@@ -104,7 +102,7 @@ class LibraryViewModel : ViewModel() {
     }
 
     // ================================================================
-    // FILTER & SORT (unchanged)
+    // FILTER & SORT
     // ================================================================
 
     fun setFilter(filter: LibraryFilter) {
@@ -127,6 +125,7 @@ class LibraryViewModel : ViewModel() {
         val searchQuery = state.searchQuery.lowercase().trim()
         val downloadCounts = state.downloadCounts
 
+        // Search filter
         val searched = if (searchQuery.isBlank()) {
             state.items
         } else {
@@ -137,6 +136,7 @@ class LibraryViewModel : ViewModel() {
             }
         }
 
+        // Category filter
         val filtered = when (state.filter) {
             LibraryFilter.ALL -> searched
             LibraryFilter.DOWNLOADED -> searched.filter {
@@ -149,28 +149,28 @@ class LibraryViewModel : ViewModel() {
             LibraryFilter.DROPPED -> searched.filter { it.readingStatus == ReadingStatus.DROPPED }
         }
 
+        // Sort - NO new chapter priority except for NEW_CHAPTERS sort
         val sorted = when (state.sortOrder) {
-            LibrarySortOrder.LAST_READ -> filtered.sortedWith(
-                compareByDescending<LibraryItem> { it.newChapterCount > 0 }
-                    .thenByDescending { it.lastReadPosition?.timestamp ?: it.addedAt }
-            )
-            LibrarySortOrder.TITLE_ASC -> filtered.sortedWith(
-                compareByDescending<LibraryItem> { it.newChapterCount > 0 }
-                    .thenBy { it.novel.name.lowercase() }
-            )
-            LibrarySortOrder.TITLE_DESC -> filtered.sortedWith(
-                compareByDescending<LibraryItem> { it.newChapterCount > 0 }
-                    .thenByDescending { it.novel.name.lowercase() }
-            )
-            LibrarySortOrder.DATE_ADDED -> filtered.sortedWith(
-                compareByDescending<LibraryItem> { it.newChapterCount > 0 }
-                    .thenByDescending { it.addedAt }
-            )
-            LibrarySortOrder.UNREAD_COUNT -> filtered.sortedWith(
-                compareByDescending<LibraryItem> { it.newChapterCount > 0 }
-                    .thenByDescending { it.unreadChapterCount }
-            )
-            LibrarySortOrder.NEW_CHAPTERS -> filtered.sortedByDescending { it.newChapterCount }
+            LibrarySortOrder.NEW_CHAPTERS -> {
+                // Only this sort prioritizes new chapters
+                filtered.sortedByDescending { it.newChapterCount }
+            }
+            LibrarySortOrder.LAST_READ -> {
+                // Pure last read sorting - no new chapter priority
+                filtered.sortedByDescending { it.lastReadPosition?.timestamp ?: it.addedAt }
+            }
+            LibrarySortOrder.TITLE_ASC -> {
+                filtered.sortedBy { it.novel.name.lowercase() }
+            }
+            LibrarySortOrder.TITLE_DESC -> {
+                filtered.sortedByDescending { it.novel.name.lowercase() }
+            }
+            LibrarySortOrder.DATE_ADDED -> {
+                filtered.sortedByDescending { it.addedAt }
+            }
+            LibrarySortOrder.UNREAD_COUNT -> {
+                filtered.sortedByDescending { it.unreadChapterCount }
+            }
         }
 
         _uiState.update { it.copy(filteredItems = sorted) }
@@ -209,7 +209,7 @@ class LibraryViewModel : ViewModel() {
     }
 
     // ================================================================
-    // DOWNLOAD OPERATIONS (unchanged from your working version)
+    // DOWNLOAD OPERATIONS
     // ================================================================
 
     fun downloadAllNewChapters(context: Context) {
@@ -419,7 +419,6 @@ class LibraryViewModel : ViewModel() {
             val currentFilter = _uiState.value.filter
             val currentDownloadCounts = _uiState.value.downloadCounts
 
-            // Determine the display text for the filter being refreshed
             val filterDisplayName = when (currentFilter) {
                 LibraryFilter.ALL -> "all novels"
                 LibraryFilter.DOWNLOADED -> "downloaded novels"
@@ -474,7 +473,6 @@ class LibraryViewModel : ViewModel() {
                 novelsWithNewChapters = result.updatedCount
                 totalNewChapters = result.totalNewChapters
 
-                // Add novels with new chapters to notification list
                 if (totalNewChapters > 0) {
                     val novelsWithNew = _uiState.value.items.filter { it.hasNewChapters }
                     novelsWithNew.forEach { item ->
@@ -487,7 +485,6 @@ class LibraryViewModel : ViewModel() {
 
                 val counts = offlineRepository.getAllDownloadCounts()
 
-                // Build completion message
                 val completionMessage = buildString {
                     append("Complete!")
                     if (result.skippedCount > 0) {
@@ -544,7 +541,7 @@ class LibraryViewModel : ViewModel() {
     }
 
     // ================================================================
-    // ACTION SHEET - Uses instance, not singleton
+    // ACTION SHEET
     // ================================================================
 
     fun showActionSheet(item: LibraryItem) {

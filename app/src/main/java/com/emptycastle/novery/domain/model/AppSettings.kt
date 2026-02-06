@@ -74,6 +74,30 @@ enum class ThemeMode {
 }
 
 /**
+ * Rating format options for displaying novel ratings
+ */
+enum class RatingFormat {
+    TEN_POINT,
+    FIVE_POINT,
+    PERCENTAGE,
+    ORIGINAL;
+
+    fun displayName(): String = when (this) {
+        TEN_POINT -> "10-point scale (8.5/10)"
+        FIVE_POINT -> "5-point scale (4.25/5)"
+        PERCENTAGE -> "Percentage (85%)"
+        ORIGINAL -> "Original (per provider)"
+    }
+
+    fun shortDisplayName(): String = when (this) {
+        TEN_POINT -> "X/10"
+        FIVE_POINT -> "X/5"
+        PERCENTAGE -> "X%"
+        ORIGINAL -> "Original"
+    }
+}
+
+/**
  * Grid column configuration
  */
 sealed class GridColumns {
@@ -114,6 +138,9 @@ data class AppSettings(
     val libraryDisplayMode: DisplayMode = DisplayMode.GRID,
     val browseDisplayMode: DisplayMode = DisplayMode.GRID,
     val searchDisplayMode: DisplayMode = DisplayMode.GRID,
+
+    // Rating display
+    val ratingFormat: RatingFormat = RatingFormat.TEN_POINT,
 
     // Library
     val defaultLibrarySort: LibrarySortOrder = LibrarySortOrder.LAST_READ,

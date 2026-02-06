@@ -483,7 +483,8 @@ private fun DetailsContent(
                 downloadedCount = uiState.downloadedCount,
                 rating = details.rating,
                 peopleVoted = details.peopleVoted,
-                views = details.views
+                views = details.views,
+                providerName = providerName
             )
         }
 

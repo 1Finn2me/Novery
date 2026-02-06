@@ -72,6 +72,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -96,8 +97,11 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
+import com.emptycastle.novery.data.repository.RepositoryProvider
 import com.emptycastle.novery.domain.model.Novel
+import com.emptycastle.novery.domain.model.RatingFormat
 import com.emptycastle.novery.domain.model.ReadingStatus
+import com.emptycastle.novery.util.RatingUtils
 import kotlinx.coroutines.launch
 
 // ================================================================
@@ -144,8 +148,18 @@ data class NovelActionSheetData(
     val readCount: Int? = null,
     val downloadedCount: Int? = null
 ) {
-    val normalizedRating: Float? get() = rating?.let { it / 100f }
-    val formattedRating: String? get() = normalizedRating?.let { String.format("%.1f", it) }
+    /**
+     * Get the effective provider name for rating formatting
+     */
+    val effectiveProviderName: String?
+        get() = providerName ?: novel.apiName
+
+    /**
+     * Format the rating using the specified format
+     */
+    fun getFormattedRating(format: RatingFormat): String? {
+        return rating?.let { RatingUtils.format(it, format, effectiveProviderName) }
+    }
 }
 
 // ================================================================
@@ -327,6 +341,11 @@ private fun CompactHeader(
     data: NovelActionSheetData,
     onCoverClick: () -> Unit
 ) {
+    // Get rating format from preferences - use RepositoryProvider for consistency
+    val preferencesManager = remember { RepositoryProvider.getPreferencesManager() }
+    val appSettings by preferencesManager.appSettings.collectAsState()
+    val ratingFormat = appSettings.ratingFormat
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -463,6 +482,8 @@ private fun CompactHeader(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 if (data.rating != null && data.rating > 0) {
+                    val formattedRating = data.getFormattedRating(ratingFormat)
+
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(3.dp),
                         verticalAlignment = Alignment.CenterVertically
@@ -474,7 +495,7 @@ private fun CompactHeader(
                             tint = ActionSheetColors.Star
                         )
                         Text(
-                            text = data.formattedRating ?: "",
+                            text = formattedRating ?: "",
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.Bold,
                             color = ActionSheetColors.Star

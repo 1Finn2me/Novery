@@ -294,7 +294,6 @@ fun LibraryHeader(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // Search Bar (takes remaining space)
         LibrarySearchBarCompact(
             query = query,
             onQueryChange = onQueryChange,
@@ -303,7 +302,6 @@ fun LibraryHeader(
             modifier = Modifier.weight(1f)
         )
 
-        // Notification Button with Badge
         NotificationButton(
             count = notificationCount,
             onClick = {
@@ -372,7 +370,6 @@ private fun LibrarySearchBarCompact(
                 }
             )
 
-            // Result count indicator
             AnimatedVisibility(
                 visible = hasQuery,
                 enter = fadeIn() + scaleIn(),
@@ -571,7 +568,6 @@ private fun RefreshProgressCard(
                     }
                 }
 
-                // Progress counter
                 Surface(
                     shape = RoundedCornerShape(10.dp),
                     color = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
@@ -606,7 +602,6 @@ private fun RefreshProgressCard(
                 }
             }
 
-            // Progress bar
             LinearProgressIndicator(
                 progress = { animatedProgress },
                 modifier = Modifier
@@ -618,7 +613,6 @@ private fun RefreshProgressCard(
                 strokeCap = StrokeCap.Round
             )
 
-            // New chapters found indicator
             AnimatedVisibility(
                 visible = progress.newChaptersFound > 0,
                 enter = expandVertically() + fadeIn(),
@@ -673,8 +667,6 @@ private fun LibraryContent(
     val dimensions = NoveryTheme.dimensions
     val showRefreshProgress = uiState.refreshProgress != null
     val novelsWithNewChapters = uiState.items.count { it.hasNewChapters }
-
-    // Use display mode from settings
     val displayMode = appSettings.libraryDisplayMode
 
     when (displayMode) {
@@ -691,7 +683,6 @@ private fun LibraryContent(
                 horizontalArrangement = Arrangement.spacedBy(dimensions.cardSpacing),
                 verticalArrangement = Arrangement.spacedBy(dimensions.cardSpacing)
             ) {
-                // Header
                 item(span = { GridItemSpan(maxLineSpan) }, key = "header") {
                     LibraryHeader(
                         query = uiState.searchQuery,
@@ -704,7 +695,6 @@ private fun LibraryContent(
                     )
                 }
 
-                // Refresh progress
                 if (showRefreshProgress) {
                     item(span = { GridItemSpan(maxLineSpan) }, key = "refresh_progress") {
                         uiState.refreshProgress?.let { progress ->
@@ -716,12 +706,10 @@ private fun LibraryContent(
                     }
                 }
 
-                // Spacer
                 item(span = { GridItemSpan(maxLineSpan) }, key = "spacer") {
                     Spacer(modifier = Modifier.height(4.dp))
                 }
 
-                // Novel cards
                 items(uiState.filteredItems, key = { it.novel.url }) { item ->
                     NovelCard(
                         novel = item.novel,
@@ -746,7 +734,6 @@ private fun LibraryContent(
                 ),
                 verticalArrangement = Arrangement.spacedBy(dimensions.cardSpacing)
             ) {
-                // Header
                 item(key = "header") {
                     LibraryHeader(
                         query = uiState.searchQuery,
@@ -759,7 +746,6 @@ private fun LibraryContent(
                     )
                 }
 
-                // Refresh progress
                 if (showRefreshProgress) {
                     item(key = "refresh_progress") {
                         uiState.refreshProgress?.let { progress ->
@@ -771,12 +757,10 @@ private fun LibraryContent(
                     }
                 }
 
-                // Spacer
                 item(key = "spacer") {
                     Spacer(modifier = Modifier.height(4.dp))
                 }
 
-                // Novel list items
                 items(uiState.filteredItems, key = { it.novel.url }) { item ->
                     NovelListItem(
                         novel = item.novel,
@@ -897,19 +881,19 @@ private fun LibraryEmptyState(
                 }
 
                 filter != LibraryFilter.ALL && totalItems > 0 -> {
-                    val (icon, color, message, hint) = getFilterEmptyContent(filter)
+                    val content = getFilterEmptyContent(filter)
 
                     Surface(
                         shape = CircleShape,
-                        color = color.copy(alpha = 0.12f),
+                        color = content.color.copy(alpha = 0.12f),
                         modifier = Modifier.size(88.dp)
                     ) {
                         Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
                             Icon(
-                                imageVector = icon,
+                                imageVector = content.icon,
                                 contentDescription = null,
                                 modifier = Modifier.size(44.dp),
-                                tint = color
+                                tint = content.color
                             )
                         }
                     }
@@ -919,13 +903,13 @@ private fun LibraryEmptyState(
                         verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         Text(
-                            text = message,
+                            text = content.message,
                             style = MaterialTheme.typography.headlineSmall,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onSurface
                         )
                         Text(
-                            text = hint,
+                            text = content.hint,
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             textAlign = TextAlign.Center
@@ -1059,9 +1043,9 @@ private fun getFilterEmptyContent(filter: LibraryFilter): FilterEmptyContent {
 @Composable
 private fun LibraryLoadingSkeleton(
     gridColumns: Int,
-    displayMode: DisplayMode,
-    density: UiDensity,
     statusBarPadding: PaddingValues,
+    density: UiDensity,
+    displayMode: DisplayMode,
     modifier: Modifier = Modifier
 ) {
     val dimensions = NoveryTheme.dimensions
@@ -1081,7 +1065,6 @@ private fun LibraryLoadingSkeleton(
                 verticalArrangement = Arrangement.spacedBy(dimensions.cardSpacing),
                 userScrollEnabled = false
             ) {
-                // Header skeleton
                 item(span = { GridItemSpan(maxLineSpan) }) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -1125,7 +1108,6 @@ private fun LibraryLoadingSkeleton(
                 verticalArrangement = Arrangement.spacedBy(dimensions.cardSpacing),
                 userScrollEnabled = false
             ) {
-                // Header skeleton
                 item {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -1203,20 +1185,14 @@ private fun LibraryFilterChip(
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
-
     val filterColor = getFilterColor(filter)
 
-    // Content color changes when selected
     val contentColor by animateColorAsState(
-        targetValue = when {
-            selected -> filterColor
-            else -> MaterialTheme.colorScheme.onSurfaceVariant
-        },
+        targetValue = if (selected) filterColor else MaterialTheme.colorScheme.onSurfaceVariant,
         animationSpec = tween(250),
         label = "chip_content"
     )
 
-    // Border animates from transparent to filter color
     val borderColor by animateColorAsState(
         targetValue = if (selected) filterColor else Color.Transparent,
         animationSpec = tween(250, easing = EaseOutCubic),
@@ -1239,47 +1215,41 @@ private fun LibraryFilterChip(
             scaleX = scale
             scaleY = scale
         },
-        shape = RoundedCornerShape(25.dp), // Increased from 22.dp
-        color = MaterialTheme.colorScheme.surfaceContainerHigh, // Always gray background
+        shape = RoundedCornerShape(25.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
         contentColor = contentColor,
         border = BorderStroke(2.dp, borderColor)
     ) {
         Row(
-            modifier = Modifier.padding(
-                horizontal = 16.dp, // Increased from 12-14.dp
-                vertical = 10.dp    // Increased from 8.dp
-            ),
-            horizontalArrangement = Arrangement.spacedBy(7.dp), // Increased from 6.dp
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+            horizontalArrangement = Arrangement.spacedBy(7.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Icon
             val icon = getFilterIcon(filter)
             if (icon != null) {
                 Icon(
                     imageVector = icon,
                     contentDescription = null,
-                    modifier = Modifier.size(20.dp), // Increased from 16-18.dp
+                    modifier = Modifier.size(20.dp),
                     tint = contentColor
                 )
             }
 
-            // Label
             Text(
                 text = filter.displayName(),
-                style = MaterialTheme.typography.labelLarge, // Changed from labelMedium
+                style = MaterialTheme.typography.labelLarge,
                 fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
                 color = contentColor,
                 maxLines = 1
             )
 
-            // Count badge
             AnimatedVisibility(
                 visible = showCount && count > 0 && selected,
                 enter = fadeIn(tween(200)) + scaleIn(initialScale = 0.8f, animationSpec = tween(200)),
                 exit = fadeOut(tween(150)) + scaleOut(targetScale = 0.8f, animationSpec = tween(150))
             ) {
                 Surface(
-                    shape = RoundedCornerShape(12.dp), // Increased from 10.dp
+                    shape = RoundedCornerShape(12.dp),
                     color = filterColor.copy(alpha = 0.2f)
                 ) {
                     Text(
@@ -1287,15 +1257,14 @@ private fun LibraryFilterChip(
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Bold,
                         color = filterColor,
-                        fontSize = 11.sp, // Increased from 10.sp
-                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp) // Increased from 6.dp, 2.dp
+                        fontSize = 11.sp,
+                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
                     )
                 }
             }
         }
     }
 }
-
 
 @Composable
 private fun getFilterColor(filter: LibraryFilter): Color {

@@ -12,6 +12,7 @@ import com.emptycastle.novery.domain.model.LibrarySortOrder
 import com.emptycastle.novery.domain.model.MaxWidth
 import com.emptycastle.novery.domain.model.PageAnimation
 import com.emptycastle.novery.domain.model.ProgressStyle
+import com.emptycastle.novery.domain.model.RatingFormat
 import com.emptycastle.novery.domain.model.ReaderSettings
 import com.emptycastle.novery.domain.model.ReaderTheme
 import com.emptycastle.novery.domain.model.ReadingDirection
@@ -319,7 +320,6 @@ class PreferencesManager(context: Context) {
             }.toSet()
         }
 
-        // Load provider order and disabled set (defaults to registered providers)
         val providerOrderString = prefs.getString(KEY_PROVIDER_ORDER, null)
         val providerOrder = if (providerOrderString.isNullOrBlank()) {
             MainProvider.getProviders().map { it.name }
@@ -348,7 +348,6 @@ class PreferencesManager(context: Context) {
                 prefs.getString(KEY_DEFAULT_LIBRARY_SORT, LibrarySortOrder.LAST_READ.name)
                     ?: LibrarySortOrder.LAST_READ.name
             ),
-            // Display modes
             libraryDisplayMode = DisplayMode.valueOf(
                 prefs.getString(KEY_LIBRARY_DISPLAY_MODE, DisplayMode.GRID.name)
                     ?: DisplayMode.GRID.name
@@ -361,7 +360,15 @@ class PreferencesManager(context: Context) {
                 prefs.getString(KEY_SEARCH_DISPLAY_MODE, DisplayMode.GRID.name)
                     ?: DisplayMode.GRID.name
             ),
-
+            // Rating format
+            ratingFormat = try {
+                RatingFormat.valueOf(
+                    prefs.getString(KEY_RATING_FORMAT, RatingFormat.TEN_POINT.name)
+                        ?: RatingFormat.TEN_POINT.name
+                )
+            } catch (e: Exception) {
+                RatingFormat.TEN_POINT
+            },
             defaultLibraryFilter = LibraryFilter.valueOf(
                 prefs.getString(KEY_DEFAULT_LIBRARY_FILTER, LibraryFilter.DOWNLOADED.name)
                     ?: LibraryFilter.DOWNLOADED.name
@@ -399,6 +406,8 @@ class PreferencesManager(context: Context) {
                 KEY_AUTO_DOWNLOAD_STATUSES,
                 settings.autoDownloadForStatuses.joinToString(",") { it.name }
             )
+            // Rating format
+            putString(KEY_RATING_FORMAT, settings.ratingFormat.name)
             // Providers
             putString(KEY_PROVIDER_ORDER, settings.providerOrder.joinToString(","))
             putString(KEY_DISABLED_PROVIDERS, settings.disabledProviders.joinToString(","))
@@ -409,6 +418,10 @@ class PreferencesManager(context: Context) {
             apply()
         }
         _appSettings.value = settings
+    }
+
+    fun updateRatingFormat(format: RatingFormat) {
+        updateAppSettings(_appSettings.value.copy(ratingFormat = format))
     }
 
     // Convenience methods for app settings
@@ -1582,6 +1595,7 @@ class PreferencesManager(context: Context) {
         private const val KEY_SEARCH_RESULTS_PER_PROVIDER = "search_results_per_provider"
         private const val KEY_PROVIDER_ORDER = "provider_order"
         private const val KEY_DISABLED_PROVIDERS = "disabled_providers"
+        private const val KEY_RATING_FORMAT = "rating_format"
 
         // =====================================================================
         // NOTIFICATIONS

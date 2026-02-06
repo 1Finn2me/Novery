@@ -1,5 +1,8 @@
 package com.emptycastle.novery.util
 
+import com.emptycastle.novery.domain.model.RatingFormat
+import com.emptycastle.novery.util.RatingUtils.format
+
 /**
  * Utility object for handling ratings across different providers.
  * All ratings are normalized to a 0-1000 scale internally (for precision).
@@ -83,6 +86,46 @@ object RatingUtils {
     }
 
     /**
+     * Format rating based on user's preferred RatingFormat
+     *
+     * @param normalized The normalized rating (0-1000)
+     * @param format The user's preferred format
+     * @param providerName Optional provider name for ORIGINAL format
+     * @return Formatted string
+     */
+    fun format(
+        normalized: Int?,
+        format: RatingFormat,
+        providerName: String? = null
+    ): String {
+        if (normalized == null || normalized <= 0) return ""
+
+        val style = when (format) {
+            RatingFormat.TEN_POINT -> RatingDisplayStyle.POINTS_10_WITH_MAX
+            RatingFormat.FIVE_POINT -> RatingDisplayStyle.STARS_WITH_MAX
+            RatingFormat.PERCENTAGE -> RatingDisplayStyle.PERCENTAGE
+            RatingFormat.ORIGINAL -> ProviderRatingFormats.getNativeStyle(providerName)
+        }
+
+        return format(normalized, style)
+    }
+
+    /**
+     * Get the display style for a given RatingFormat
+     */
+    fun getDisplayStyle(
+        format: RatingFormat,
+        providerName: String? = null
+    ): RatingDisplayStyle {
+        return when (format) {
+            RatingFormat.TEN_POINT -> RatingDisplayStyle.POINTS_10_WITH_MAX
+            RatingFormat.FIVE_POINT -> RatingDisplayStyle.STARS_WITH_MAX
+            RatingFormat.PERCENTAGE -> RatingDisplayStyle.PERCENTAGE
+            RatingFormat.ORIGINAL -> ProviderRatingFormats.getNativeStyle(providerName)
+        }
+    }
+
+    /**
      * Get a color tint based on rating
      */
     fun getRatingColor(normalized: Int?): RatingColor {
@@ -113,4 +156,55 @@ enum class RatingColor {
     AVERAGE,
     GOOD,
     EXCELLENT
+}
+
+/**
+ * Mapping of providers to their native rating formats.
+ * Used when user selects "Original" rating format option.
+ */
+object ProviderRatingFormats {
+
+    private val providerFormats = mapOf(
+        "royal road" to RatingDisplayStyle.STARS_WITH_MAX,
+        "royalroad" to RatingDisplayStyle.STARS_WITH_MAX,
+        "novelbin" to RatingDisplayStyle.POINTS_10_WITH_MAX,
+        "novelfire" to RatingDisplayStyle.POINTS_10_WITH_MAX,
+        "webnovel" to RatingDisplayStyle.POINTS_10_WITH_MAX,
+        "libread" to RatingDisplayStyle.POINTS_10_WITH_MAX,
+        "novelsonline" to RatingDisplayStyle.STARS_WITH_MAX,
+        "novels online" to RatingDisplayStyle.STARS_WITH_MAX,
+        "freewebnovel" to RatingDisplayStyle.STARS_WITH_MAX,
+        "lightnovelworld" to RatingDisplayStyle.POINTS_10_WITH_MAX,
+        "readlightnovel" to RatingDisplayStyle.POINTS_10_WITH_MAX,
+        "boxnovel" to RatingDisplayStyle.POINTS_10_WITH_MAX,
+        "wuxiaworld" to RatingDisplayStyle.POINTS_10_WITH_MAX
+    )
+
+    /**
+     * Get the native rating style for a provider
+     *
+     * @param providerName The name of the provider
+     * @return The native RatingDisplayStyle, defaults to POINTS_10_WITH_MAX
+     */
+    fun getNativeStyle(providerName: String?): RatingDisplayStyle {
+        if (providerName == null) return RatingDisplayStyle.POINTS_10_WITH_MAX
+        return providerFormats[providerName.lowercase()]
+            ?: RatingDisplayStyle.POINTS_10_WITH_MAX
+    }
+
+    /**
+     * Check if a provider uses 5-star ratings natively
+     */
+    fun uses5StarRating(providerName: String?): Boolean {
+        val style = getNativeStyle(providerName)
+        return style == RatingDisplayStyle.STARS || style == RatingDisplayStyle.STARS_WITH_MAX
+    }
+
+    /**
+     * Check if a provider uses 10-point ratings natively
+     */
+    fun uses10PointRating(providerName: String?): Boolean {
+        val style = getNativeStyle(providerName)
+        return style == RatingDisplayStyle.POINTS_10 || style == RatingDisplayStyle.POINTS_10_WITH_MAX
+    }
 }

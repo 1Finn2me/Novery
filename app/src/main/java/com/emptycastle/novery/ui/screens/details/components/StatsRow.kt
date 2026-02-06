@@ -26,13 +26,18 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.emptycastle.novery.data.repository.RepositoryProvider
 import com.emptycastle.novery.ui.screens.details.util.DetailsColors
+import com.emptycastle.novery.util.RatingUtils
 import java.text.DecimalFormat
 
 @Composable
@@ -42,8 +47,14 @@ fun StatsRow(
     downloadedCount: Int,
     rating: Int?,
     peopleVoted: Int?,
-    views: Int? = null
+    views: Int? = null,
+    providerName: String? = null
 ) {
+    // Get rating format from preferences
+    val preferencesManager = remember { RepositoryProvider.getPreferencesManager() }
+    val appSettings by preferencesManager.appSettings.collectAsState()
+    val ratingFormat = appSettings.ratingFormat
+
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -84,7 +95,7 @@ fun StatsRow(
                 color = if (downloadedCount > 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
             )
 
-            // Show views if available, otherwise show rating
+            // Show views if available
             if (views != null) {
                 StatDivider()
 
@@ -99,9 +110,12 @@ fun StatsRow(
             if (rating != null) {
                 StatDivider()
 
+                // Format rating using user's preferred format
+                val formattedRating = RatingUtils.format(rating, ratingFormat, providerName)
+
                 StatItem(
                     icon = Icons.Default.Star,
-                    value = String.format("%.1f", rating / 100f),
+                    value = formattedRating,
                     label = if (peopleVoted != null) formatVoteCount(peopleVoted) else "Rating",
                     color = DetailsColors.Warning
                 )
@@ -112,7 +126,6 @@ fun StatsRow(
 
 /**
  * Format view count to human-readable format
- * Examples: 217500 -> "217.5K", 1400000 -> "1.4M"
  */
 private fun formatViewCount(count: Int): String {
     return when {

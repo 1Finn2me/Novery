@@ -1,5 +1,3 @@
-// ui/components/RatingDisplay.kt
-
 package com.emptycastle.novery.ui.components
 
 import androidx.compose.foundation.layout.Arrangement
@@ -17,11 +15,15 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.emptycastle.novery.data.repository.RepositoryProvider
 import com.emptycastle.novery.util.RatingColor
 import com.emptycastle.novery.util.RatingDisplayStyle
 import com.emptycastle.novery.util.RatingUtils
@@ -33,7 +35,7 @@ private val RatingPoor = Color(0xFFF97316)       // Orange
 private val RatingVeryPoor = Color(0xFFEF4444)   // Red
 
 /**
- * Display rating as stars
+ * Display rating as stars with optional value text
  */
 @Composable
 fun StarRating(
@@ -41,9 +43,14 @@ fun StarRating(
     modifier: Modifier = Modifier,
     maxStars: Int = 5,
     showValue: Boolean = true,
-    size: RatingSize = RatingSize.MEDIUM
+    size: RatingSize = RatingSize.MEDIUM,
+    providerName: String? = null
 ) {
     if (rating == null || rating <= 0) return
+
+    val preferencesManager = remember { RepositoryProvider.getPreferencesManager() }
+    val appSettings by preferencesManager.appSettings.collectAsState()
+    val ratingFormat = appSettings.ratingFormat
 
     val starValue = RatingUtils.to5Stars(rating)
     val fullStars = starValue.toInt()
@@ -102,7 +109,7 @@ fun StarRating(
         if (showValue) {
             Spacer(modifier = Modifier.width(4.dp))
             Text(
-                text = String.format("%.1f", starValue),
+                text = RatingUtils.format(rating, ratingFormat, providerName),
                 style = textStyle,
                 fontWeight = FontWeight.SemiBold,
                 color = color
@@ -119,12 +126,17 @@ fun CompactRating(
     rating: Int?,
     votes: Int? = null,
     modifier: Modifier = Modifier,
-    style: RatingDisplayStyle = RatingDisplayStyle.STARS
+    providerName: String? = null,
+    style: RatingDisplayStyle? = null // Optional override
 ) {
     if (rating == null || rating <= 0) return
 
+    val preferencesManager = remember { RepositoryProvider.getPreferencesManager() }
+    val appSettings by preferencesManager.appSettings.collectAsState()
+
+    val displayStyle = style ?: RatingUtils.getDisplayStyle(appSettings.ratingFormat, providerName)
     val color = getRatingDisplayColor(RatingUtils.getRatingColor(rating))
-    val formattedRating = RatingUtils.format(rating, style)
+    val formattedRating = RatingUtils.format(rating, displayStyle)
 
     Row(
         modifier = modifier,
@@ -161,12 +173,16 @@ fun CompactRating(
 @Composable
 fun RatingChip(
     rating: Int?,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    providerName: String? = null
 ) {
     if (rating == null || rating <= 0) return
 
+    val preferencesManager = remember { RepositoryProvider.getPreferencesManager() }
+    val appSettings by preferencesManager.appSettings.collectAsState()
+
     val color = getRatingDisplayColor(RatingUtils.getRatingColor(rating))
-    val starValue = RatingUtils.to5Stars(rating)
+    val formattedRating = RatingUtils.format(rating, appSettings.ratingFormat, providerName)
 
     Surface(
         modifier = modifier,
@@ -185,13 +201,46 @@ fun RatingChip(
                 tint = color
             )
             Text(
-                text = String.format("%.1f", starValue),
+                text = formattedRating,
                 style = MaterialTheme.typography.labelSmall,
                 fontWeight = FontWeight.Bold,
                 color = color
             )
         }
     }
+}
+
+/**
+ * Formatted rating text without icon
+ * Useful for inline rating display
+ */
+@Composable
+fun RatingText(
+    rating: Int?,
+    modifier: Modifier = Modifier,
+    providerName: String? = null,
+    showColor: Boolean = true
+) {
+    if (rating == null || rating <= 0) return
+
+    val preferencesManager = remember { RepositoryProvider.getPreferencesManager() }
+    val appSettings by preferencesManager.appSettings.collectAsState()
+
+    val color = if (showColor) {
+        getRatingDisplayColor(RatingUtils.getRatingColor(rating))
+    } else {
+        MaterialTheme.colorScheme.onSurface
+    }
+
+    val formattedRating = RatingUtils.format(rating, appSettings.ratingFormat, providerName)
+
+    Text(
+        text = formattedRating,
+        modifier = modifier,
+        style = MaterialTheme.typography.labelMedium,
+        fontWeight = FontWeight.SemiBold,
+        color = color
+    )
 }
 
 enum class RatingSize {
