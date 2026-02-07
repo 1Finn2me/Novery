@@ -1,18 +1,93 @@
-// com/emptycastle/novery/recommendation/SynopsisTagExtractor.kt
 package com.emptycastle.novery.recommendation
 
 import com.emptycastle.novery.recommendation.TagNormalizer.TagCategory
 
 /**
- * Extracts probable tags from novel synopsis/description.
+ * Extracts probable tags from novel synopsis/description and title.
  * Used when providers don't supply tags or to enhance sparse tag data.
  */
 object SynopsisTagExtractor {
 
     /**
-     * Keyword patterns for each tag category.
-     * Each entry is: List of keywords/phrases -> TagCategory
-     * Uses word boundary matching where appropriate.
+     * Title patterns - shorter, more specific patterns for titles
+     */
+    private val titlePatterns: List<Pair<List<String>, TagCategory>> = listOf(
+        // Cultivation/Eastern
+        listOf("cultivation", "cultivator", "immortal", "dao", "sect", "martial") to TagCategory.CULTIVATION,
+        listOf("wuxia") to TagCategory.WUXIA,
+        listOf("xianxia") to TagCategory.XIANXIA,
+        listOf("murim") to TagCategory.MURIM,
+
+        // Isekai/Reincarnation
+        listOf("isekai", "another world", "otherworld", "transported") to TagCategory.ISEKAI,
+        listOf("reincarnated", "reincarnation", "rebirth", "reborn") to TagCategory.REINCARNATION,
+        listOf("transmigrat") to TagCategory.TRANSMIGRATION,
+        listOf("regressor", "regression", "return", "second chance") to TagCategory.REGRESSION,
+        listOf("time loop", "loop") to TagCategory.TIME_LOOP,
+        listOf("summoned hero", "hero summoning") to TagCategory.SUMMONED_HERO,
+
+        // LitRPG/System
+        listOf("litrpg", "lit rpg") to TagCategory.LITRPG,
+        listOf("system", "status window", "status screen") to TagCategory.SYSTEM,
+        listOf("dungeon") to TagCategory.DUNGEON,
+        listOf("tower") to TagCategory.TOWER,
+        listOf("level", "leveling") to TagCategory.PROGRESSION,
+        listOf("vrmmo", "virtual reality", "vr") to TagCategory.VIRTUAL_REALITY,
+
+        // Romance types
+        listOf("harem") to TagCategory.HAREM,
+        listOf("reverse harem", "otome") to TagCategory.REVERSE_HAREM,
+        listOf("romance", "love") to TagCategory.ROMANCE,
+
+        // LGBTQ+
+        listOf("bl", "boys love", "yaoi", "danmei") to TagCategory.BL,
+        listOf("gl", "girls love", "yuri", "baihe") to TagCategory.GL,
+        listOf("gender bender", "genderbend") to TagCategory.GENDER_BENDER,
+
+        // Lead types
+        listOf("villainess", "villain") to TagCategory.VILLAIN_PROTAGONIST,
+        listOf("op mc", "overpowered", "strongest", "invincible") to TagCategory.OP_MC,
+        listOf("weak to strong", "zero to hero") to TagCategory.WEAK_TO_STRONG,
+
+        // Creatures
+        listOf("dragon") to TagCategory.DRAGONS,
+        listOf("vampire") to TagCategory.VAMPIRES,
+        listOf("werewolf", "wolf") to TagCategory.WEREWOLVES,
+        listOf("zombie", "undead") to TagCategory.ZOMBIES,
+        listOf("demon", "devil") to TagCategory.DEMONS,
+        listOf("god", "divine", "deity") to TagCategory.GODS,
+        listOf("slime", "skeleton", "goblin", "monster") to TagCategory.NON_HUMAN_MC,
+
+        // Themes
+        listOf("revenge", "vengeance") to TagCategory.REVENGE,
+        listOf("kingdom building", "empire") to TagCategory.KINGDOM_BUILDING,
+        listOf("apocalypse", "post-apocalyptic") to TagCategory.APOCALYPSE,
+        listOf("survival", "survive") to TagCategory.SURVIVAL,
+        listOf("academy", "school", "magic academy") to TagCategory.ACADEMY,
+
+        // Genres
+        listOf("fantasy") to TagCategory.FANTASY,
+        listOf("sci-fi", "scifi", "science fiction") to TagCategory.SCI_FI,
+        listOf("horror") to TagCategory.HORROR,
+        listOf("mystery", "detective") to TagCategory.MYSTERY,
+        listOf("thriller") to TagCategory.THRILLER,
+        listOf("comedy", "humor") to TagCategory.COMEDY,
+
+        // Setting
+        listOf("medieval", "knight") to TagCategory.MEDIEVAL,
+        listOf("modern", "contemporary") to TagCategory.MODERN,
+        listOf("historical", "dynasty", "ancient") to TagCategory.HISTORICAL,
+        listOf("space", "galactic", "starship") to TagCategory.SPACE_OPERA,
+        listOf("cyberpunk") to TagCategory.CYBERPUNK,
+
+        // Activities
+        listOf("cooking", "chef", "food") to TagCategory.COOKING,
+        listOf("alchemy", "alchemist", "potion") to TagCategory.ALCHEMY,
+        listOf("blacksmith", "crafting") to TagCategory.CRAFTING,
+    )
+
+    /**
+     * Keyword patterns for each tag category (synopsis).
      */
     private val extractionPatterns: List<Pair<List<String>, TagCategory>> = listOf(
         // ============ CULTIVATION/EASTERN ============
@@ -448,6 +523,37 @@ object SynopsisTagExtractor {
         }
     }
 
+    private val compiledTitlePatterns: List<Pair<List<String>, TagCategory>> by lazy {
+        titlePatterns.map { (keywords, tag) ->
+            keywords.map { it.lowercase() } to tag
+        }
+    }
+
+    /**
+     * Extract tags from novel title.
+     * Titles often contain genre hints like "Reincarnated as a Slime" or "My Cultivation System"
+     */
+    fun extractFromTitle(title: String?, maxTags: Int = 5): Set<TagCategory> {
+        if (title.isNullOrBlank()) return emptySet()
+
+        val lowerTitle = title.lowercase()
+        val tagScores = mutableMapOf<TagCategory, Int>()
+
+        for ((keywords, tag) in compiledTitlePatterns) {
+            for (keyword in keywords) {
+                if (lowerTitle.contains(keyword)) {
+                    tagScores[tag] = (tagScores[tag] ?: 0) + 2 // Title matches are high confidence
+                }
+            }
+        }
+
+        return tagScores.entries
+            .sortedByDescending { it.value }
+            .take(maxTags)
+            .map { it.key }
+            .toSet()
+    }
+
     /**
      * Extract tags from a synopsis/description.
      *
@@ -470,17 +576,37 @@ object SynopsisTagExtractor {
             }
 
             if (matches > 0) {
-                // Weight by number of matching keywords
                 tagScores[tag] = (tagScores[tag] ?: 0) + matches
             }
         }
 
-        // Sort by score and take top N
         return tagScores.entries
             .sortedByDescending { it.value }
             .take(maxTags)
             .map { it.key }
             .toSet()
+    }
+
+    /**
+     * Extract tags from both title and synopsis, combining results.
+     * Title matches get priority.
+     */
+    fun extractFromTitleAndSynopsis(
+        title: String?,
+        synopsis: String?,
+        maxTags: Int = 12
+    ): Set<TagCategory> {
+        val titleTags = extractFromTitle(title, maxTags = 5)
+        val synopsisTags = extractTags(synopsis, maxTags = 10)
+
+        // Title tags first, then fill with synopsis tags
+        val combined = titleTags.toMutableSet()
+        for (tag in synopsisTags) {
+            if (combined.size >= maxTags) break
+            combined.add(tag)
+        }
+
+        return combined
     }
 
     /**
@@ -503,7 +629,6 @@ object SynopsisTagExtractor {
                 }
             }
 
-            // Track max possible score for this tag
             tagMaxScores[tag] = (tagMaxScores[tag] ?: 0) + keywords.size
 
             if (matches > 0) {
@@ -511,7 +636,6 @@ object SynopsisTagExtractor {
             }
         }
 
-        // Convert to confidence scores
         return tagScores.mapValues { (tag, score) ->
             val maxScore = tagMaxScores[tag] ?: 1
             (score.toFloat() / maxScore).coerceIn(0f, 1f)
@@ -523,12 +647,15 @@ object SynopsisTagExtractor {
      */
     fun enhanceTags(
         existingTags: Set<TagCategory>,
+        title: String?,
         synopsis: String?,
         maxAdditional: Int = 5
     ): Set<TagCategory> {
-        val extracted = extractTagsWithConfidence(synopsis)
+        // Extract from both title and synopsis
+        val titleTags = extractFromTitle(title, maxTags = 3)
+        val synopsisTags = extractTagsWithConfidence(synopsis)
             .filter { (tag, confidence) ->
-                tag !in existingTags && confidence >= 0.3f
+                tag !in existingTags && tag !in titleTags && confidence >= 0.3f
             }
             .entries
             .sortedByDescending { it.value }
@@ -536,6 +663,69 @@ object SynopsisTagExtractor {
             .map { it.key }
             .toSet()
 
-        return existingTags + extracted
+        return existingTags + titleTags + synopsisTags
+    }
+
+    /**
+     * Extract significant keywords from synopsis for similarity matching.
+     * These are general content words, not just tag-related.
+     */
+    fun extractContentKeywords(synopsis: String?, maxKeywords: Int = 30): Set<String> {
+        if (synopsis.isNullOrBlank()) return emptySet()
+
+        val stopWords = setOf(
+            "the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for",
+            "of", "with", "by", "from", "as", "is", "was", "are", "were", "been",
+            "be", "have", "has", "had", "do", "does", "did", "will", "would",
+            "could", "should", "may", "might", "must", "shall", "can", "need",
+            "he", "she", "it", "they", "we", "you", "i", "his", "her", "its",
+            "their", "our", "your", "my", "this", "that", "these", "those",
+            "who", "whom", "which", "what", "where", "when", "why", "how",
+            "all", "each", "every", "both", "few", "more", "most", "other",
+            "some", "such", "no", "nor", "not", "only", "own", "same", "so",
+            "than", "too", "very", "just", "also", "now", "here", "there",
+            "into", "through", "during", "before", "after", "above", "below",
+            "between", "under", "again", "further", "then", "once", "upon",
+            "about", "out", "up", "down", "off", "over", "any", "because",
+            "while", "until", "unless", "although", "though", "since", "whether",
+            "him", "her", "them", "me", "us", "himself", "herself", "itself",
+            "themselves", "myself", "ourselves", "yourself", "yourselves",
+            "been", "being", "having", "doing", "going", "coming", "getting",
+            "making", "taking", "seeing", "knowing", "thinking", "wanting"
+        )
+
+        // Significant words to boost (genre/theme indicators)
+        val boostWords = setOf(
+            "magic", "sword", "power", "battle", "fight", "kingdom", "empire",
+            "dragon", "demon", "god", "goddess", "hero", "villain", "dark",
+            "light", "shadow", "blood", "death", "life", "love", "hate",
+            "revenge", "justice", "evil", "good", "ancient", "modern",
+            "future", "past", "time", "space", "world", "realm", "dimension",
+            "skill", "level", "system", "class", "dungeon", "tower", "gate",
+            "monster", "beast", "spirit", "soul", "immortal", "mortal",
+            "cultivation", "martial", "sect", "clan", "family", "noble",
+            "princess", "prince", "king", "queen", "emperor", "empress"
+        )
+
+        return synopsis
+            .lowercase()
+            .replace(Regex("[^a-z0-9\\s]"), " ")
+            .split(Regex("\\s+"))
+            .filter { word ->
+                word.length >= 3 &&
+                        word !in stopWords &&
+                        !word.all { it.isDigit() }
+            }
+            .groupingBy { it }
+            .eachCount()
+            .entries
+            .sortedWith(
+                compareByDescending<Map.Entry<String, Int>> {
+                    if (it.key in boostWords) it.value * 2 else it.value
+                }
+            )
+            .take(maxKeywords)
+            .map { it.key }
+            .toSet()
     }
 }

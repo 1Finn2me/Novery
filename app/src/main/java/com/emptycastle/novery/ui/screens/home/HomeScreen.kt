@@ -32,7 +32,8 @@ fun HomeScreen(
     onNavigateToProviderBrowse: (providerName: String) -> Unit,
     onNavigateToNotifications: () -> Unit,
     onNavigateToProfile: () -> Unit,
-    onNavigateToDownloads: () -> Unit
+    onNavigateToDownloads: () -> Unit,
+    onNavigateToOnboarding: () -> Unit = {}
 ) {
     // Initialize shared state
     LaunchedEffect(Unit) {
@@ -93,9 +94,9 @@ fun HomeScreen(
                     RecommendationTab(
                         onNavigateToDetails = onNavigateToDetails,
                         onNavigateToBrowse = {
-                            // Navigate to Browse tab
                             tabNavState.navigateToTab(HomeTabs.BROWSE)
-                        }
+                        },
+                        onNavigateToOnboarding = onNavigateToOnboarding
                     )
                 }
 

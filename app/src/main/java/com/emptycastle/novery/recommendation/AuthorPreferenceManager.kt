@@ -36,6 +36,14 @@ class AuthorPreferenceManager(
     }
 
     /**
+     * Clear all author preferences (for testing or reset)
+     */
+    suspend fun clearAllPreferences() = withContext(Dispatchers.IO) {
+        authorDao.clearAllAuthors()
+        Log.d(TAG, "Cleared all author preferences")
+    }
+
+    /**
      * Get affinity for multiple authors at once (for batch processing)
      */
     suspend fun getAuthorAffinities(

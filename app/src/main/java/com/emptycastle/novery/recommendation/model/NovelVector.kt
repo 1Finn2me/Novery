@@ -1,5 +1,6 @@
 package com.emptycastle.novery.recommendation.model
 
+import com.emptycastle.novery.recommendation.SynopsisTagExtractor
 import com.emptycastle.novery.recommendation.TagNormalizer.TagCategory
 
 /**
@@ -11,7 +12,7 @@ data class NovelVector(
     val name: String,
     val providerName: String,
 
-    /** Normalized tags */
+    /** Normalized tags (from provider + extracted) */
     val tags: Set<TagCategory>,
 
     /** Original raw tags (for display) */
@@ -32,9 +33,28 @@ data class NovelVector(
     /** Keywords extracted from synopsis */
     val synopsisKeywords: Set<String>,
 
+    /** Keywords extracted from title (for matching similar titles) */
+    val titleKeywords: Set<String>,
+
     /** Poster URL for display */
-    val posterUrl: String?
+    val posterUrl: String?,
+
+    /** Full synopsis text (for deep matching) */
+    val synopsis: String? = null
 ) {
+
+    /**
+     * Check if this novel has enough data for quality recommendations
+     */
+    val hasQualityData: Boolean
+        get() = tags.size >= 2 || synopsisKeywords.size >= 5 || titleKeywords.size >= 2
+
+    /**
+     * Get all text-based features combined
+     */
+    val allKeywords: Set<String>
+        get() = synopsisKeywords + titleKeywords
+
     companion object {
         // Common words to filter from synopsis
         private val stopWords = setOf(
@@ -57,9 +77,16 @@ data class NovelVector(
          * Extract meaningful keywords from synopsis
          */
         fun extractKeywords(synopsis: String?, maxKeywords: Int = 20): Set<String> {
-            if (synopsis.isNullOrBlank()) return emptySet()
+            return SynopsisTagExtractor.extractContentKeywords(synopsis, maxKeywords)
+        }
 
-            return synopsis
+        /**
+         * Extract keywords from title
+         */
+        fun extractTitleKeywords(title: String?): Set<String> {
+            if (title.isNullOrBlank()) return emptySet()
+
+            return title
                 .lowercase()
                 .replace(Regex("[^a-z0-9\\s]"), " ")
                 .split(Regex("\\s+"))
@@ -68,12 +95,6 @@ data class NovelVector(
                             word !in stopWords &&
                             !word.all { it.isDigit() }
                 }
-                .groupingBy { it }
-                .eachCount()
-                .entries
-                .sortedByDescending { it.value }
-                .take(maxKeywords)
-                .map { it.key }
                 .toSet()
         }
 

@@ -7,14 +7,19 @@ import com.emptycastle.novery.data.local.entity.BlockedAuthorEntity
 import com.emptycastle.novery.data.local.entity.HiddenNovelEntity
 import com.emptycastle.novery.data.local.entity.HideReason
 import com.emptycastle.novery.data.local.entity.TagFilterType
+import com.emptycastle.novery.data.repository.LibraryItem
 import com.emptycastle.novery.data.repository.RepositoryProvider
 import com.emptycastle.novery.recommendation.RecommendationEngine
 import com.emptycastle.novery.recommendation.TagNormalizer
 import com.emptycastle.novery.recommendation.TagNormalizer.TagCategory
+import com.emptycastle.novery.recommendation.model.LibrarySourceNovel
 import com.emptycastle.novery.recommendation.model.NovelVector
+import com.emptycastle.novery.recommendation.model.Recommendation
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -31,6 +36,7 @@ class RecommendationViewModel : ViewModel() {
     private val userFilterManager = RepositoryProvider.getUserFilterManager()
     private val tagEnhancementManager = RepositoryProvider.getTagEnhancementManager()
     private val authorPreferenceManager = RepositoryProvider.getAuthorPreferenceManager()
+    private val historyRepository = RepositoryProvider.getHistoryRepository()
 
     private val _uiState = MutableStateFlow(RecommendationUiState())
     val uiState: StateFlow<RecommendationUiState> = _uiState.asStateFlow()
@@ -46,6 +52,12 @@ class RecommendationViewModel : ViewModel() {
 
     private val _favoriteAuthors = MutableStateFlow<List<String>>(emptyList())
     val favoriteAuthors: StateFlow<List<String>> = _favoriteAuthors.asStateFlow()
+
+    // Track the last known disabled providers to detect changes
+    private var lastKnownDisabledProviders: Set<String> = emptySet()
+
+    // Cache for source-specific recommendations
+    private val sourceRecommendationCache = mutableMapOf<String, List<Recommendation>>()
 
     init {
         // Observe tag filters
@@ -69,7 +81,164 @@ class RecommendationViewModel : ViewModel() {
             }
         }
 
+        // Observe app settings for disabled provider changes
+        viewModelScope.launch {
+            preferencesManager.appSettings
+                .map { it.disabledProviders }
+                .distinctUntilChanged()
+                .collect { disabledProviders ->
+                    val previousDisabled = lastKnownDisabledProviders
+                    lastKnownDisabledProviders = disabledProviders
+
+                    _uiState.update { it.copy(disabledProviderCount = disabledProviders.size) }
+
+                    if (previousDisabled != disabledProviders && _uiState.value.hasRecommendations) {
+                        Log.d(TAG, "Disabled providers changed, refreshing recommendations")
+                        loadRecommendations(forceRefresh = true)
+                    }
+                }
+        }
+
+        // Observe library changes to update source novels
+        viewModelScope.launch {
+            libraryRepository.observeLibrary().collect { libraryItems ->
+                updateLibrarySources(libraryItems)
+            }
+        }
+
         checkAndSeed()
+    }
+
+    // ================================================================
+    // LIBRARY SOURCE MANAGEMENT (NEW)
+    // ================================================================
+
+    /**
+     * Update the list of library novels that can be used as recommendation sources
+     */
+    private suspend fun updateLibrarySources(libraryItems: List<LibraryItem>) {
+        // Get read chapter counts for each novel
+        val sourceNovels = libraryItems
+            .filter { it.lastReadPosition != null } // Only novels that have been read
+            .map { item ->
+                val chaptersRead = getChaptersReadCount(item.novel.url)
+                LibrarySourceNovel.fromLibraryItem(item, chaptersRead)
+            }
+            .sortedByDescending { it.lastReadAt } // Most recently read first
+
+        val currentSelected = _uiState.value.selectedSourceNovel
+        val defaultSource = sourceNovels.firstOrNull()
+
+        // If no source is selected, select the most recently read
+        val newSelected = when {
+            currentSelected != null && sourceNovels.any { it.novel.url == currentSelected.novel.url } -> {
+                // Keep current selection if still valid
+                sourceNovels.find { it.novel.url == currentSelected.novel.url }
+            }
+            else -> defaultSource
+        }
+
+        _uiState.update { state ->
+            state.copy(
+                librarySourceNovels = sourceNovels,
+                selectedSourceNovel = newSelected
+            )
+        }
+
+        // Load recommendations for the selected source if changed
+        if (newSelected != null && currentSelected?.novel?.url != newSelected.novel.url) {
+            loadRecommendationsForSource(newSelected.novel.url)
+        }
+    }
+
+    /**
+     * Get the number of chapters read for a novel
+     */
+    private suspend fun getChaptersReadCount(novelUrl: String): Int {
+        return try {
+            val dao = RepositoryProvider.getDatabase().historyDao()
+            dao.getReadChapterCount(novelUrl)
+        } catch (e: Exception) {
+            0
+        }
+    }
+
+    /**
+     * Select a library novel as the source for recommendations
+     */
+    fun selectSourceNovel(sourceNovel: LibrarySourceNovel) {
+        if (_uiState.value.selectedSourceNovel?.novel?.url == sourceNovel.novel.url) {
+            return // Already selected
+        }
+
+        _uiState.update { it.copy(
+            selectedSourceNovel = sourceNovel,
+            isSourceSelectorExpanded = false
+        )}
+
+        viewModelScope.launch {
+            loadRecommendationsForSource(sourceNovel.novel.url)
+        }
+    }
+
+    /**
+     * Toggle the source selector expansion
+     */
+    fun toggleSourceSelector() {
+        _uiState.update { it.copy(isSourceSelectorExpanded = !it.isSourceSelectorExpanded) }
+    }
+
+    /**
+     * Collapse the source selector
+     */
+    fun collapseSourceSelector() {
+        _uiState.update { it.copy(isSourceSelectorExpanded = false) }
+    }
+
+    /**
+     * Load recommendations for a specific source novel
+     */
+    private suspend fun loadRecommendationsForSource(novelUrl: String) {
+        // Check cache first
+        sourceRecommendationCache[novelUrl]?.let { cached ->
+            _uiState.update { it.copy(sourceNovelRecommendations = cached) }
+            return
+        }
+
+        _uiState.update { it.copy(isLoadingSourceRecommendations = true) }
+
+        try {
+            val disabledProviders = getDisabledProviders()
+
+            val recommendations = recommendationEngine.getSimilarTo(
+                novelUrl = novelUrl,
+                limit = 15,
+                excludeLibrary = true,
+                disabledProviders = disabledProviders
+            )
+
+            // Cache the results
+            sourceRecommendationCache[novelUrl] = recommendations
+
+            _uiState.update { it.copy(
+                sourceNovelRecommendations = recommendations,
+                isLoadingSourceRecommendations = false
+            )}
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Error loading recommendations for source $novelUrl", e)
+            _uiState.update { it.copy(
+                sourceNovelRecommendations = emptyList(),
+                isLoadingSourceRecommendations = false
+            )}
+        }
+    }
+
+    /**
+     * Clear the recommendation cache (call when data changes significantly)
+     */
+    fun clearRecommendationCache() {
+        sourceRecommendationCache.clear()
     }
 
     // ================================================================
@@ -88,6 +257,7 @@ class RecommendationViewModel : ViewModel() {
                     enhanceTagsIfNeeded()
                     loadUserProfile()
                     loadRecommendations()
+                    loadLibrarySources()
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error in checkAndSeed", e)
@@ -98,11 +268,23 @@ class RecommendationViewModel : ViewModel() {
         }
     }
 
+    /**
+     * Load library sources on init
+     */
+    private suspend fun loadLibrarySources() {
+        val libraryItems = libraryRepository.getLibrary()
+        updateLibrarySources(libraryItems)
+    }
+
     private suspend fun seedDiscoveryPool() {
         _uiState.update { it.copy(isSeeding = true, isLoading = true) }
 
         try {
-            val result = discoveryManager.seedDiscoveryPool { provider, current, total ->
+            val disabledProviders = getDisabledProviders()
+
+            val result = discoveryManager.seedDiscoveryPool(
+                disabledProviders = disabledProviders
+            ) { provider, current, total ->
                 _uiState.update {
                     it.copy(
                         seedingProgress = SeedingProgress(
@@ -136,6 +318,7 @@ class RecommendationViewModel : ViewModel() {
 
             loadUserProfile()
             loadRecommendations()
+            loadLibrarySources()
 
         } catch (e: Exception) {
             Log.e(TAG, "Error seeding discovery pool", e)
@@ -200,6 +383,9 @@ class RecommendationViewModel : ViewModel() {
 
                 logTagCoverageStats()
 
+                // Clear cache since data changed
+                clearRecommendationCache()
+
                 loadRecommendations(forceRefresh = true)
             } catch (e: Exception) {
                 Log.e(TAG, "Error in force tag enhancement", e)
@@ -217,6 +403,7 @@ class RecommendationViewModel : ViewModel() {
     fun setTagFilter(tag: TagCategory, filterType: TagFilterType) {
         viewModelScope.launch {
             userFilterManager.setTagFilter(tag, filterType)
+            clearRecommendationCache()
             loadRecommendations(forceRefresh = true)
         }
     }
@@ -231,6 +418,7 @@ class RecommendationViewModel : ViewModel() {
     fun unhideNovel(novelUrl: String) {
         viewModelScope.launch {
             userFilterManager.unhideNovel(novelUrl)
+            clearRecommendationCache()
             loadRecommendations(forceRefresh = true)
         }
     }
@@ -239,6 +427,7 @@ class RecommendationViewModel : ViewModel() {
         viewModelScope.launch {
             userFilterManager.blockAuthor(authorNormalized, displayName)
             removeNovelsByAuthor(authorNormalized)
+            clearRecommendationCache()
             loadRecommendations(forceRefresh = true)
         }
     }
@@ -246,6 +435,7 @@ class RecommendationViewModel : ViewModel() {
     fun unblockAuthor(authorNormalized: String) {
         viewModelScope.launch {
             userFilterManager.unblockAuthor(authorNormalized)
+            clearRecommendationCache()
             loadRecommendations(forceRefresh = true)
         }
     }
@@ -254,6 +444,7 @@ class RecommendationViewModel : ViewModel() {
         viewModelScope.launch {
             val dao = RepositoryProvider.getDatabase().userFilterDao()
             dao.clearAllHiddenNovels()
+            clearRecommendationCache()
             loadRecommendations(forceRefresh = true)
         }
     }
@@ -262,6 +453,7 @@ class RecommendationViewModel : ViewModel() {
         viewModelScope.launch {
             val dao = RepositoryProvider.getDatabase().userFilterDao()
             dao.clearAllBlockedAuthors()
+            clearRecommendationCache()
             loadRecommendations(forceRefresh = true)
         }
     }
@@ -303,8 +495,17 @@ class RecommendationViewModel : ViewModel() {
                             it.novel.url != novelUrl
                         }
                     )
-                }.filter { it.recommendations.isNotEmpty() }
+                }.filter { it.recommendations.isNotEmpty() },
+                // Also remove from source recommendations
+                sourceNovelRecommendations = state.sourceNovelRecommendations.filter {
+                    it.novel.url != novelUrl
+                }
             )
+        }
+
+        // Update cache
+        sourceRecommendationCache.forEach { (key, recommendations) ->
+            sourceRecommendationCache[key] = recommendations.filter { it.novel.url != novelUrl }
         }
     }
 
@@ -314,7 +515,7 @@ class RecommendationViewModel : ViewModel() {
                 recommendationGroups = state.recommendationGroups.map { group ->
                     group.copy(
                         recommendations = group.recommendations.filter { rec ->
-                            true
+                            true // TODO: Filter by author when we have author info in Recommendation
                         }
                     )
                 }
@@ -335,7 +536,6 @@ class RecommendationViewModel : ViewModel() {
                     TagNormalizer.getDisplayName(tag)
                 }
 
-                // Load favorite authors
                 val favAuthors = authorPreferenceManager.getFavoriteAuthors(5)
                     .map { it.displayName }
 
@@ -355,7 +555,6 @@ class RecommendationViewModel : ViewModel() {
         }
     }
 
-    // Add method to get author stats
     fun getAuthorStats() {
         viewModelScope.launch {
             try {
@@ -399,13 +598,15 @@ class RecommendationViewModel : ViewModel() {
             }
 
             try {
+                val disabledProviders = getDisabledProviders()
                 val preferredProvider = determinePreferredProvider()
 
                 val config = RecommendationEngine.RecommendationConfig(
                     maxPerGroup = 12,
                     minScore = 0.3f,
                     includeCrossProvider = _uiState.value.showCrossProvider,
-                    preferredProvider = preferredProvider
+                    preferredProvider = preferredProvider,
+                    disabledProviders = disabledProviders
                 )
 
                 val groups = recommendationEngine.generateRecommendations(config)
@@ -420,11 +621,17 @@ class RecommendationViewModel : ViewModel() {
                         preferredProvider = preferredProvider,
                         lastRefreshTime = System.currentTimeMillis(),
                         isCacheStale = false,
-                        poolSize = poolSize
+                        poolSize = poolSize,
+                        disabledProviderCount = disabledProviders.size
                     )
                 }
 
                 loadUserProfile()
+
+                // Also refresh source recommendations if we have a selected source
+                _uiState.value.selectedSourceNovel?.let { source ->
+                    loadRecommendationsForSource(source.novel.url)
+                }
 
             } catch (e: Exception) {
                 Log.e(TAG, "Error loading recommendations", e)
@@ -440,6 +647,7 @@ class RecommendationViewModel : ViewModel() {
     }
 
     fun refresh() {
+        clearRecommendationCache()
         loadRecommendations(forceRefresh = true)
     }
 
@@ -448,7 +656,8 @@ class RecommendationViewModel : ViewModel() {
             _uiState.update { it.copy(isRefreshing = true) }
 
             try {
-                val newCount = discoveryManager.refreshPool()
+                val disabledProviders = getDisabledProviders()
+                val newCount = discoveryManager.refreshPool(disabledProviders = disabledProviders)
                 Log.d(TAG, "Discovered $newCount new novels")
 
                 if (newCount > 0) {
@@ -459,6 +668,7 @@ class RecommendationViewModel : ViewModel() {
                 val poolSize = discoveryManager.getPoolSize()
                 _uiState.update { it.copy(poolSize = poolSize) }
 
+                clearRecommendationCache()
                 loadRecommendations(forceRefresh = true)
 
             } catch (e: Exception) {
@@ -476,6 +686,7 @@ class RecommendationViewModel : ViewModel() {
 
     fun toggleCrossProvider() {
         _uiState.update { it.copy(showCrossProvider = !it.showCrossProvider) }
+        clearRecommendationCache()
         loadRecommendations(forceRefresh = true)
     }
 
@@ -483,10 +694,16 @@ class RecommendationViewModel : ViewModel() {
     // HELPERS
     // ================================================================
 
+    private fun getDisabledProviders(): Set<String> {
+        return preferencesManager.appSettings.value.disabledProviders
+    }
+
     private suspend fun determinePreferredProvider(): String? {
         return try {
+            val disabledProviders = getDisabledProviders()
             val library = libraryRepository.getLibrary()
             library
+                .filter { it.novel.apiName !in disabledProviders }
                 .groupingBy { it.novel.apiName }
                 .eachCount()
                 .maxByOrNull { it.value }
@@ -501,6 +718,6 @@ class RecommendationViewModel : ViewModel() {
     }
 
     fun onRecommendationClicked(novelUrl: String) {
-        // Could track which recommendations are clicked
+        // Could track which recommendations are clicked for analytics
     }
 }

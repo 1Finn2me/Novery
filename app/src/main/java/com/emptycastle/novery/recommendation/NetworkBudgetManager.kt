@@ -1,5 +1,3 @@
-// com/emptycastle/novery/recommendation/NetworkBudgetManager.kt
-
 package com.emptycastle.novery.recommendation
 
 import android.util.Log
@@ -93,7 +91,7 @@ class NetworkBudgetManager(
 
     /** Default budget for unknown providers */
     private val defaultBudget = ProviderBudget(
-        dailyDiscoveryLimit = 75,
+        dailyDiscoveryLimit = 100,
         dailyUserLimit = 300,
         minRequestDelayMs = 1000,
         baseCooldownMs = 60_000,

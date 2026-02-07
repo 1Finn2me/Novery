@@ -59,12 +59,22 @@ class DiscoveryManager(
     // ================================================================
 
     suspend fun seedDiscoveryPool(
+        disabledProviders: Set<String> = emptySet(),
         onProgress: (provider: String, current: Int, total: Int) -> Unit = { _, _, _ -> }
     ): SeedingResult = withContext(Dispatchers.IO) {
-        val providers = novelRepository.getProviders()
+        val allProviders = novelRepository.getProviders()
+        // Filter out disabled providers
+        val providers = allProviders.filter { it.name !in disabledProviders }
+        val skippedDisabled = allProviders.filter { it.name in disabledProviders }.map { it.name }
+
         var totalDiscovered = 0
         val errors = mutableListOf<String>()
         val skipped = mutableListOf<String>()
+        skipped.addAll(skippedDisabled) // Include disabled as skipped
+
+        if (skippedDisabled.isNotEmpty()) {
+            Log.d(TAG, "Skipping disabled providers: ${skippedDisabled.joinToString()}")
+        }
 
         val sessionId = networkBudgetManager.createSessionId()
 
@@ -105,7 +115,7 @@ class DiscoveryManager(
 
         SeedingResult(
             totalDiscovered = totalDiscovered,
-            providersSeeded = providers.size - errors.size - skipped.size,
+            providersSeeded = providers.size - errors.size - (skipped.size - skippedDisabled.size),
             providersSkipped = skipped,
             errors = errors
         )
@@ -143,14 +153,17 @@ class DiscoveryManager(
                     networkBudgetManager.recordDiscovery(novel.url, sessionId, depth = 0)
                 }
 
-                // IMPROVED: Prioritize enriching novels that need tags
-                if (budgetRemaining - requestsUsed > config.enrichTopCount) {
+                // ENHANCED: Prioritize enriching more novels with full details
+                // Use remaining budget for enrichment
+                val enrichBudget = (budgetRemaining - requestsUsed).coerceAtMost(config.enrichTopCount * 2)
+                if (enrichBudget > 0) {
                     val toEnrich = selectNovelsForEnrichment(
                         result.novels,
-                        config.enrichTopCount,
+                        enrichBudget.coerceAtMost(result.novels.size),
                         provider
                     )
-                    enrichNovels(provider, toEnrich, sessionId)
+                    val enriched = enrichNovels(provider, toEnrich, sessionId)
+                    requestsUsed += enriched
                 }
 
             } catch (e: Exception) {
@@ -178,11 +191,13 @@ class DiscoveryManager(
             val existingDetails = offlineDao.getNovelDetails(novel.url)
             val discoveredNovel = recommendationDao.getDiscoveredNovel(novel.url)
 
-            // Prioritize novels without tags
+            // Check if we have good data (tags AND synopsis)
             val hasTags = discoveredNovel?.tagsString?.isNotBlank() == true ||
                     existingDetails?.tags?.isNotEmpty() == true
+            val hasSynopsis = discoveredNovel?.synopsis?.isNotBlank() == true ||
+                    existingDetails?.synopsis?.isNotBlank() == true
 
-            if (!hasTags) {
+            if (!hasTags || !hasSynopsis) {
                 needsEnrichment.add(novel)
             } else {
                 hasDetails.add(novel)
@@ -194,24 +209,28 @@ class DiscoveryManager(
     }
 
     /**
-     * Enrich novels with full details (including tags)
+     * Enrich novels with full details (including tags and synopsis)
+     * Returns the number of requests made
      */
     private suspend fun enrichNovels(
         provider: MainProvider,
         novels: List<Novel>,
         sessionId: String
-    ) {
+    ): Int {
+        var requestsMade = 0
+
         for (novel in novels) {
             if (!networkBudgetManager.canDiscoverMore(sessionId, currentDepth = 0)) {
-                return
+                return requestsMade
             }
             if (!networkBudgetManager.waitForSlot(provider.name)) {
-                return
+                return requestsMade
             }
 
             try {
                 val details = provider.load(novel.url)
                 networkBudgetManager.recordRequest(provider.name)
+                requestsMade++
 
                 if (details != null) {
                     // Save full details for later use
@@ -219,7 +238,7 @@ class DiscoveryManager(
                         NovelDetailsEntity.fromNovelDetails(details, provider.name)
                     )
 
-                    // Also update discovered novel with tags
+                    // Also update discovered novel with tags and synopsis
                     val enriched = DiscoveredNovelEntity.fromNovelDetails(
                         details = details,
                         apiName = provider.name,
@@ -227,18 +246,21 @@ class DiscoveryManager(
                     )
                     recommendationDao.insertDiscoveredNovel(enriched)
 
-                    // Cache related novels
+                    // Cache related novels (limited)
                     details.relatedNovels?.let { related ->
                         cacheRelatedNovelsWithLimit(related, provider.name, sessionId, depth = 1)
                     }
 
-                    Log.d(TAG, "Enriched ${novel.name} with ${details.tags?.size ?: 0} tags")
+                    Log.d(TAG, "Enriched ${novel.name} with ${details.tags?.size ?: 0} tags, " +
+                            "synopsis: ${details.synopsis?.length ?: 0} chars")
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error enriching ${novel.name}", e)
                 // Don't record failure for enrichment errors - they're optional
             }
         }
+
+        return requestsMade
     }
 
     // ================================================================
@@ -350,10 +372,18 @@ class DiscoveryManager(
     // ================================================================
 
     suspend fun refreshPool(
+        disabledProviders: Set<String> = emptySet(),
         onProgress: (String) -> Unit = {}
     ): Int = withContext(Dispatchers.IO) {
         var totalNew = 0
-        val providers = novelRepository.getProviders()
+        val allProviders = novelRepository.getProviders()
+        // Filter out disabled providers
+        val providers = allProviders.filter { it.name !in disabledProviders }
+
+        if (disabledProviders.isNotEmpty()) {
+            val skippedNames = allProviders.filter { it.name in disabledProviders }.map { it.name }
+            Log.d(TAG, "Refresh skipping disabled providers: ${skippedNames.joinToString()}")
+        }
 
         providers.forEach { provider ->
             // Check budget first

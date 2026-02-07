@@ -12,6 +12,8 @@ sealed class NavRoutes(val route: String) {
     // ROOT DESTINATIONS
     // ================================================================
 
+    object Onboarding : NavRoutes("onboarding")
+
     object Home : NavRoutes("home")
 
     object Settings : NavRoutes("settings")

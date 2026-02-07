@@ -1,3 +1,4 @@
+// com/emptycastle/novery/recommendation/RecommendationEngine.kt
 package com.emptycastle.novery.recommendation
 
 import android.util.Log
@@ -21,7 +22,7 @@ private const val TAG = "RecommendationEngine"
 
 /**
  * Main recommendation engine that generates personalized recommendations.
- * Ensures variety across groups by tracking used novels.
+ * Enhanced to properly use tags, synopsis, and title for better matching.
  */
 class RecommendationEngine(
     private val userPreferenceManager: UserPreferenceManager,
@@ -39,7 +40,9 @@ class RecommendationEngine(
         val includeCrossProvider: Boolean = true,
         val preferredProvider: String? = null,
         /** Allow some overlap between groups (0 = no overlap, 0.3 = 30% can overlap) */
-        val allowedOverlapRatio: Float = 0.2f
+        val allowedOverlapRatio: Float = 0.2f,
+        // Provider names that are disabled in settings — their novels won't appear
+        val disabledProviders: Set<String> = emptySet()
     )
 
     // ================================================================
@@ -69,18 +72,17 @@ class RecommendationEngine(
         Log.d(TAG, "Filters: ${filterState.blockedTags.size} blocked tags, " +
                 "${filterState.hiddenNovelUrls.size} hidden novels, " +
                 "${filterState.blockedAuthors.size} blocked authors")
-
+        Log.d(TAG, "Disabled providers: ${config.disabledProviders.size} (${config.disabledProviders.joinToString()})")
         Log.d(TAG, "Generating recommendations - ${likedAuthors.size} liked authors, ${favoriteAuthors.size} favorites")
 
-        // Pass filterState to loadAllCandidates
-        val allCandidates = loadAllCandidates(libraryUrls, filterState)
+        val allCandidates = loadAllCandidates(libraryUrls, filterState, config.disabledProviders)
 
         Log.d(TAG, "Generating recommendations - Profile: ${userProfile.sampleSize} novels, Library: ${libraryUrls.size}")
 
-        // Separate candidates by quality (has tags vs no tags)
-        val (withTags, withoutTags) = allCandidates.partition { it.tags.isNotEmpty() }
+        // Separate candidates by quality
+        val (withGoodData, withPoorData) = allCandidates.partition { it.hasQualityData }
 
-        Log.d(TAG, "Candidates: ${allCandidates.size} total, ${withTags.size} with tags, ${withoutTags.size} without tags")
+        Log.d(TAG, "Candidates: ${allCandidates.size} total, ${withGoodData.size} with good data, ${withPoorData.size} with poor data")
 
         if (allCandidates.isEmpty()) {
             return@withContext emptyList()
@@ -92,10 +94,10 @@ class RecommendationEngine(
         val usedNovelUrls = mutableSetOf<String>()
         val maxOverlapPerGroup = (config.maxPerGroup * config.allowedOverlapRatio).toInt()
 
-        // 1. FOR YOU - Only if user has preferences AND we have tagged novels
-        if (userProfile.sampleSize >= 1 && withTags.isNotEmpty()) {
+        // 1. FOR YOU - Only if user has preferences AND we have good data novels
+        if (userProfile.sampleSize >= 1 && withGoodData.isNotEmpty()) {
             generateForYouGroup(
-                userProfile, withTags, config, usedNovelUrls, maxOverlapPerGroup,
+                userProfile, withGoodData, config, usedNovelUrls, maxOverlapPerGroup,
                 authorAffinities, favoriteAuthors, filterState
             )?.let {
                 groups.add(it)
@@ -138,9 +140,9 @@ class RecommendationEngine(
         }
 
         // 5. BY GENRE - Create genre-specific groups from available tags
-        if (withTags.isNotEmpty()) {
+        if (withGoodData.isNotEmpty()) {
             generateGenreGroups(
-                withTags, config, usedNovelUrls, maxOverlapPerGroup
+                withGoodData, config, usedNovelUrls, maxOverlapPerGroup
             ).forEach { group ->
                 groups.add(group)
                 usedNovelUrls.addAll(group.recommendations.map { r -> r.novel.url })
@@ -149,6 +151,7 @@ class RecommendationEngine(
 
         // 6. DISCOVER NEW SOURCE - Cross-provider discovery
         val preferredProvider = config.preferredProvider
+            ?.takeIf { it !in config.disabledProviders }
             ?: allCandidates.groupingBy { it.providerName }.eachCount().maxByOrNull { it.value }?.key
 
         if (preferredProvider != null && config.includeCrossProvider) {
@@ -180,21 +183,23 @@ class RecommendationEngine(
     }
 
     // ================================================================
-    // CANDIDATE LOADING
+    // CANDIDATE LOADING - Enhanced with better tag extraction
     // ================================================================
 
     private suspend fun loadAllCandidates(
         excludeUrls: Set<String>,
-        filterState: UserFilterManager.FilterState? = null
+        filterState: UserFilterManager.FilterState? = null,
+        disabledProviders: Set<String> = emptySet()
     ): List<NovelVector> {
         val candidates = mutableListOf<NovelVector>()
         val seenUrls = mutableSetOf<String>()
 
-        // Priority 1: NovelDetailsEntity
+        // Priority 1: NovelDetailsEntity (has full details)
         offlineDao.getAllNovelDetails().forEach { entity ->
             if (entity.url !in excludeUrls && entity.url !in seenUrls) {
                 entityToVector(entity)?.let { vector ->
-                    // Apply filters if provided
+                    if (vector.providerName in disabledProviders) return@let
+
                     val shouldInclude = filterState == null || !userFilterManager.shouldFilter(vector, filterState)
                     if (shouldInclude) {
                         candidates.add(vector)
@@ -208,7 +213,8 @@ class RecommendationEngine(
         recommendationDao.getAllDiscoveredNovels().forEach { entity ->
             if (entity.url !in excludeUrls && entity.url !in seenUrls) {
                 discoveredToVector(entity)?.let { vector ->
-                    // Apply filters if provided
+                    if (vector.providerName in disabledProviders) return@let
+
                     val shouldInclude = filterState == null || !userFilterManager.shouldFilter(vector, filterState)
                     if (shouldInclude) {
                         candidates.add(vector)
@@ -226,11 +232,21 @@ class RecommendationEngine(
         // Start with normalized provider tags
         var tags = TagNormalizer.normalizeAll(entity.tags)
 
+        // Extract tags from title
+        val titleTags = SynopsisTagExtractor.extractFromTitle(entity.name)
+
         // If no/few tags, extract from synopsis
         if (tags.size < 3) {
-            val extractedTags = SynopsisTagExtractor.extractTags(entity.synopsis, maxTags = 8)
-            tags = tags + extractedTags
+            val synopsisTags = SynopsisTagExtractor.extractTags(entity.synopsis, maxTags = 8)
+            tags = tags + titleTags + synopsisTags
+        } else {
+            // Still add title tags as they're high confidence
+            tags = tags + titleTags
         }
+
+        // Extract keywords for text-based matching
+        val synopsisKeywords = SynopsisTagExtractor.extractContentKeywords(entity.synopsis, maxKeywords = 25)
+        val titleKeywords = NovelVector.extractTitleKeywords(entity.name)
 
         return NovelVector(
             url = entity.url,
@@ -242,8 +258,10 @@ class RecommendationEngine(
             rating = entity.rating,
             chapterCount = 0,
             isCompleted = entity.status?.lowercase() == "completed",
-            synopsisKeywords = NovelVector.extractKeywords(entity.synopsis),
-            posterUrl = entity.posterUrl
+            synopsisKeywords = synopsisKeywords,
+            titleKeywords = titleKeywords,
+            posterUrl = entity.posterUrl,
+            synopsis = entity.synopsis
         )
     }
 
@@ -251,11 +269,20 @@ class RecommendationEngine(
         // Start with normalized provider tags
         var tags = entity.tags?.let { TagNormalizer.normalizeAll(it) } ?: emptySet()
 
+        // Extract tags from title
+        val titleTags = SynopsisTagExtractor.extractFromTitle(entity.name)
+
         // If no/few tags, extract from synopsis
         if (tags.size < 3) {
-            val extractedTags = SynopsisTagExtractor.extractTags(entity.synopsis, maxTags = 8)
-            tags = tags + extractedTags
+            val synopsisTags = SynopsisTagExtractor.extractTags(entity.synopsis, maxTags = 8)
+            tags = tags + titleTags + synopsisTags
+        } else {
+            tags = tags + titleTags
         }
+
+        // Extract keywords
+        val synopsisKeywords = SynopsisTagExtractor.extractContentKeywords(entity.synopsis, maxKeywords = 25)
+        val titleKeywords = NovelVector.extractTitleKeywords(entity.name)
 
         return NovelVector(
             url = entity.url,
@@ -267,8 +294,10 @@ class RecommendationEngine(
             rating = entity.rating,
             chapterCount = entity.chapterCount,
             isCompleted = entity.status?.lowercase() == "completed",
-            synopsisKeywords = NovelVector.extractKeywords(entity.synopsis),
-            posterUrl = entity.posterUrl
+            synopsisKeywords = synopsisKeywords,
+            titleKeywords = titleKeywords,
+            posterUrl = entity.posterUrl,
+            synopsis = entity.synopsis
         )
     }
 
@@ -285,12 +314,9 @@ class RecommendationEngine(
     }
 
     // ================================================================
-    // GROUP GENERATORS - Each uses different selection strategy
+    // GROUP GENERATORS
     // ================================================================
 
-    /**
-     * FOR YOU - Based on user's tag preferences
-     */
     private fun generateForYouGroup(
         userProfile: UserTasteProfile,
         candidates: List<NovelVector>,
@@ -301,7 +327,6 @@ class RecommendationEngine(
         favoriteAuthors: Set<String>,
         filterState: UserFilterManager.FilterState
     ): RecommendationGroup? {
-        // Create scorer with author data
         val scorer = NovelScorer(
             userProfile = userProfile,
             authorAffinities = authorAffinities,
@@ -340,9 +365,6 @@ class RecommendationEngine(
         )
     }
 
-    /**
-     * FROM AUTHORS YOU LIKE - Novels by authors the user has enjoyed
-     */
     private fun generateFromAuthorsYouLikeGroup(
         candidates: List<NovelVector>,
         likedAuthors: List<AuthorPreferenceEntity>,
@@ -353,7 +375,6 @@ class RecommendationEngine(
     ): RecommendationGroup? {
         if (likedAuthors.isEmpty()) return null
 
-        // Get normalized names of liked authors
         val likedAuthorNames = likedAuthors
             .filter { it.affinityScore >= 600 }
             .map { it.authorNormalized }
@@ -361,7 +382,6 @@ class RecommendationEngine(
 
         if (likedAuthorNames.isEmpty()) return null
 
-        // Find novels by liked authors that aren't in library
         val novelsByLikedAuthors = candidates
             .filter { novel ->
                 novel.authorNormalized != null &&
@@ -378,7 +398,6 @@ class RecommendationEngine(
 
         if (novelsByLikedAuthors.size < 2) return null
 
-        // Create author name lookup for display
         val authorDisplayNames = likedAuthors.associate { it.authorNormalized to it.displayName }
 
         val recommendations = novelsByLikedAuthors.map { novel ->
@@ -408,7 +427,6 @@ class RecommendationEngine(
             )
         }
 
-        // Generate title based on author count
         val authorCount = novelsByLikedAuthors
             .mapNotNull { it.authorNormalized }
             .distinct()
@@ -431,9 +449,6 @@ class RecommendationEngine(
         )
     }
 
-    /**
-     * BECAUSE YOU READ - Similar to recently read novels
-     */
     private suspend fun generateSimilarToRecentGroup(
         userProfile: UserTasteProfile,
         candidates: List<NovelVector>,
@@ -454,16 +469,17 @@ class RecommendationEngine(
 
         if (pool.isEmpty()) return null
 
-        val similar = SimilarityCalculator.findSimilar(
+        // Use quality-aware similarity calculation
+        val similar = SimilarityCalculator.findSimilarWithQuality(
             target = sourceVector,
             candidates = pool,
             limit = config.maxPerGroup,
-            minSimilarity = 0.15f // Lower threshold for similarity
+            minSimilarity = 0.12f // Lower threshold to get more results
         )
 
         if (similar.isEmpty()) return null
 
-        val recommendations = similar.map { (novel, _) ->
+        val recommendations = similar.map { (novel, similarity) ->
             val breakdown = ScoreBreakdown(
                 tagSimilarity = SimilarityCalculator.calculateTagSimilarity(sourceVector.tags, novel.tags),
                 authorMatch = SimilarityCalculator.calculateAuthorSimilarity(sourceVector.authorNormalized, novel.authorNormalized),
@@ -499,9 +515,6 @@ class RecommendationEngine(
         )
     }
 
-    /**
-     * TOP RATED - Highest rated novels not yet shown
-     */
     private fun generateTopRatedGroup(
         userProfile: UserTasteProfile,
         candidates: List<NovelVector>,
@@ -516,7 +529,6 @@ class RecommendationEngine(
 
         if (pool.isEmpty()) return null
 
-        // Take top rated that haven't been used much
         val topRated = pool.take(config.maxPerGroup)
 
         val recommendations = topRated.map { novel ->
@@ -542,16 +554,12 @@ class RecommendationEngine(
         )
     }
 
-    /**
-     * GENRE GROUPS - Create groups for each major genre found in candidates
-     */
     private fun generateGenreGroups(
         candidates: List<NovelVector>,
         config: RecommendationConfig,
         usedUrls: Set<String>,
         maxOverlap: Int
     ): List<RecommendationGroup> {
-        // Count tag occurrences
         val tagCounts = mutableMapOf<TagNormalizer.TagCategory, Int>()
         candidates.forEach { novel ->
             novel.tags.forEach { tag ->
@@ -559,11 +567,10 @@ class RecommendationEngine(
             }
         }
 
-        // Get top 2-3 genres with enough novels
         val popularGenres = tagCounts.entries
-            .filter { it.value >= 5 } // At least 5 novels in genre
+            .filter { it.value >= 5 }
             .sortedByDescending { it.value }
-            .take(2) // Limit to 2 genre groups
+            .take(2)
             .map { it.key }
 
         val groups = mutableListOf<RecommendationGroup>()
@@ -576,7 +583,7 @@ class RecommendationEngine(
                 .sortedByDescending { it.rating ?: 0 }
                 .take(config.maxPerGroup)
 
-            if (genreCandidates.size >= 3) { // Need at least 3 for a group
+            if (genreCandidates.size >= 3) {
                 val recommendations = genreCandidates.map { novel ->
                     val breakdown = ScoreBreakdown(
                         tagSimilarity = 0.8f,
@@ -614,9 +621,6 @@ class RecommendationEngine(
         return groups
     }
 
-    /**
-     * DISCOVER NEW SOURCE - Novels from other providers
-     */
     private fun generateDiscoverNewSourceGroup(
         candidates: List<NovelVector>,
         preferredProvider: String,
@@ -662,9 +666,6 @@ class RecommendationEngine(
         )
     }
 
-    /**
-     * PROVIDER TRENDING - One trending group per provider (if we have multiple)
-     */
     private fun generateProviderTrendingGroups(
         candidates: List<NovelVector>,
         config: RecommendationConfig,
@@ -673,13 +674,11 @@ class RecommendationEngine(
     ): List<RecommendationGroup> {
         val byProvider = candidates.groupBy { it.providerName }
 
-        // Only create provider groups if we have multiple providers with enough novels
         if (byProvider.size < 2) return emptyList()
 
         val groups = mutableListOf<RecommendationGroup>()
         val providerUsedUrls = usedUrls.toMutableSet()
 
-        // Take top 2 providers by novel count
         val topProviders = byProvider.entries
             .sortedByDescending { it.value.size }
             .take(2)
@@ -689,7 +688,7 @@ class RecommendationEngine(
                 .filter { it.url !in providerUsedUrls }
                 .sortedWith(
                     compareByDescending<NovelVector> { it.rating ?: 0 }
-                        .thenBy { it.name } // Secondary sort for consistency
+                        .thenBy { it.name }
                 )
                 .take(config.maxPerGroup)
 
@@ -732,9 +731,6 @@ class RecommendationEngine(
         return groups
     }
 
-    /**
-     * NEW RELEASES - Ongoing (not completed) novels
-     */
     private fun generateNewReleasesGroup(
         candidates: List<NovelVector>,
         config: RecommendationConfig,
@@ -785,7 +781,8 @@ class RecommendationEngine(
     suspend fun getSimilarTo(
         novelUrl: String,
         limit: Int = 10,
-        excludeLibrary: Boolean = true
+        excludeLibrary: Boolean = true,
+        disabledProviders: Set<String> = emptySet()
     ): List<Recommendation> = withContext(Dispatchers.IO) {
         val sourceVector = loadNovelVector(novelUrl) ?: return@withContext emptyList()
         val userProfile = userPreferenceManager.getUserProfile()
@@ -795,13 +792,14 @@ class RecommendationEngine(
             libraryRepository.getLibrary().map { it.novel.url }.toSet()
         } else emptySet()
 
-        val allCandidates = loadAllCandidates(libraryUrls + novelUrl, filterState)
+        val allCandidates = loadAllCandidates(libraryUrls + novelUrl, filterState, disabledProviders)
 
-        val similar = SimilarityCalculator.findSimilar(
+        // Use quality-aware similarity
+        val similar = SimilarityCalculator.findSimilarWithQuality(
             target = sourceVector,
             candidates = allCandidates,
             limit = limit,
-            minSimilarity = 0.15f
+            minSimilarity = 0.12f
         )
 
         similar.map { (novel, _) ->
@@ -809,7 +807,8 @@ class RecommendationEngine(
                 tagSimilarity = SimilarityCalculator.calculateTagSimilarity(sourceVector.tags, novel.tags),
                 authorMatch = SimilarityCalculator.calculateAuthorSimilarity(sourceVector.authorNormalized, novel.authorNormalized),
                 ratingScore = SimilarityCalculator.calculateRatingSimilarity(sourceVector.rating, novel.rating),
-                providerBoost = if (novel.providerName == sourceVector.providerName) 1f else 0f
+                providerBoost = if (novel.providerName == sourceVector.providerName) 1f else 0f,
+                synopsisMatch = SimilarityCalculator.calculateSynopsisSimilarity(sourceVector.synopsisKeywords, novel.synopsisKeywords)
             )
 
             createRecommendation(
@@ -843,7 +842,6 @@ class RecommendationEngine(
         sourceNovelName: String? = null,
         isCrossProvider: Boolean = false
     ): Recommendation {
-        // Apply boost factor
         val boostFactor = userFilterManager.calculateBoostFactor(novel, filterState)
         val boostedScore = (breakdown.total * boostFactor).coerceAtMost(1f)
 
@@ -893,6 +891,7 @@ class RecommendationEngine(
                 when {
                     breakdown.authorMatch > 0.5f -> "Same author"
                     breakdown.tagSimilarity > 0.5f && matchingTags.isNotEmpty() -> "Similar ${matchingTags.first()}"
+                    breakdown.synopsisMatch > 0.3f -> "Similar themes"
                     sourceNovelName != null -> "Similar vibes"
                     else -> "You might like this"
                 }

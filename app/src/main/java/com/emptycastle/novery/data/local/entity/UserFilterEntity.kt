@@ -1,3 +1,5 @@
+// com/emptycastle/novery/data/local/entity/UserFilterEntity.kt
+
 package com.emptycastle.novery.data.local.entity
 
 import androidx.room.Entity
@@ -15,7 +17,7 @@ data class UserTagFilterEntity(
     @PrimaryKey
     val tag: String,  // TagCategory.name
 
-    val filterType: String,  // "BLOCKED", "BOOSTED", "NEUTRAL"
+    val filterType: String,  // "BLOCKED", "BOOSTED", "REDUCED", "NEUTRAL"
 
     val createdAt: Long = System.currentTimeMillis()
 )
@@ -57,6 +59,7 @@ data class BlockedAuthorEntity(
 enum class TagFilterType {
     BLOCKED,    // Never show novels with this tag
     BOOSTED,    // Prioritize novels with this tag
+    REDUCED,    // De-prioritize (show less often, but don't hide completely)
     NEUTRAL     // Default behavior (not stored)
 }
 

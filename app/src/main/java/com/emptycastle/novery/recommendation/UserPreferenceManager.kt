@@ -15,6 +15,27 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 
 /**
+ * Types of user interactions that affect preference scoring
+ */
+enum class InteractionType {
+    READ_CHAPTER,
+    COMPLETED_NOVEL,
+    DROPPED_NOVEL,
+    ADDED_TO_LIBRARY,
+    REMOVED_FROM_LIBRARY,
+    LONG_READ,
+    EXPLICIT_LIKE,
+    EXPLICIT_DISLIKE,
+    STATUS_READING,
+    STATUS_ON_HOLD,
+    STATUS_PLAN_TO_READ,
+
+    // Undo variants for status changes
+    UNDO_COMPLETED,
+    UNDO_DROPPED
+}
+
+/**
  * Manages user preference calculation and updates.
  * Tracks what the user reads and builds their taste profile.
  */
@@ -22,6 +43,37 @@ class UserPreferenceManager(
     private val recommendationDao: RecommendationDao,
     private val authorPreferenceManager: AuthorPreferenceManager
 ) {
+
+    companion object {
+        // Long read threshold: 30 minutes of continuous reading
+        private const val LONG_READ_THRESHOLD_SECONDS = 30 * 60L
+    }
+
+    // ================================================================
+    // SCORE CONFIGURATION
+    // ================================================================
+
+    /**
+     * Get score change for each interaction type
+     */
+    private fun getScoreChange(interactionType: InteractionType, weight: Float = 1.0f): Int {
+        val baseScore = when (interactionType) {
+            InteractionType.EXPLICIT_LIKE -> 200
+            InteractionType.EXPLICIT_DISLIKE -> -150
+            InteractionType.READ_CHAPTER -> 10
+            InteractionType.COMPLETED_NOVEL -> 100
+            InteractionType.DROPPED_NOVEL -> -150
+            InteractionType.ADDED_TO_LIBRARY -> 50
+            InteractionType.REMOVED_FROM_LIBRARY -> 0 // Neutral - ambiguous signal
+            InteractionType.LONG_READ -> 30
+            InteractionType.STATUS_READING -> 25
+            InteractionType.STATUS_ON_HOLD -> -25
+            InteractionType.STATUS_PLAN_TO_READ -> 10
+            InteractionType.UNDO_COMPLETED -> -100
+            InteractionType.UNDO_DROPPED -> 150
+        }
+        return (baseScore * weight).toInt()
+    }
 
     // ================================================================
     // PROFILE RETRIEVAL
@@ -54,7 +106,6 @@ class UserPreferenceManager(
                 return@mapNotNull null
             }
 
-            // Calculate confidence based on sample size
             val confidence = calculateConfidence(pref.novelCount, pref.readingTimeSeconds)
 
             TagAffinity(
@@ -67,7 +118,6 @@ class UserPreferenceManager(
             )
         }
 
-        // Separate preferred vs avoided
         val preferred = affinities
             .filter { it.score >= 0.5f }
             .sortedByDescending { it.score * it.confidence }
@@ -76,41 +126,116 @@ class UserPreferenceManager(
             .filter { it.dropRate > 0.5f && it.novelCount >= 2 }
             .sortedByDescending { it.completionRate }
 
-        // Calculate diversity (how spread out are the preferences?)
         val diversityScore = calculateDiversity(preferred)
-
         val totalNovels = preferences.maxOfOrNull { it.novelCount } ?: 0
 
         return UserTasteProfile(
             preferredTags = preferred,
             avoidedTags = avoided,
             diversityScore = diversityScore,
-            preferredRatingMin = null, // Could add rating preference tracking
+            preferredRatingMin = null,
             sampleSize = totalNovels
         )
     }
 
     private fun calculateConfidence(novelCount: Int, readingTimeSeconds: Long): Float {
-        // More novels and more reading time = higher confidence
         val novelFactor = (novelCount / 10f).coerceAtMost(1f)
-        val timeFactor = (readingTimeSeconds / (10 * 60 * 60f)).coerceAtMost(1f) // 10 hours max
+        val timeFactor = (readingTimeSeconds / (10 * 60 * 60f)).coerceAtMost(1f)
         return ((novelFactor + timeFactor) / 2).coerceIn(0.1f, 1f)
     }
 
     private fun calculateDiversity(preferences: List<TagAffinity>): Float {
         if (preferences.size <= 1) return 0f
 
-        // Calculate variance in scores - high variance = focused, low = diverse
         val scores = preferences.map { it.score }
         val mean = scores.average().toFloat()
         val variance = scores.map { (it - mean) * (it - mean) }.average().toFloat()
 
-        // Invert: low variance = high diversity score
         return (1f - variance).coerceIn(0f, 1f)
     }
 
     // ================================================================
-    // PREFERENCE UPDATES
+    // TAG INTERACTION RECORDING
+    // ================================================================
+
+    /**
+     * Record a tag interaction from onboarding or explicit user action.
+     * Use this for direct user feedback (likes/dislikes, onboarding selections).
+     */
+    suspend fun recordTagInteraction(
+        tag: TagCategory,
+        interactionType: InteractionType,
+        weight: Float = 1.0f
+    ) = withContext(Dispatchers.IO) {
+        recordInteractionInternal(
+            tagName = tag.name,
+            interactionType = interactionType,
+            weight = weight
+        )
+    }
+
+    /**
+     * Record multiple tag interactions at once (e.g., from onboarding)
+     */
+    suspend fun recordTagInteractions(
+        tags: List<TagCategory>,
+        interactionType: InteractionType,
+        weight: Float = 1.0f
+    ) = withContext(Dispatchers.IO) {
+        tags.forEach { tag ->
+            recordInteractionInternal(
+                tagName = tag.name,
+                interactionType = interactionType,
+                weight = weight
+            )
+        }
+    }
+
+    /**
+     * Internal method to record an interaction with full metadata control
+     */
+    private suspend fun recordInteractionInternal(
+        tagName: String,
+        interactionType: InteractionType,
+        weight: Float = 1.0f,
+        novelDelta: Int = 0,
+        chaptersDelta: Int = 0,
+        timeDelta: Long = 0,
+        completedDelta: Int = 0,
+        droppedDelta: Int = 0
+    ) {
+        val existing = recommendationDao.getPreference(tagName)
+        val scoreChange = getScoreChange(interactionType, weight)
+
+        if (existing != null) {
+            val newScore = (existing.affinityScore + scoreChange).coerceIn(0, 1000)
+            recommendationDao.updatePreference(
+                tag = tagName,
+                score = newScore,
+                novelDelta = novelDelta,
+                chaptersDelta = chaptersDelta,
+                timeDelta = timeDelta,
+                completedDelta = completedDelta,
+                droppedDelta = droppedDelta
+            )
+        } else {
+            val initialScore = (500 + scoreChange).coerceIn(0, 1000)
+            recommendationDao.insertPreference(
+                UserPreferenceEntity(
+                    tag = tagName,
+                    affinityScore = initialScore,
+                    novelCount = novelDelta.coerceAtLeast(0),
+                    chaptersRead = chaptersDelta.coerceAtLeast(0),
+                    readingTimeSeconds = timeDelta.coerceAtLeast(0),
+                    completedCount = completedDelta.coerceAtLeast(0),
+                    droppedCount = droppedDelta.coerceAtLeast(0)
+                )
+            )
+        }
+    }
+
+    // ================================================================
+    // BEHAVIOR-BASED PREFERENCE UPDATES
     // ================================================================
 
     /**
@@ -123,29 +248,13 @@ class UserPreferenceManager(
         val tags = TagNormalizer.normalizeAll(novelDetails.tags ?: emptyList())
 
         for (tag in tags) {
-            val existing = recommendationDao.getPreference(tag.name)
-
-            if (existing != null) {
-                // Increment novel count, small score boost for adding
-                val newScore = (existing.affinityScore + 50).coerceAtMost(1000)
-                recommendationDao.updatePreference(
-                    tag = tag.name,
-                    score = newScore,
-                    novelDelta = 1
-                )
-            } else {
-                // Create new preference with initial score
-                recommendationDao.insertPreference(
-                    UserPreferenceEntity(
-                        tag = tag.name,
-                        affinityScore = 500, // Neutral starting point
-                        novelCount = 1
-                    )
-                )
-            }
+            recordInteractionInternal(
+                tagName = tag.name,
+                interactionType = InteractionType.ADDED_TO_LIBRARY,
+                novelDelta = 1
+            )
         }
 
-        // Track author
         authorPreferenceManager.onNovelAddedToLibrary(novelDetails, novelUrl)
     }
 
@@ -159,31 +268,28 @@ class UserPreferenceManager(
     ) = withContext(Dispatchers.IO) {
         val tags = TagNormalizer.normalizeAll(novelDetails.tags ?: emptyList())
 
+        // Calculate weight based on reading intensity
+        val chapterWeight = chaptersRead.coerceIn(1, 10).toFloat()
+        val isLongRead = readingTimeSeconds >= LONG_READ_THRESHOLD_SECONDS
+
         for (tag in tags) {
-            val existing = recommendationDao.getPreference(tag.name)
+            // Record chapter reads with weighted score
+            recordInteractionInternal(
+                tagName = tag.name,
+                interactionType = InteractionType.READ_CHAPTER,
+                weight = chapterWeight,
+                chaptersDelta = chaptersRead,
+                timeDelta = readingTimeSeconds
+            )
 
-            if (existing != null) {
-                // Reading = positive signal, increase score
-                val readingBoost = (chaptersRead * 10 + (readingTimeSeconds / 60).toInt())
-                    .coerceAtMost(100)
-                val newScore = (existing.affinityScore + readingBoost).coerceAtMost(1000)
-
-                recommendationDao.updatePreference(
-                    tag = tag.name,
-                    score = newScore,
-                    chaptersDelta = chaptersRead,
-                    timeDelta = readingTimeSeconds
-                )
-            } else {
-                // Shouldn't happen normally, but handle it
-                recommendationDao.insertPreference(
-                    UserPreferenceEntity(
-                        tag = tag.name,
-                        affinityScore = 550, // Slightly positive (they're reading it)
-                        novelCount = 1,
-                        chaptersRead = chaptersRead,
-                        readingTimeSeconds = readingTimeSeconds
-                    )
+            // Bonus for long reading sessions
+            if (isLongRead) {
+                val longReadWeight = (readingTimeSeconds / LONG_READ_THRESHOLD_SECONDS.toFloat())
+                    .coerceAtMost(3f)
+                recordInteractionInternal(
+                    tagName = tag.name,
+                    interactionType = InteractionType.LONG_READ,
+                    weight = longReadWeight
                 )
             }
         }
@@ -209,36 +315,42 @@ class UserPreferenceManager(
     ) = withContext(Dispatchers.IO) {
         val tags = TagNormalizer.normalizeAll(novelDetails.tags ?: emptyList())
 
-        val (scoreDelta, completedDelta, droppedDelta) = when (newStatus) {
-            ReadingStatus.COMPLETED -> Triple(100, 1, 0)  // Big positive signal
-            ReadingStatus.DROPPED -> Triple(-150, 0, 1)  // Negative signal
-            ReadingStatus.READING -> Triple(25, 0, 0)    // Small positive
-            ReadingStatus.ON_HOLD -> Triple(-25, 0, 0)   // Slight negative
-            ReadingStatus.PLAN_TO_READ -> Triple(10, 0, 0) // Interest signal
+        // Map status to interaction type and deltas
+        val (interactionType, completedDelta, droppedDelta) = when (newStatus) {
+            ReadingStatus.COMPLETED -> Triple(InteractionType.COMPLETED_NOVEL, 1, 0)
+            ReadingStatus.DROPPED -> Triple(InteractionType.DROPPED_NOVEL, 0, 1)
+            ReadingStatus.READING -> Triple(InteractionType.STATUS_READING, 0, 0)
+            ReadingStatus.ON_HOLD -> Triple(InteractionType.STATUS_ON_HOLD, 0, 0)
+            ReadingStatus.PLAN_TO_READ -> Triple(InteractionType.STATUS_PLAN_TO_READ, 0, 0)
         }
 
         // Undo old status effect if applicable
-        val undoEffect = when (oldStatus) {
-            ReadingStatus.COMPLETED -> Triple(-100, -1, 0)
-            ReadingStatus.DROPPED -> Triple(150, 0, -1)
-            else -> Triple(0, 0, 0)
+        val undoInteraction = when (oldStatus) {
+            ReadingStatus.COMPLETED -> InteractionType.UNDO_COMPLETED to (-1 to 0)
+            ReadingStatus.DROPPED -> InteractionType.UNDO_DROPPED to (0 to -1)
+            else -> null
         }
 
         for (tag in tags) {
-            val existing = recommendationDao.getPreference(tag.name) ?: continue
+            // Apply undo if needed
+            undoInteraction?.let { (undoType, deltas) ->
+                recordInteractionInternal(
+                    tagName = tag.name,
+                    interactionType = undoType,
+                    completedDelta = deltas.first,
+                    droppedDelta = deltas.second
+                )
+            }
 
-            val newScore = (existing.affinityScore + scoreDelta + undoEffect.first)
-                .coerceIn(0, 1000)
-
-            recommendationDao.updatePreference(
-                tag = tag.name,
-                score = newScore,
-                completedDelta = completedDelta + undoEffect.second,
-                droppedDelta = droppedDelta + undoEffect.third
+            // Apply new status
+            recordInteractionInternal(
+                tagName = tag.name,
+                interactionType = interactionType,
+                completedDelta = completedDelta,
+                droppedDelta = droppedDelta
             )
         }
 
-        // Track author status
         authorPreferenceManager.onStatusChanged(
             novelDetails = novelDetails,
             novelUrl = novelUrl,
@@ -258,19 +370,14 @@ class UserPreferenceManager(
         val tags = TagNormalizer.normalizeAll(novelDetails.tags ?: emptyList())
 
         for (tag in tags) {
-            val existing = recommendationDao.getPreference(tag.name) ?: continue
-
-            // Don't change score much - removal is ambiguous
-            // But do update counts
-            recommendationDao.updatePreference(
-                tag = tag.name,
-                score = existing.affinityScore,
+            recordInteractionInternal(
+                tagName = tag.name,
+                interactionType = InteractionType.REMOVED_FROM_LIBRARY,
                 novelDelta = -1,
                 completedDelta = if (wasCompleted) -1 else 0
             )
         }
 
-        // Track author removal
         authorPreferenceManager.onNovelRemoved(
             novelDetails = novelDetails,
             novelUrl = novelUrl,
@@ -287,39 +394,31 @@ class UserPreferenceManager(
      * Call this occasionally or when user requests it.
      */
     suspend fun recalculateAllPreferences() = withContext(Dispatchers.IO) {
-        // Clear existing
         recommendationDao.clearAllPreferences()
 
-        // Get all data
         val libraryRepository = RepositoryProvider.getLibraryRepository()
         val offlineRepository = RepositoryProvider.getOfflineRepository()
         val historyRepository = RepositoryProvider.getHistoryRepository()
-        val statsRepository = RepositoryProvider.getStatsRepository()
 
         val library = libraryRepository.getLibrary()
         val tagScores = mutableMapOf<TagCategory, MutablePreferenceData>()
-
-        // Build library items for author recalculation
         val libraryItemsWithDetails = mutableListOf<LibraryItemWithDetails>()
 
         for (item in library) {
-            // Get cached novel details
             val details = offlineRepository.getNovelDetails(item.novel.url) ?: continue
             val tags = TagNormalizer.normalizeAll(details.tags ?: emptyList())
 
-            // Get reading data for this novel
             val readCount = historyRepository.getReadChapterCount(item.novel.url)
             val totalChapters = details.chapters.size
             val progress = if (totalChapters > 0) readCount.toFloat() / totalChapters else 0f
 
-            // Build library item for author recalculation
             libraryItemsWithDetails.add(
                 LibraryItemWithDetails(
                     novelUrl = item.novel.url,
                     author = details.author,
                     status = item.readingStatus,
                     chaptersRead = readCount,
-                    readingTimeSeconds = 0L, // Per-novel reading time not tracked separately
+                    readingTimeSeconds = 0L,
                     progressPercent = progress
                 )
             )
@@ -329,34 +428,52 @@ class UserPreferenceManager(
                 data.novelCount++
                 data.chaptersRead += readCount
 
-                // Score based on status and progress
-                when (item.readingStatus) {
+                // Calculate score using interaction type scoring
+                val statusScore = when (item.readingStatus) {
                     ReadingStatus.COMPLETED -> {
                         data.completedCount++
-                        data.scoreAccumulator += 900
+                        getScoreChange(InteractionType.COMPLETED_NOVEL) +
+                                getScoreChange(InteractionType.ADDED_TO_LIBRARY)
                     }
                     ReadingStatus.DROPPED -> {
                         data.droppedCount++
-                        data.scoreAccumulator += 200
+                        getScoreChange(InteractionType.DROPPED_NOVEL) +
+                                getScoreChange(InteractionType.ADDED_TO_LIBRARY)
                     }
                     ReadingStatus.READING -> {
-                        data.scoreAccumulator += (400 + progress * 300).toInt()
+                        getScoreChange(InteractionType.STATUS_READING) +
+                                getScoreChange(InteractionType.ADDED_TO_LIBRARY) +
+                                (progress * getScoreChange(InteractionType.READ_CHAPTER) * 10).toInt()
                     }
                     ReadingStatus.ON_HOLD -> {
-                        data.scoreAccumulator += 350
+                        getScoreChange(InteractionType.STATUS_ON_HOLD) +
+                                getScoreChange(InteractionType.ADDED_TO_LIBRARY)
                     }
                     ReadingStatus.PLAN_TO_READ -> {
-                        data.scoreAccumulator += 450
+                        getScoreChange(InteractionType.STATUS_PLAN_TO_READ) +
+                                getScoreChange(InteractionType.ADDED_TO_LIBRARY)
                     }
                 }
+
+                // Add reading chapter bonus
+                val chapterBonus = (readCount * getScoreChange(InteractionType.READ_CHAPTER))
+                    .coerceAtMost(200)
+
+                data.scoreAccumulator += statusScore + chapterBonus
             }
         }
 
-        // Convert to entities and save
         val preferences = tagScores.map { (tag, data) ->
+            // Calculate average score and normalize to 0-1000 range
+            val avgScore = if (data.novelCount > 0) {
+                (500 + data.scoreAccumulator / data.novelCount).coerceIn(0, 1000)
+            } else {
+                500
+            }
+
             UserPreferenceEntity(
                 tag = tag.name,
-                affinityScore = (data.scoreAccumulator / data.novelCount).coerceIn(0, 1000),
+                affinityScore = avgScore,
                 novelCount = data.novelCount,
                 chaptersRead = data.chaptersRead,
                 readingTimeSeconds = data.readingTimeSeconds,
@@ -366,9 +483,15 @@ class UserPreferenceManager(
         }
 
         recommendationDao.insertPreferences(preferences)
-
-        // Also recalculate author preferences
         authorPreferenceManager.recalculateAllPreferences(libraryItemsWithDetails)
+    }
+
+    /**
+     * Clear all preferences (for testing or reset)
+     */
+    suspend fun clearAllPreferences() = withContext(Dispatchers.IO) {
+        recommendationDao.clearAllPreferences()
+        authorPreferenceManager.clearAllPreferences()
     }
 
     private data class MutablePreferenceData(

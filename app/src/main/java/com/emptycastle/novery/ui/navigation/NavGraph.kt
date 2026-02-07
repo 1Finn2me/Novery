@@ -12,6 +12,7 @@ import com.emptycastle.novery.data.backup.BackupManager
 import com.emptycastle.novery.data.cache.CacheManager
 import com.emptycastle.novery.data.local.NovelDatabase
 import com.emptycastle.novery.data.local.PreferencesManager
+import com.emptycastle.novery.data.repository.RepositoryProvider
 import com.emptycastle.novery.domain.model.AppSettings
 import com.emptycastle.novery.ui.screens.details.DetailsScreen
 import com.emptycastle.novery.ui.screens.downloads.DownloadsScreen
@@ -19,6 +20,7 @@ import com.emptycastle.novery.ui.screens.home.HomeScreen
 import com.emptycastle.novery.ui.screens.home.tabs.browse.ProviderBrowseScreen
 import com.emptycastle.novery.ui.screens.home.tabs.browse.ProviderWebViewScreen
 import com.emptycastle.novery.ui.screens.notification.NotificationScreen
+import com.emptycastle.novery.ui.screens.onboarding.OnboardingScreen
 import com.emptycastle.novery.ui.screens.profile.ProfileScreen
 import com.emptycastle.novery.ui.screens.reader.ReaderScreen
 import com.emptycastle.novery.ui.screens.reader.settings.ReaderSettingsScreen
@@ -30,10 +32,35 @@ fun NoveryNavGraph(
     navController: NavHostController,
     appSettings: AppSettings
 ) {
+    // Check if onboarding is needed
+    val preferencesManager = remember { RepositoryProvider.getPreferencesManager() }
+    val needsOnboarding = remember {
+        preferencesManager.isFirstRun() || !preferencesManager.hasCompletedOnboarding()
+    }
+
+    val startDestination = if (needsOnboarding) {
+        NavRoutes.Onboarding.route
+    } else {
+        NavRoutes.Home.route
+    }
+
     NavHost(
         navController = navController,
-        startDestination = NavRoutes.Home.route
+        startDestination = startDestination
     ) {
+        // ================================================================
+        // ONBOARDING
+        // ================================================================
+        composable(route = NavRoutes.Onboarding.route) {
+            OnboardingScreen(
+                onComplete = {
+                    navController.navigate(NavRoutes.Home.route) {
+                        popUpTo(NavRoutes.Onboarding.route) { inclusive = true }
+                    }
+                }
+            )
+        }
+
         // ================================================================
         // HOME (with nested tab navigation)
         // ================================================================
@@ -66,6 +93,9 @@ fun NoveryNavGraph(
                 },
                 onNavigateToDownloads = {
                     navController.navigate(NavRoutes.Downloads.route)
+                },
+                onNavigateToOnboarding = {
+                    navController.navigate(NavRoutes.Onboarding.route)
                 }
             )
         }
@@ -107,9 +137,9 @@ fun NoveryNavGraph(
         composable(route = NavRoutes.Storage.route) {
             val context = LocalContext.current
             val database = remember { NovelDatabase.getInstance(context) }
-            val preferencesManager = remember { PreferencesManager(context) }
+            val prefsManager = remember { PreferencesManager(context) }
             val cacheManager = remember { CacheManager(context, database) }
-            val backupManager = remember { BackupManager(context, database, preferencesManager) }
+            val backupManager = remember { BackupManager(context, database, prefsManager) }
 
             StorageScreen(
                 cacheManager = cacheManager,
@@ -248,7 +278,7 @@ fun NoveryNavGraph(
                         NavRoutes.ProviderWebView.createRoute(provider, url)
                     )
                 },
-                onNavigateToDownloads = {  // Add this
+                onNavigateToDownloads = {
                     navController.navigate(NavRoutes.Downloads.route)
                 }
             )

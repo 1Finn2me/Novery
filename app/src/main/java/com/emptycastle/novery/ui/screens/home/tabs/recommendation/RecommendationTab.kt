@@ -45,11 +45,13 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.emptycastle.novery.recommendation.model.Recommendation
+import com.emptycastle.novery.recommendation.model.RecommendationType
 import com.emptycastle.novery.ui.screens.home.tabs.recommendation.components.EmptyRecommendations
 import com.emptycastle.novery.ui.screens.home.tabs.recommendation.components.NovelActionMenu
 import com.emptycastle.novery.ui.screens.home.tabs.recommendation.components.ProfileHeader
 import com.emptycastle.novery.ui.screens.home.tabs.recommendation.components.RecommendationSection
 import com.emptycastle.novery.ui.screens.home.tabs.recommendation.components.RecommendationSettingsSheet
+import com.emptycastle.novery.ui.screens.home.tabs.recommendation.components.SourceRecommendationsSection
 import com.emptycastle.novery.ui.screens.home.tabs.recommendation.components.TagFilterSheet
 import kotlinx.coroutines.launch
 
@@ -57,7 +59,8 @@ import kotlinx.coroutines.launch
 @Composable
 fun RecommendationTab(
     onNavigateToDetails: (novelUrl: String, providerName: String) -> Unit = { _, _ -> },
-    onNavigateToBrowse: () -> Unit = {}
+    onNavigateToBrowse: () -> Unit = {},
+    onNavigateToOnboarding: () -> Unit = {}
 ) {
     val viewModel: RecommendationViewModel = viewModel()
     val uiState by viewModel.uiState.collectAsState()
@@ -76,7 +79,6 @@ fun RecommendationTab(
     var selectedRecommendation by remember { mutableStateOf<Recommendation?>(null) }
     var lastHiddenNovel by remember { mutableStateOf<Pair<String, String>?>(null) }
 
-    // Determine if settings has changes indicator
     val hasSettingsChanges = hiddenNovels.isNotEmpty() ||
             blockedAuthors.isNotEmpty() ||
             uiState.showCrossProvider
@@ -130,7 +132,7 @@ fun RecommendationTab(
                     }
                 }
 
-                !uiState.hasRecommendations -> {
+                !uiState.hasRecommendations && !uiState.hasLibrarySources -> {
                     EmptyRecommendations(
                         profileMaturity = uiState.profileMaturity,
                         novelsInProfile = uiState.novelsInProfile,
@@ -141,9 +143,11 @@ fun RecommendationTab(
                 }
 
                 else -> {
-                    // Deduplicate recommendation groups to prevent potential key issues
-                    val uniqueGroups = remember(uiState.recommendationGroups) {
-                        uiState.recommendationGroups.distinctBy { it.type }
+                    // Filter out BECAUSE_YOU_READ from regular groups since we handle it separately
+                    val regularGroups = remember(uiState.recommendationGroups) {
+                        uiState.recommendationGroups
+                            .filter { it.type != RecommendationType.BECAUSE_YOU_READ }
+                            .distinctBy { it.type }
                     }
 
                     LazyColumn(
@@ -154,6 +158,7 @@ fun RecommendationTab(
                         ),
                         verticalArrangement = Arrangement.spacedBy(28.dp)
                     ) {
+                        // Profile Header
                         item(key = "header") {
                             ProfileHeader(
                                 profileMaturity = uiState.profileMaturity,
@@ -167,8 +172,48 @@ fun RecommendationTab(
                             )
                         }
 
+                        // === Library-Based "Because You Read" Section ===
+                        if (uiState.hasLibrarySources) {
+                            item(key = "source_recommendations") {
+                                SourceRecommendationsSection(
+                                    selectedSource = uiState.selectedSourceNovel,
+                                    otherSources = uiState.otherSourceNovels,
+                                    recommendations = uiState.sourceNovelRecommendations,
+                                    isExpanded = uiState.isSourceSelectorExpanded,
+                                    isLoading = uiState.isLoadingSourceRecommendations,
+                                    onToggleExpanded = { viewModel.toggleSourceSelector() },
+                                    onSelectSource = { source -> viewModel.selectSourceNovel(source) },
+                                    onNovelClick = { novelUrl, providerName ->
+                                        viewModel.onRecommendationClicked(novelUrl)
+                                        onNavigateToDetails(novelUrl, providerName)
+                                    },
+                                    onNovelLongClick = { recommendation ->
+                                        selectedRecommendation = recommendation
+                                    },
+                                    onQuickDismiss = { recommendation ->
+                                        lastHiddenNovel = recommendation.novel.url to recommendation.novel.name
+                                        viewModel.hideNovel(recommendation.novel.url, recommendation.novel.name)
+
+                                        scope.launch {
+                                            val result = snackbarHostState.showSnackbar(
+                                                message = "Hidden: ${recommendation.novel.name}",
+                                                actionLabel = "Undo",
+                                                duration = SnackbarDuration.Short
+                                            )
+                                            if (result == SnackbarResult.ActionPerformed) {
+                                                lastHiddenNovel?.let { (url, _) ->
+                                                    viewModel.unhideNovel(url)
+                                                }
+                                            }
+                                        }
+                                    }
+                                )
+                            }
+                        }
+
+                        // Regular recommendation sections
                         itemsIndexed(
-                            items = uniqueGroups,
+                            items = regularGroups,
                             key = { index, group -> "group_${group.type.name}_$index" }
                         ) { _, group ->
                             RecommendationSection(
@@ -200,6 +245,7 @@ fun RecommendationTab(
                             )
                         }
 
+                        // Footer
                         item(key = "footer") {
                             Box(
                                 modifier = Modifier
@@ -235,7 +281,7 @@ fun RecommendationTab(
         )
     }
 
-    // Settings Sheet (combines cross-provider, hidden novels, blocked authors)
+    // Settings Sheet
     if (showSettingsSheet) {
         RecommendationSettingsSheet(
             showCrossProvider = uiState.showCrossProvider,
@@ -246,6 +292,7 @@ fun RecommendationTab(
             onUnblockAuthor = { viewModel.unblockAuthor(it) },
             onClearAllHidden = { viewModel.clearAllHiddenNovels() },
             onClearAllBlocked = { viewModel.clearAllBlockedAuthors() },
+            onResetPreferences = onNavigateToOnboarding,
             onDismiss = { showSettingsSheet = false }
         )
     }

@@ -1,3 +1,5 @@
+// com/emptycastle/novery/ui/screens/home/tabs/recommendation/components/TagFilterSheet.kt
+
 package com.emptycastle.novery.ui.screens.home.tabs.recommendation.components
 
 import androidx.compose.animation.animateColorAsState
@@ -23,6 +25,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Block
 import androidx.compose.material.icons.rounded.Clear
+import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.TrendingUp
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -127,6 +130,7 @@ fun TagFilterSheet(
 
     val blockedCount = tagFilters.count { it.value == TagFilterType.BLOCKED }
     val boostedCount = tagFilters.count { it.value == TagFilterType.BOOSTED }
+    val reducedCount = tagFilters.count { it.value == TagFilterType.REDUCED }
 
     // Quick filter options with their target groups
     val quickFilters = remember {
@@ -167,7 +171,7 @@ fun TagFilterSheet(
                     )
 
                     // Active filters summary
-                    if (blockedCount > 0 || boostedCount > 0) {
+                    if (blockedCount > 0 || boostedCount > 0 || reducedCount > 0) {
                         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                             if (blockedCount > 0) {
                                 FilterCountChip(
@@ -175,6 +179,14 @@ fun TagFilterSheet(
                                     label = "blocked",
                                     color = MaterialTheme.colorScheme.error,
                                     containerColor = MaterialTheme.colorScheme.errorContainer
+                                )
+                            }
+                            if (reducedCount > 0) {
+                                FilterCountChip(
+                                    count = reducedCount,
+                                    label = "reduced",
+                                    color = MaterialTheme.colorScheme.tertiary,
+                                    containerColor = MaterialTheme.colorScheme.tertiaryContainer
                                 )
                             }
                             if (boostedCount > 0) {
@@ -189,7 +201,7 @@ fun TagFilterSheet(
                     }
                 }
 
-                if (blockedCount > 0 || boostedCount > 0) {
+                if (blockedCount > 0 || boostedCount > 0 || reducedCount > 0) {
                     TextButton(onClick = {
                         tagFilters.keys.forEach { tag ->
                             onSetFilter(tag, TagFilterType.NEUTRAL)
@@ -283,12 +295,17 @@ fun TagFilterSheet(
                     LegendItem(
                         color = MaterialTheme.colorScheme.error,
                         icon = Icons.Rounded.Block,
-                        label = "Hide novels with tag"
+                        label = "Hide"
+                    )
+                    LegendItem(
+                        color = MaterialTheme.colorScheme.tertiary,
+                        icon = Icons.Rounded.KeyboardArrowDown,
+                        label = "Show less"
                     )
                     LegendItem(
                         color = MaterialTheme.colorScheme.primary,
                         icon = Icons.Rounded.TrendingUp,
-                        label = "Boost in results"
+                        label = "Boost"
                     )
                 }
             }
@@ -434,6 +451,7 @@ private fun TagFilterRow(
     val backgroundColor by animateColorAsState(
         targetValue = when (currentFilter) {
             TagFilterType.BLOCKED -> MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.4f)
+            TagFilterType.REDUCED -> MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.4f)
             TagFilterType.BOOSTED -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)
             TagFilterType.NEUTRAL -> MaterialTheme.colorScheme.surfaceContainerLow
         },
@@ -460,7 +478,8 @@ private fun TagFilterRow(
                 color = MaterialTheme.colorScheme.onSurface
             )
 
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                // Block button
                 FilterToggleButton(
                     isSelected = currentFilter == TagFilterType.BLOCKED,
                     icon = Icons.Rounded.Block,
@@ -473,6 +492,20 @@ private fun TagFilterRow(
                     contentDescription = "Block ${TagNormalizer.getDisplayName(tag)}"
                 )
 
+                // Reduce button
+                FilterToggleButton(
+                    isSelected = currentFilter == TagFilterType.REDUCED,
+                    icon = Icons.Rounded.KeyboardArrowDown,
+                    selectedColor = MaterialTheme.colorScheme.tertiary,
+                    onClick = {
+                        onFilterChange(
+                            if (currentFilter == TagFilterType.REDUCED) TagFilterType.NEUTRAL else TagFilterType.REDUCED
+                        )
+                    },
+                    contentDescription = "Reduce ${TagNormalizer.getDisplayName(tag)}"
+                )
+
+                // Boost button
                 FilterToggleButton(
                     isSelected = currentFilter == TagFilterType.BOOSTED,
                     icon = Icons.Rounded.TrendingUp,
@@ -510,7 +543,7 @@ private fun FilterToggleButton(
 
     Box(
         modifier = Modifier
-            .size(38.dp)
+            .size(36.dp)
             .clip(CircleShape)
             .background(backgroundColor)
             .clickable(onClick = onClick),
@@ -533,11 +566,11 @@ private fun LegendItem(
 ) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
     ) {
         Box(
             modifier = Modifier
-                .size(28.dp)
+                .size(26.dp)
                 .background(color.copy(alpha = 0.15f), CircleShape),
             contentAlignment = Alignment.Center
         ) {

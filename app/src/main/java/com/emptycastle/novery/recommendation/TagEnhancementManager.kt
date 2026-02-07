@@ -1,3 +1,4 @@
+// com/emptycastle/novery/recommendation/TagEnhancementManager.kt
 package com.emptycastle.novery.recommendation
 
 import android.util.Log
@@ -11,6 +12,7 @@ private const val TAG = "TagEnhancementManager"
 /**
  * Manages tag enhancement for novels that have synopses but few/no tags.
  * Uses SynopsisTagExtractor to infer tags from text to improve recommendation quality.
+ * Enhanced to also extract from titles.
  */
 class TagEnhancementManager(
     private val recommendationDao: RecommendationDao,
@@ -33,12 +35,8 @@ class TagEnhancementManager(
     )
 
     /**
-     * Enhance novels that have synopsis but few/no tags.
+     * Enhance novels that have synopsis/title but few/no tags.
      * This is a local operation - no network required.
-     *
-     * @param minTagThreshold Novels with fewer tags than this will be enhanced.
-     * @param forceReprocess If true, reprocess all novels regardless of existing tags.
-     * @param batchSize Number of novels to process (currently processes all, param reserved for future pagination).
      */
     suspend fun enhanceNovelsWithSynopsis(
         minTagThreshold: Int = 3,
@@ -51,7 +49,6 @@ class TagEnhancementManager(
         var errors = 0
 
         try {
-            // Get all discovered novels
             val allNovels = recommendationDao.getAllDiscoveredNovels()
 
             Log.d(TAG, "Starting tag enhancement for ${allNovels.size} novels")
@@ -60,7 +57,6 @@ class TagEnhancementManager(
                 processed++
 
                 try {
-                    // Parse existing tags from CSV string
                     val existingTags = novel.tagsString
                         ?.split(",")
                         ?.map { it.trim() }
@@ -72,16 +68,15 @@ class TagEnhancementManager(
                         continue
                     }
 
-                    // Skip if no synopsis available to analyze
-                    if (novel.synopsis.isNullOrBlank()) {
-                        continue
+                    // Extract tags from BOTH title and synopsis
+                    val titleTags = SynopsisTagExtractor.extractFromTitle(novel.name)
+                    val synopsisTags = if (!novel.synopsis.isNullOrBlank()) {
+                        SynopsisTagExtractor.extractTags(novel.synopsis, maxTags = 8)
+                    } else {
+                        emptySet()
                     }
 
-                    // Extract tags from synopsis
-                    val extractedCategories = SynopsisTagExtractor.extractTags(
-                        synopsis = novel.synopsis,
-                        maxTags = 8
-                    )
+                    val extractedCategories = (titleTags + synopsisTags).take(10).toSet()
 
                     if (extractedCategories.isEmpty()) {
                         continue
@@ -92,7 +87,7 @@ class TagEnhancementManager(
                         TagNormalizer.getDisplayName(it)
                     }
 
-                    // Merge with existing tags (avoid duplicates, case-insensitive check)
+                    // Merge with existing tags (avoid duplicates, case-insensitive)
                     val existingLower = existingTags.map { it.lowercase() }.toSet()
                     val newTags = extractedTagNames.filter {
                         it.lowercase() !in existingLower
@@ -161,7 +156,6 @@ class TagEnhancementManager(
             if (tags.isNotEmpty()) {
                 withTags++
 
-                // Normalize and count tags for distribution stats
                 val normalizedTags = TagNormalizer.normalizeAll(tags)
                 for (tag in normalizedTags) {
                     tagCounts[tag] = (tagCounts[tag] ?: 0) + 1
@@ -180,7 +174,7 @@ class TagEnhancementManager(
 
         val topTags = tagCounts.entries
             .sortedByDescending { it.value }
-            .take(20) // Increased to top 20 for better visibility
+            .take(20)
             .map { it.key to it.value }
 
         TagCoverageStats(
@@ -193,18 +187,24 @@ class TagEnhancementManager(
     }
 
     /**
-     * Enhance a single novel's tags from its synopsis.
-     * Useful when a user manually refreshes a novel or opens details.
+     * Enhance a single novel's tags from its title and synopsis.
      */
     suspend fun enhanceSingleNovel(novelUrl: String): Boolean = withContext(Dispatchers.IO) {
         try {
             val novel = recommendationDao.getDiscoveredNovel(novelUrl) ?: return@withContext false
 
-            if (novel.synopsis.isNullOrBlank()) {
-                return@withContext false
+            // Extract from title (always available)
+            val titleTags = SynopsisTagExtractor.extractFromTitle(novel.name)
+
+            // Extract from synopsis if available
+            val synopsisTags = if (!novel.synopsis.isNullOrBlank()) {
+                SynopsisTagExtractor.extractTags(novel.synopsis, maxTags = 8)
+            } else {
+                emptySet()
             }
 
-            val extractedCategories = SynopsisTagExtractor.extractTags(novel.synopsis, maxTags = 8)
+            val extractedCategories = (titleTags + synopsisTags).take(10).toSet()
+
             if (extractedCategories.isEmpty()) {
                 return@withContext false
             }
@@ -230,7 +230,7 @@ class TagEnhancementManager(
             )
             recommendationDao.insertDiscoveredNovel(updatedNovel)
 
-            Log.d(TAG, "Enhanced ${novel.name} with ${newTags.size} new tags")
+            Log.d(TAG, "Enhanced ${novel.name} with ${newTags.size} new tags (from title/synopsis)")
             true
 
         } catch (e: Exception) {
