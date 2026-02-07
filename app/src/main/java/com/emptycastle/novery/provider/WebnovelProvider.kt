@@ -1,4 +1,3 @@
-// com/emptycastle/novery/provider/WebnovelProvider.kt
 package com.emptycastle.novery.provider
 
 import com.emptycastle.novery.R
@@ -681,8 +680,32 @@ class WebnovelProvider : MainProvider() {
             element.select("br").append("\\n")
             element.text().replace("\\n", "\n").replace(Regex("\n{3,}"), "\n\n").trim()
         } ?: "No Summary Found"
+
+        // 1. Genre from the header (e.g. "Fantasy")
         val genresText = document.selectFirstOrNull(DetailSelectors.detailGenres)?.attrOrNull("title")
-        val tags = genresText?.split(",")?.map { it.trim() }?.filter { it.isNotBlank() }?.distinct() ?: emptyList()
+        val genreTags = genresText?.split(",")
+            ?.map { it.trim() }
+            ?.filter { it.isNotBlank() }
+            ?: emptyList()
+
+        // 2. Tags from the .m-tags section (Action, Adventure, Romance, etc.)
+        val contentTags = document.select(".m-tags .m-tag a").mapNotNull { el ->
+            el.attrOrNull("title")
+                ?.replace("Stories", "", ignoreCase = true)
+                ?.trim()
+                ?.takeIf { it.isNotBlank() }
+                ?: el.text()
+                    ?.replace("#", "")
+                    ?.trim()
+                    ?.lowercase()
+                    ?.replaceFirstChar { it.uppercase() }
+                    ?.takeIf { it.isNotBlank() }
+        }
+
+        // 3. Merge both, genre first, deduplicated
+        val tags = (genreTags + contentTags).distinct()
+        // --- FIX ENDS HERE ---
+
         var author: String? = null
         document.select(DetailSelectors.detailAuthorLabel).forEach { element ->
             if (element.text().trim() == "Author:") {
