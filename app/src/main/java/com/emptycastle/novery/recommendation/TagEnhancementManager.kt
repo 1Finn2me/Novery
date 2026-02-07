@@ -1,4 +1,3 @@
-// com/emptycastle/novery/recommendation/TagEnhancementManager.kt
 package com.emptycastle.novery.recommendation
 
 import android.util.Log

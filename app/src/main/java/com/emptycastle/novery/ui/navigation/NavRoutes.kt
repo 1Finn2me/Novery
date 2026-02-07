@@ -21,6 +21,14 @@ sealed class NavRoutes(val route: String) {
     object Notifications : NavRoutes("notifications")
 
     // ================================================================
+    // MORE TAB DESTINATIONS
+    // ================================================================
+
+    object Profile : NavRoutes("more/profile")
+
+    object Downloads : NavRoutes("more/downloads")
+
+    // ================================================================
     // READER DESTINATIONS
     // ================================================================
 
@@ -79,9 +87,9 @@ sealed class NavRoutes(val route: String) {
     sealed class Tab(route: String) : NavRoutes(route) {
         object Library : Tab("tab_library")
         object Browse : Tab("tab_browse")
-        object ForYou : Tab("tab_foryou")  // Renamed from Search
+        object ForYou : Tab("tab_foryou")
         object History : Tab("tab_history")
-        object Profile : Tab("tab_profile")
+        object More : Tab("tab_more")
     }
 
     companion object {
@@ -99,9 +107,9 @@ enum class HomeTabs(
 ) {
     LIBRARY("tab_library", "Library"),
     BROWSE("tab_browse", "Browse"),
-    FOR_YOU("tab_foryou", "For You"),  // Renamed from SEARCH
+    FOR_YOU("tab_foryou", "For You"),
     HISTORY("tab_history", "History"),
-    PROFILE("tab_profile", "Profile");
+    MORE("tab_more", "More");
 
     companion object {
         fun fromRoute(route: String): HomeTabs? {

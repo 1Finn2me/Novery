@@ -24,12 +24,12 @@ import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.LibraryBooks
-import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.Explore
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.LibraryBooks
-import androidx.compose.material.icons.outlined.Person
+import androidx.compose.material.icons.outlined.MoreHoriz
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -73,7 +73,7 @@ val bottomNavItems = listOf(
         unselectedIcon = Icons.Outlined.Explore
     ),
     BottomNavItem(
-        route = "foryou",  // Updated route
+        route = "foryou",
         label = "For You",
         selectedIcon = Icons.Filled.AutoAwesome,
         unselectedIcon = Icons.Outlined.AutoAwesome
@@ -85,10 +85,10 @@ val bottomNavItems = listOf(
         unselectedIcon = Icons.Outlined.History
     ),
     BottomNavItem(
-        route = "profile",
-        label = "Profile",
-        selectedIcon = Icons.Filled.Person,
-        unselectedIcon = Icons.Outlined.Person
+        route = "more",  // Changed from "profile"
+        label = "More",  // Changed from "Profile"
+        selectedIcon = Icons.Filled.MoreHoriz,  // Changed icon
+        unselectedIcon = Icons.Outlined.MoreHoriz  // Changed icon
     )
 )
 

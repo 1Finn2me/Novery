@@ -96,7 +96,7 @@ class DatabaseConverters {
         BlockedAuthorEntity::class,
         AuthorPreferenceEntity::class,
     ],
-    version = 7,
+    version = 9,  // Bumped from 8 to 9
     exportSchema = false
 )
 @TypeConverters(DatabaseConverters::class)
@@ -126,13 +126,23 @@ abstract class NovelDatabase : RoomDatabase() {
                     NovelDatabase::class.java,
                     "novery_database"
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
+                    .addMigrations(
+                        MIGRATION_1_2,
+                        MIGRATION_2_3,
+                        MIGRATION_3_4,
+                        MIGRATION_4_5,
+                        MIGRATION_5_6,
+                        MIGRATION_6_7,
+                        MIGRATION_7_8,
+                        MIGRATION_8_9
+                    )
                     .fallbackToDestructiveMigration() // For development - remove in production
                     .build()
                 INSTANCE = instance
                 instance
             }
         }
+
         private fun safeAddColumn(
             database: SupportSQLiteDatabase,
             table: String,
@@ -220,17 +230,17 @@ abstract class NovelDatabase : RoomDatabase() {
         private val MIGRATION_2_3 = object : Migration(2, 3) {
             override fun migrate(database: SupportSQLiteDatabase) {
                 database.execSQL("""
-            CREATE TABLE IF NOT EXISTS user_preferences (
-                tag TEXT PRIMARY KEY NOT NULL,
-                affinityScore INTEGER NOT NULL DEFAULT 0,
-                novelCount INTEGER NOT NULL DEFAULT 0,
-                chaptersRead INTEGER NOT NULL DEFAULT 0,
-                readingTimeSeconds INTEGER NOT NULL DEFAULT 0,
-                completedCount INTEGER NOT NULL DEFAULT 0,
-                droppedCount INTEGER NOT NULL DEFAULT 0,
-                updatedAt INTEGER NOT NULL
-            )
-        """)
+                    CREATE TABLE IF NOT EXISTS user_preferences (
+                        tag TEXT PRIMARY KEY NOT NULL,
+                        affinityScore INTEGER NOT NULL DEFAULT 0,
+                        novelCount INTEGER NOT NULL DEFAULT 0,
+                        chaptersRead INTEGER NOT NULL DEFAULT 0,
+                        readingTimeSeconds INTEGER NOT NULL DEFAULT 0,
+                        completedCount INTEGER NOT NULL DEFAULT 0,
+                        droppedCount INTEGER NOT NULL DEFAULT 0,
+                        updatedAt INTEGER NOT NULL
+                    )
+                """)
                 database.execSQL("CREATE INDEX IF NOT EXISTS index_user_preferences_tag ON user_preferences(tag)")
             }
         }
@@ -239,21 +249,21 @@ abstract class NovelDatabase : RoomDatabase() {
             override fun migrate(database: SupportSQLiteDatabase) {
                 // Create discovered_novels table
                 database.execSQL("""
-            CREATE TABLE IF NOT EXISTS discovered_novels (
-                url TEXT PRIMARY KEY NOT NULL,
-                name TEXT NOT NULL,
-                apiName TEXT NOT NULL,
-                posterUrl TEXT,
-                rating INTEGER,
-                tagsString TEXT,
-                author TEXT,
-                status TEXT,
-                synopsis TEXT,
-                source TEXT NOT NULL DEFAULT 'browse',
-                discoveredAt INTEGER NOT NULL DEFAULT 0,
-                lastVerifiedAt INTEGER NOT NULL DEFAULT 0
-            )
-        """)
+                    CREATE TABLE IF NOT EXISTS discovered_novels (
+                        url TEXT PRIMARY KEY NOT NULL,
+                        name TEXT NOT NULL,
+                        apiName TEXT NOT NULL,
+                        posterUrl TEXT,
+                        rating INTEGER,
+                        tagsString TEXT,
+                        author TEXT,
+                        status TEXT,
+                        synopsis TEXT,
+                        source TEXT NOT NULL DEFAULT 'browse',
+                        discoveredAt INTEGER NOT NULL DEFAULT 0,
+                        lastVerifiedAt INTEGER NOT NULL DEFAULT 0
+                    )
+                """)
                 database.execSQL("CREATE INDEX IF NOT EXISTS index_discovered_novels_apiName ON discovered_novels(apiName)")
                 database.execSQL("CREATE INDEX IF NOT EXISTS index_discovered_novels_discoveredAt ON discovered_novels(discoveredAt)")
 
@@ -269,63 +279,64 @@ abstract class NovelDatabase : RoomDatabase() {
             override fun migrate(database: SupportSQLiteDatabase) {
                 // Create network_budget table
                 database.execSQL("""
-            CREATE TABLE IF NOT EXISTS network_budget (
-                id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
-                providerName TEXT NOT NULL,
-                date INTEGER NOT NULL,
-                requestCount INTEGER NOT NULL DEFAULT 0,
-                failedCount INTEGER NOT NULL DEFAULT 0,
-                inCooldown INTEGER NOT NULL DEFAULT 0,
-                cooldownUntil INTEGER NOT NULL DEFAULT 0,
-                lastRequestAt INTEGER NOT NULL DEFAULT 0,
-                consecutiveFailures INTEGER NOT NULL DEFAULT 0
-            )
-        """)
+                    CREATE TABLE IF NOT EXISTS network_budget (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        providerName TEXT NOT NULL,
+                        date INTEGER NOT NULL,
+                        requestCount INTEGER NOT NULL DEFAULT 0,
+                        failedCount INTEGER NOT NULL DEFAULT 0,
+                        inCooldown INTEGER NOT NULL DEFAULT 0,
+                        cooldownUntil INTEGER NOT NULL DEFAULT 0,
+                        lastRequestAt INTEGER NOT NULL DEFAULT 0,
+                        consecutiveFailures INTEGER NOT NULL DEFAULT 0
+                    )
+                """)
                 database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_network_budget_providerName_date ON network_budget(providerName, date)")
 
                 // Create discovery_chains table
                 database.execSQL("""
-            CREATE TABLE IF NOT EXISTS discovery_chains (
-                novelUrl TEXT PRIMARY KEY NOT NULL,
-                sessionId TEXT NOT NULL,
-                depth INTEGER NOT NULL,
-                discoveredAt INTEGER NOT NULL DEFAULT 0
-            )
-        """)
+                    CREATE TABLE IF NOT EXISTS discovery_chains (
+                        novelUrl TEXT PRIMARY KEY NOT NULL,
+                        sessionId TEXT NOT NULL,
+                        depth INTEGER NOT NULL,
+                        discoveredAt INTEGER NOT NULL DEFAULT 0
+                    )
+                """)
                 database.execSQL("CREATE INDEX IF NOT EXISTS index_discovery_chains_sessionId ON discovery_chains(sessionId)")
             }
         }
+
         private val MIGRATION_5_6 = object : Migration(5, 6) {
             override fun migrate(database: SupportSQLiteDatabase) {
                 // Create user_tag_filters table
                 database.execSQL("""
-            CREATE TABLE IF NOT EXISTS user_tag_filters (
-                tag TEXT PRIMARY KEY NOT NULL,
-                filterType TEXT NOT NULL,
-                createdAt INTEGER NOT NULL DEFAULT 0
-            )
-        """)
+                    CREATE TABLE IF NOT EXISTS user_tag_filters (
+                        tag TEXT PRIMARY KEY NOT NULL,
+                        filterType TEXT NOT NULL,
+                        createdAt INTEGER NOT NULL DEFAULT 0
+                    )
+                """)
                 database.execSQL("CREATE INDEX IF NOT EXISTS index_user_tag_filters_filterType ON user_tag_filters(filterType)")
 
                 // Create hidden_novels table
                 database.execSQL("""
-            CREATE TABLE IF NOT EXISTS hidden_novels (
-                novelUrl TEXT PRIMARY KEY NOT NULL,
-                novelName TEXT NOT NULL,
-                reason TEXT NOT NULL,
-                hiddenAt INTEGER NOT NULL DEFAULT 0
-            )
-        """)
+                    CREATE TABLE IF NOT EXISTS hidden_novels (
+                        novelUrl TEXT PRIMARY KEY NOT NULL,
+                        novelName TEXT NOT NULL,
+                        reason TEXT NOT NULL,
+                        hiddenAt INTEGER NOT NULL DEFAULT 0
+                    )
+                """)
                 database.execSQL("CREATE INDEX IF NOT EXISTS index_hidden_novels_hiddenAt ON hidden_novels(hiddenAt)")
 
                 // Create blocked_authors table
                 database.execSQL("""
-            CREATE TABLE IF NOT EXISTS blocked_authors (
-                authorNormalized TEXT PRIMARY KEY NOT NULL,
-                displayName TEXT NOT NULL,
-                blockedAt INTEGER NOT NULL DEFAULT 0
-            )
-        """)
+                    CREATE TABLE IF NOT EXISTS blocked_authors (
+                        authorNormalized TEXT PRIMARY KEY NOT NULL,
+                        displayName TEXT NOT NULL,
+                        blockedAt INTEGER NOT NULL DEFAULT 0
+                    )
+                """)
                 database.execSQL("CREATE INDEX IF NOT EXISTS index_blocked_authors_blockedAt ON blocked_authors(blockedAt)")
             }
         }
@@ -334,23 +345,110 @@ abstract class NovelDatabase : RoomDatabase() {
             override fun migrate(database: SupportSQLiteDatabase) {
                 // Create author_preferences table
                 database.execSQL("""
-            CREATE TABLE IF NOT EXISTS author_preferences (
-                authorNormalized TEXT PRIMARY KEY NOT NULL,
-                displayName TEXT NOT NULL,
-                affinityScore INTEGER NOT NULL DEFAULT 500,
-                novelsRead INTEGER NOT NULL DEFAULT 0,
-                novelsCompleted INTEGER NOT NULL DEFAULT 0,
-                novelsDropped INTEGER NOT NULL DEFAULT 0,
-                totalChaptersRead INTEGER NOT NULL DEFAULT 0,
-                totalReadingTimeSeconds INTEGER NOT NULL DEFAULT 0,
-                novelUrlsInLibrary TEXT NOT NULL DEFAULT '',
-                createdAt INTEGER NOT NULL DEFAULT 0,
-                updatedAt INTEGER NOT NULL DEFAULT 0
-            )
-        """)
+                    CREATE TABLE IF NOT EXISTS author_preferences (
+                        authorNormalized TEXT PRIMARY KEY NOT NULL,
+                        displayName TEXT NOT NULL,
+                        affinityScore INTEGER NOT NULL DEFAULT 500,
+                        novelsRead INTEGER NOT NULL DEFAULT 0,
+                        novelsCompleted INTEGER NOT NULL DEFAULT 0,
+                        novelsDropped INTEGER NOT NULL DEFAULT 0,
+                        totalChaptersRead INTEGER NOT NULL DEFAULT 0,
+                        totalReadingTimeSeconds INTEGER NOT NULL DEFAULT 0,
+                        novelUrlsInLibrary TEXT NOT NULL DEFAULT '',
+                        createdAt INTEGER NOT NULL DEFAULT 0,
+                        updatedAt INTEGER NOT NULL DEFAULT 0
+                    )
+                """)
                 database.execSQL("CREATE INDEX IF NOT EXISTS index_author_preferences_affinityScore ON author_preferences(affinityScore)")
                 database.execSQL("CREATE INDEX IF NOT EXISTS index_author_preferences_displayName ON author_preferences(displayName)")
             }
+        }
+
+        /**
+         * FIXED Migration 7 -> 8
+         * This handles users coming from version 7 (before downloadedAt was added)
+         * Recreates the table to ensure proper schema without SQL DEFAULT
+         */
+        private val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                migrateOfflineChaptersTable(database)
+            }
+        }
+
+        /**
+         * Repair Migration 8 -> 9
+         * This handles users who got the broken v8 migration
+         * Same logic as 7_8 to fix the schema
+         */
+        private val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                migrateOfflineChaptersTable(database)
+            }
+        }
+
+        /**
+         * Shared migration logic for offline_chapters table
+         * Recreates the table with correct schema:
+         * - Removes savedAt column (if exists)
+         * - Adds downloadedAt column without SQL DEFAULT (Kotlin handles default)
+         * - Creates index on downloadedAt
+         */
+        private fun migrateOfflineChaptersTable(database: SupportSQLiteDatabase) {
+            val currentTime = System.currentTimeMillis()
+
+            // Step 1: Check which columns exist in the old table
+            val cursor = database.query("PRAGMA table_info(offline_chapters)")
+            val columns = mutableSetOf<String>()
+            while (cursor.moveToNext()) {
+                val nameIndex = cursor.getColumnIndex("name")
+                if (nameIndex >= 0) {
+                    columns.add(cursor.getString(nameIndex))
+                }
+            }
+            cursor.close()
+
+            val hasSavedAt = "savedAt" in columns
+            val hasDownloadedAt = "downloadedAt" in columns
+
+            // Step 2: Create new table with correct schema (NO SQL DEFAULT for downloadedAt)
+            database.execSQL("""
+                CREATE TABLE IF NOT EXISTS offline_chapters_new (
+                    url TEXT NOT NULL PRIMARY KEY,
+                    novelUrl TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    downloadedAt INTEGER NOT NULL
+                )
+            """)
+
+            // Step 3: Determine source for downloadedAt value
+            val downloadedAtSource = when {
+                hasDownloadedAt && hasSavedAt -> "COALESCE(downloadedAt, savedAt, $currentTime)"
+                hasDownloadedAt -> "COALESCE(downloadedAt, $currentTime)"
+                hasSavedAt -> "COALESCE(savedAt, $currentTime)"
+                else -> currentTime.toString()
+            }
+
+            // Step 4: Copy data from old table
+            try {
+                database.execSQL("""
+                    INSERT INTO offline_chapters_new (url, novelUrl, title, content, downloadedAt)
+                    SELECT url, novelUrl, title, content, $downloadedAtSource
+                    FROM offline_chapters
+                """)
+            } catch (e: Exception) {
+                // Table might be empty or have issues, that's okay
+            }
+
+            // Step 5: Drop old table
+            database.execSQL("DROP TABLE IF EXISTS offline_chapters")
+
+            // Step 6: Rename new table
+            database.execSQL("ALTER TABLE offline_chapters_new RENAME TO offline_chapters")
+
+            // Step 7: Create BOTH required indices
+            database.execSQL("CREATE INDEX IF NOT EXISTS index_offline_chapters_novelUrl ON offline_chapters(novelUrl)")
+            database.execSQL("CREATE INDEX IF NOT EXISTS index_offline_chapters_downloadedAt ON offline_chapters(downloadedAt)")
         }
     }
 }

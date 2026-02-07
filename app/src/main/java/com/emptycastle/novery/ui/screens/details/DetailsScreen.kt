@@ -1,5 +1,3 @@
-// com/emptycastle/novery/ui/screens/details/DetailsScreen.kt
-// Updated to use the new simplified components
 package com.emptycastle.novery.ui.screens.details
 
 import android.content.Intent
@@ -91,6 +89,7 @@ fun DetailsScreen(
     onChapterClick: (String, String, String) -> Unit,
     onNovelClick: (String, String) -> Unit = { _, _ -> },
     onOpenInWebView: (String, String) -> Unit = { _, _ -> },
+    onNavigateToDownloads: () -> Unit = {},
     viewModel: DetailsViewModel = viewModel()
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -184,6 +183,7 @@ fun DetailsScreen(
                                         onChapterClick = onChapterClick,
                                         onNovelClick = onNovelClick,
                                         onOpenInWebView = onOpenInWebView,
+                                        onNavigateToDownloads = onNavigateToDownloads, // Pass it here!
                                         onHapticFeedback = { type ->
                                             haptic.performHapticFeedback(type)
                                         },
@@ -207,6 +207,7 @@ fun DetailsScreen(
                                     onChapterClick = onChapterClick,
                                     onNovelClick = onNovelClick,
                                     onOpenInWebView = onOpenInWebView,
+                                    onNavigateToDownloads = onNavigateToDownloads, // Pass it here!
                                     onHapticFeedback = { type ->
                                         haptic.performHapticFeedback(type)
                                     },
@@ -414,6 +415,7 @@ private fun DetailsContent(
     onChapterClick: (String, String, String) -> Unit,
     onNovelClick: (String, String) -> Unit,
     onOpenInWebView: (String, String) -> Unit,
+    onNavigateToDownloads: () -> Unit,  // No default value - must be passed!
     onHapticFeedback: (HapticFeedbackType) -> Unit,
     onTabSelected: (DetailsTab) -> Unit,
     viewModel: DetailsViewModel,
@@ -471,7 +473,8 @@ private fun DetailsContent(
                         onChapterClick(chapterUrl, novelUrl, providerName)
                     }
                 },
-                onDownload = { viewModel.showDownloadMenu() }
+                onDownload = { viewModel.showDownloadMenu() },
+                onViewDownloads = onNavigateToDownloads  // Now properly passed!
             )
         }
 

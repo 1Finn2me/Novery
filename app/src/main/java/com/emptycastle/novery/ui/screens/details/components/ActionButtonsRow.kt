@@ -21,6 +21,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.MenuBook
+import androidx.compose.material.icons.automirrored.rounded.OpenInNew
 import androidx.compose.material.icons.filled.BookmarkAdded
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.PlayArrow
@@ -51,7 +52,8 @@ fun ActionButtonsRow(
     isDownloading: Boolean,
     downloadProgress: Float,
     onRead: () -> Unit,
-    onDownload: () -> Unit
+    onDownload: () -> Unit,
+    onViewDownloads: (() -> Unit)? = null  // New parameter for navigation
 ) {
     Column(
         modifier = Modifier
@@ -70,7 +72,8 @@ fun ActionButtonsRow(
             isDownloading = isDownloading,
             downloadProgress = downloadProgress,
             onRead = onRead,
-            onDownload = onDownload
+            onDownload = onDownload,
+            onViewDownloads = onViewDownloads
         )
     }
 }
@@ -129,14 +132,14 @@ private fun LastReadIcon() {
         }
     }
 }
+
 @Composable
 private fun LastReadInfo(
     chapterName: String,
     modifier: Modifier = Modifier
 ) {
     Column(
-        modifier = modifier
-            .fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.Center
     ) {
         Text(
@@ -166,7 +169,8 @@ private fun MainActionButtons(
     isDownloading: Boolean,
     downloadProgress: Float,
     onRead: () -> Unit,
-    onDownload: () -> Unit
+    onDownload: () -> Unit,
+    onViewDownloads: (() -> Unit)?
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -183,7 +187,8 @@ private fun MainActionButtons(
         DownloadButton(
             isDownloading = isDownloading,
             downloadProgress = downloadProgress,
-            onClick = onDownload
+            onClick = onDownload,
+            onViewDownloads = onViewDownloads
         )
     }
 }
@@ -221,10 +226,11 @@ private fun ReadButton(
 private fun DownloadButton(
     isDownloading: Boolean,
     downloadProgress: Float,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    onViewDownloads: (() -> Unit)?
 ) {
     OutlinedButton(
-        onClick = onClick,
+        onClick = if (isDownloading && onViewDownloads != null) onViewDownloads else onClick,
         modifier = Modifier.height(52.dp),
         shape = RoundedCornerShape(14.dp),
         border = BorderStroke(
@@ -240,12 +246,32 @@ private fun DownloadButton(
 
         Spacer(modifier = Modifier.width(8.dp))
 
-        // Text
-        Text(
-            text = if (isDownloading) "${(downloadProgress * 100).toInt()}%" else "Download",
-            fontWeight = FontWeight.SemiBold,
-            style = MaterialTheme.typography.labelLarge
-        )
+        // Text - show "View" when downloading with navigation available
+        if (isDownloading && onViewDownloads != null) {
+            Text(
+                text = "${(downloadProgress * 100).toInt()}%",
+                fontWeight = FontWeight.SemiBold,
+                style = MaterialTheme.typography.labelLarge
+            )
+            Spacer(modifier = Modifier.width(4.dp))
+            Icon(
+                imageVector = Icons.AutoMirrored.Rounded.OpenInNew,
+                contentDescription = "View downloads",
+                modifier = Modifier.size(14.dp)
+            )
+        } else if (isDownloading) {
+            Text(
+                text = "${(downloadProgress * 100).toInt()}%",
+                fontWeight = FontWeight.SemiBold,
+                style = MaterialTheme.typography.labelLarge
+            )
+        } else {
+            Text(
+                text = "Download",
+                fontWeight = FontWeight.SemiBold,
+                style = MaterialTheme.typography.labelLarge
+            )
+        }
     }
 }
 
@@ -286,7 +312,8 @@ fun CompactActionButtonsRow(
     isDownloading: Boolean,
     downloadProgress: Float,
     onRead: () -> Unit,
-    onDownload: () -> Unit
+    onDownload: () -> Unit,
+    onViewDownloads: (() -> Unit)? = null
 ) {
     Row(
         modifier = Modifier
@@ -317,7 +344,7 @@ fun CompactActionButtonsRow(
 
         // Download button - icon only when downloading
         OutlinedButton(
-            onClick = onDownload,
+            onClick = if (isDownloading && onViewDownloads != null) onViewDownloads else onDownload,
             modifier = Modifier
                 .weight(1f)
                 .height(48.dp),

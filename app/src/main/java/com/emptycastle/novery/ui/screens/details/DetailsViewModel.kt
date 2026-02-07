@@ -1,4 +1,3 @@
-// com/emptycastle/novery/ui/screens/details/DetailsViewModel.kt
 package com.emptycastle.novery.ui.screens.details
 
 import android.content.Context

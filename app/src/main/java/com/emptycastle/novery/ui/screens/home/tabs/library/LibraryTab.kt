@@ -47,8 +47,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.itemsIndexed
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -649,7 +649,7 @@ private fun RefreshProgressCard(
 }
 
 // ============================================================================
-// Library Content
+// Library Content - FIXED: Using itemsIndexed with unique keys
 // ============================================================================
 
 @Composable
@@ -668,6 +668,11 @@ private fun LibraryContent(
     val showRefreshProgress = uiState.refreshProgress != null
     val novelsWithNewChapters = uiState.items.count { it.hasNewChapters }
     val displayMode = appSettings.libraryDisplayMode
+
+    // Deduplicate items by URL to prevent key collisions
+    val uniqueItems = remember(uiState.filteredItems) {
+        uiState.filteredItems.distinctBy { it.novel.url }
+    }
 
     when (displayMode) {
         DisplayMode.GRID -> {
@@ -689,7 +694,7 @@ private fun LibraryContent(
                         onQueryChange = onQueryChange,
                         notificationCount = novelsWithNewChapters,
                         onNotificationClick = onNotificationClick,
-                        resultCount = uiState.filteredItems.size,
+                        resultCount = uniqueItems.size,
                         totalCount = uiState.items.size,
                         modifier = Modifier.padding(bottom = 4.dp)
                     )
@@ -710,7 +715,11 @@ private fun LibraryContent(
                     Spacer(modifier = Modifier.height(4.dp))
                 }
 
-                items(uiState.filteredItems, key = { it.novel.url }) { item ->
+                // Use itemsIndexed with composite key to guarantee uniqueness
+                itemsIndexed(
+                    items = uniqueItems,
+                    key = { index, item -> "novel_${item.novel.url}_$index" }
+                ) { _, item ->
                     NovelCard(
                         novel = item.novel,
                         onClick = { onNovelClick(item) },
@@ -740,7 +749,7 @@ private fun LibraryContent(
                         onQueryChange = onQueryChange,
                         notificationCount = novelsWithNewChapters,
                         onNotificationClick = onNotificationClick,
-                        resultCount = uiState.filteredItems.size,
+                        resultCount = uniqueItems.size,
                         totalCount = uiState.items.size,
                         modifier = Modifier.padding(bottom = 4.dp)
                     )
@@ -761,7 +770,11 @@ private fun LibraryContent(
                     Spacer(modifier = Modifier.height(4.dp))
                 }
 
-                items(uiState.filteredItems, key = { it.novel.url }) { item ->
+                // Use itemsIndexed with composite key to guarantee uniqueness
+                itemsIndexed(
+                    items = uniqueItems,
+                    key = { index, item -> "novel_${item.novel.url}_$index" }
+                ) { _, item ->
                     NovelListItem(
                         novel = item.novel,
                         onClick = { onNovelClick(item) },

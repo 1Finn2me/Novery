@@ -1,4 +1,3 @@
-// ProviderBrowseScreen.kt - Fixed Design Flow
 package com.emptycastle.novery.ui.screens.home.tabs.browse
 
 import androidx.compose.animation.AnimatedContent

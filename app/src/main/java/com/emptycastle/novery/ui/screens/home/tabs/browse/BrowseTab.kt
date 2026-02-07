@@ -1,4 +1,3 @@
-// BrowseTab.kt
 package com.emptycastle.novery.ui.screens.home.tabs.browse
 
 import androidx.annotation.DrawableRes

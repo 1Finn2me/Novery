@@ -1,6 +1,4 @@
-// com/emptycastle/novery/ui/screens/home/tabs/profile/ProfileTab.kt
-
-package com.emptycastle.novery.ui.screens.home.tabs.profile
+package com.emptycastle.novery.ui.screens.profile
 
 import android.content.Intent
 import androidx.compose.animation.AnimatedVisibility
@@ -23,15 +21,12 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -39,6 +34,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.MenuBook
 import androidx.compose.material.icons.outlined.Explore
 import androidx.compose.material.icons.outlined.Share
@@ -48,22 +44,20 @@ import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.EmojiEvents
 import androidx.compose.material.icons.rounded.Insights
 import androidx.compose.material.icons.rounded.LocalFireDepartment
-import androidx.compose.material.icons.rounded.Nightlight
 import androidx.compose.material.icons.rounded.Schedule
-import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Star
 import androidx.compose.material.icons.rounded.TrendingUp
-import androidx.compose.material.icons.rounded.WbSunny
-import androidx.compose.material.icons.rounded.WbTwilight
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -90,9 +84,13 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import com.emptycastle.novery.ui.components.NoveryPullToRefreshBox
+import com.emptycastle.novery.ui.screens.profile.Achievement
+import com.emptycastle.novery.ui.screens.profile.NovelReadingStats
+import com.emptycastle.novery.ui.screens.profile.ProfileEvent
+import com.emptycastle.novery.ui.screens.profile.ProfileUiState
+import com.emptycastle.novery.ui.screens.profile.ProfileViewModel
 import com.emptycastle.novery.ui.theme.NoveryTheme
 import kotlinx.coroutines.flow.collectLatest
-import java.time.LocalTime
 
 // ============================================================================
 // Color Constants
@@ -123,18 +121,18 @@ private object ProfileColors {
 }
 
 // ============================================================================
-// Main Profile Tab
+// Main Profile Screen
 // ============================================================================
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ProfileTab(
-    onNavigateToSettings: () -> Unit,
+fun ProfileScreen(
+    onBackClick: () -> Unit,
     onNovelClick: (String, String) -> Unit,
     modifier: Modifier = Modifier,
     viewModel: ProfileViewModel = viewModel()
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-    val statusBarPadding = WindowInsets.statusBars.asPaddingValues()
     val context = LocalContext.current
 
     // Handle one-time events
@@ -162,25 +160,55 @@ fun ProfileTab(
         }
     }
 
-    NoveryPullToRefreshBox(
-        isRefreshing = uiState.isLoading,
-        onRefresh = { viewModel.refresh() },
-        modifier = modifier.fillMaxSize()
-    ) {
-        if (!uiState.hasAnyStats && !uiState.isLoading) {
-            ProfileEmptyState(
-                onNavigateToSettings = onNavigateToSettings,
-                statusBarPadding = statusBarPadding,
-                modifier = Modifier.fillMaxSize()
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = {
+                    Text(
+                        text = "Reading Stats",
+                        fontWeight = FontWeight.SemiBold
+                    )
+                },
+                navigationIcon = {
+                    IconButton(onClick = onBackClick) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
+                            contentDescription = "Back"
+                        )
+                    }
+                },
+                actions = {
+                    IconButton(onClick = { viewModel.onShareStats() }) {
+                        Icon(
+                            imageVector = Icons.Outlined.Share,
+                            contentDescription = "Share stats"
+                        )
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.background
+                )
             )
-        } else {
-            ProfileContent(
-                uiState = uiState,
-                onNovelClick = { novel -> viewModel.onNovelClick(novel) },
-                onShareStats = { viewModel.onShareStats() },
-                onNavigateToSettings = onNavigateToSettings,
-                statusBarPadding = statusBarPadding
-            )
+        },
+        modifier = modifier
+    ) { paddingValues ->
+        NoveryPullToRefreshBox(
+            isRefreshing = uiState.isLoading,
+            onRefresh = { viewModel.refresh() },
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(paddingValues)
+        ) {
+            if (!uiState.hasAnyStats && !uiState.isLoading) {
+                ProfileEmptyState(
+                    modifier = Modifier.fillMaxSize()
+                )
+            } else {
+                ProfileContent(
+                    uiState = uiState,
+                    onNovelClick = { novel -> viewModel.onNovelClick(novel) }
+                )
+            }
         }
     }
 }
@@ -192,28 +220,18 @@ fun ProfileTab(
 @Composable
 private fun ProfileContent(
     uiState: ProfileUiState,
-    onNovelClick: (NovelReadingStats) -> Unit,
-    onShareStats: () -> Unit,
-    onNavigateToSettings: () -> Unit,
-    statusBarPadding: PaddingValues
+    onNovelClick: (NovelReadingStats) -> Unit
 ) {
     val dimensions = NoveryTheme.dimensions
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(
-            top = statusBarPadding.calculateTopPadding(),
-            bottom = 100.dp
-        ),
+        contentPadding = PaddingValues(bottom = 32.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         // Profile Hero Section
         item(key = "hero") {
-            ProfileHeroSection(
-                uiState = uiState,
-                onShareStats = onShareStats,
-                onNavigateToSettings = onNavigateToSettings
-            )
+            ProfileHeroSection(uiState = uiState)
         }
 
         // Quick Stats Row
@@ -314,34 +332,12 @@ private fun ProfileContent(
 }
 
 // ============================================================================
-// Profile Hero Section
+// Profile Hero Section (Simplified for Screen)
 // ============================================================================
 
 @Composable
-private fun ProfileHeroSection(
-    uiState: ProfileUiState,
-    onShareStats: () -> Unit,
-    onNavigateToSettings: () -> Unit
-) {
+private fun ProfileHeroSection(uiState: ProfileUiState) {
     val levelColor = ProfileColors.getLevelColor(uiState.readerLevel)
-
-    val greeting = remember {
-        when (LocalTime.now().hour) {
-            in 5..11 -> "Good morning"
-            in 12..16 -> "Good afternoon"
-            in 17..20 -> "Good evening"
-            else -> "Good night"
-        }
-    }
-
-    val greetingIcon = remember {
-        when (LocalTime.now().hour) {
-            in 5..11 -> Icons.Rounded.WbSunny
-            in 12..16 -> Icons.Rounded.WbSunny
-            in 17..20 -> Icons.Rounded.WbTwilight
-            else -> Icons.Rounded.Nightlight
-        }
-    }
 
     Box(
         modifier = Modifier
@@ -360,68 +356,8 @@ private fun ProfileHeroSection(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 20.dp)
-                .padding(top = 16.dp, bottom = 24.dp)
+                .padding(top = 8.dp, bottom = 24.dp)
         ) {
-            // Top Row: Greeting + Actions
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Icon(
-                        imageVector = greetingIcon,
-                        contentDescription = null,
-                        modifier = Modifier.size(20.dp),
-                        tint = MaterialTheme.colorScheme.primary
-                    )
-                    Text(
-                        text = "$greeting, Reader",
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    IconButton(
-                        onClick = onShareStats,
-                        colors = IconButtonDefaults.iconButtonColors(
-                            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
-                        ),
-                        modifier = Modifier.size(40.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Outlined.Share,
-                            contentDescription = "Share stats",
-                            modifier = Modifier.size(20.dp),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-
-                    IconButton(
-                        onClick = onNavigateToSettings,
-                        colors = IconButtonDefaults.iconButtonColors(
-                            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
-                        ),
-                        modifier = Modifier.size(40.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.Settings,
-                            contentDescription = "Settings",
-                            modifier = Modifier.size(20.dp),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(24.dp))
-
             // Profile Card with Avatar and Level
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -429,13 +365,9 @@ private fun ProfileHeroSection(
                 horizontalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 // Avatar with Level Ring
-                Box(
-                    contentAlignment = Alignment.Center
-                ) {
+                Box(contentAlignment = Alignment.Center) {
                     // Level progress ring
-                    Canvas(
-                        modifier = Modifier.size(88.dp)
-                    ) {
+                    Canvas(modifier = Modifier.size(88.dp)) {
                         val strokeWidth = 4.dp.toPx()
                         val radius = (size.minDimension - strokeWidth) / 2
                         val center = Offset(size.width / 2, size.height / 2)
@@ -523,9 +455,7 @@ private fun ProfileHeroSection(
                     Spacer(modifier = Modifier.height(4.dp))
 
                     // XP Progress bar
-                    Column(
-                        verticalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween
@@ -692,9 +622,7 @@ private fun StreakCard(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Column(
-                verticalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -713,9 +641,7 @@ private fun StreakCard(
                     )
                 }
 
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text(
                         text = if (isStreakActive) "🔥 Keep it going!"
                         else "Start reading today",
@@ -767,10 +693,7 @@ private fun ReadingInsightsSection(
         modifier = modifier,
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        SectionHeader(
-            title = "Insights",
-            icon = Icons.Rounded.Insights
-        )
+        SectionHeader(title = "Insights", icon = Icons.Rounded.Insights)
 
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -861,10 +784,7 @@ private fun GoalsSection(
         modifier = modifier,
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        SectionHeader(
-            title = "Goals",
-            icon = Icons.Rounded.TrendingUp
-        )
+        SectionHeader(title = "Goals", icon = Icons.Rounded.TrendingUp)
 
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -1001,10 +921,7 @@ private fun ReadingTimeSection(
         modifier = modifier,
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        SectionHeader(
-            title = "Reading Time",
-            icon = Icons.Rounded.Schedule
-        )
+        SectionHeader(title = "Reading Time", icon = Icons.Rounded.Schedule)
 
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -1050,9 +967,7 @@ private fun TimeStatCard(
     Card(
         modifier = modifier,
         shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = color.copy(alpha = 0.1f)
-        )
+        colors = CardDefaults.cardColors(containerColor = color.copy(alpha = 0.1f))
     ) {
         Column(
             modifier = Modifier
@@ -1093,10 +1008,7 @@ private fun WeeklyActivitySection(
         modifier = modifier,
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        SectionHeader(
-            title = "This Week",
-            icon = Icons.Rounded.CalendarMonth
-        )
+        SectionHeader(title = "This Week", icon = Icons.Rounded.CalendarMonth)
 
         Card(
             shape = RoundedCornerShape(20.dp),
@@ -1179,10 +1091,7 @@ private fun AllTimeStatsSection(
         modifier = modifier,
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        SectionHeader(
-            title = "All Time",
-            icon = Icons.Rounded.Star
-        )
+        SectionHeader(title = "All Time", icon = Icons.Rounded.Star)
 
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -1283,14 +1192,9 @@ private fun MostReadSection(
         modifier = modifier,
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        SectionHeader(
-            title = "Most Read",
-            icon = Icons.Rounded.AutoStories
-        )
+        SectionHeader(title = "Most Read", icon = Icons.Rounded.AutoStories)
 
-        Column(
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             novels.forEachIndexed { index, novel ->
                 MostReadNovelCard(
                     rank = index + 1,
@@ -1386,9 +1290,7 @@ private fun MostReadNovelCard(
                     color = MaterialTheme.colorScheme.onSurface
                 )
 
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     val timeDisplay = remember(novel.readingTimeMinutes) {
                         when {
                             novel.readingTimeMinutes < 60 -> "${novel.readingTimeMinutes}m"
@@ -1428,10 +1330,7 @@ private fun AchievementsSection(
         modifier = modifier,
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        SectionHeader(
-            title = "Achievements",
-            icon = Icons.Rounded.EmojiEvents
-        )
+        SectionHeader(title = "Achievements", icon = Icons.Rounded.EmojiEvents)
 
         LazyRow(
             horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -1563,138 +1462,85 @@ private fun SectionHeader(
 }
 
 // ============================================================================
-// Empty State
+// Empty State (Simplified for Screen - no settings navigation)
 // ============================================================================
 
 @Composable
 private fun ProfileEmptyState(
-    onNavigateToSettings: () -> Unit,
-    statusBarPadding: PaddingValues,
     modifier: Modifier = Modifier
 ) {
-    val dimensions = NoveryTheme.dimensions
-
-    Column(
-        modifier = modifier
-            .padding(top = statusBarPadding.calculateTopPadding())
+    Box(
+        modifier = modifier.padding(32.dp),
+        contentAlignment = Alignment.Center
     ) {
-        // Simplified hero for empty state
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(
-                    Brush.verticalGradient(
-                        colors = listOf(
-                            MaterialTheme.colorScheme.primary.copy(alpha = 0.1f),
-                            Color.Transparent
-                        )
-                    )
-                )
-                .padding(20.dp)
+        Card(
+            shape = RoundedCornerShape(24.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+            )
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(32.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(20.dp)
             ) {
-                Text(
-                    text = "Your Profile",
-                    style = MaterialTheme.typography.headlineMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onBackground
-                )
-
-                IconButton(
-                    onClick = onNavigateToSettings,
-                    colors = IconButtonDefaults.iconButtonColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
-                    )
+                Surface(
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.primaryContainer,
+                    modifier = Modifier.size(88.dp)
                 ) {
-                    Icon(
-                        imageVector = Icons.Rounded.Settings,
-                        contentDescription = "Settings",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                        Icon(
+                            imageVector = Icons.Rounded.AutoStories,
+                            contentDescription = null,
+                            modifier = Modifier.size(44.dp),
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = "Start Your Journey",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Text(
+                        text = "Read your first chapter to unlock\nyour reader profile and stats",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center,
+                        lineHeight = 22.sp
                     )
                 }
-            }
-        }
 
-        Box(
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth()
-                .padding(horizontal = dimensions.gridPadding),
-            contentAlignment = Alignment.Center
-        ) {
-            Card(
-                shape = RoundedCornerShape(24.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceContainerLow
-                )
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(32.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(20.dp)
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.1f)
                 ) {
-                    Surface(
-                        shape = CircleShape,
-                        color = MaterialTheme.colorScheme.primaryContainer,
-                        modifier = Modifier.size(88.dp)
+                    Row(
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
-                            Icon(
-                                imageVector = Icons.Rounded.AutoStories,
-                                contentDescription = null,
-                                modifier = Modifier.size(44.dp),
-                                tint = MaterialTheme.colorScheme.primary
-                            )
-                        }
-                    }
-
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Text(
-                            text = "Start Your Journey",
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurface
+                        Icon(
+                            imageVector = Icons.Outlined.Explore,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp),
+                            tint = MaterialTheme.colorScheme.primary
                         )
                         Text(
-                            text = "Read your first chapter to unlock\nyour reader profile and stats",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            textAlign = TextAlign.Center,
-                            lineHeight = 22.sp
+                            text = "Browse novels to get started",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Medium
                         )
-                    }
-
-                    Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.1f)
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                imageVector = Icons.Outlined.Explore,
-                                contentDescription = null,
-                                modifier = Modifier.size(18.dp),
-                                tint = MaterialTheme.colorScheme.primary
-                            )
-                            Text(
-                                text = "Browse novels to get started",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.primary,
-                                fontWeight = FontWeight.Medium
-                            )
-                        }
                     }
                 }
             }

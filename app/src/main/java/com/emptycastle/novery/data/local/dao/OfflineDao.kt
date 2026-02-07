@@ -32,6 +32,15 @@ interface OfflineDao {
     @Query("SELECT novelUrl, COUNT(*) as count FROM offline_chapters GROUP BY novelUrl")
     suspend fun getAllNovelCounts(): List<NovelChapterCount>
 
+    @Query("""
+        SELECT novelUrl, 
+               COUNT(*) as count, 
+               MAX(downloadedAt) as lastDownloadedAt 
+        FROM offline_chapters 
+        GROUP BY novelUrl
+    """)
+    suspend fun getAllNovelDownloadData(): List<NovelDownloadData>
+
     @Query("DELETE FROM offline_chapters WHERE novelUrl = :novelUrl")
     suspend fun deleteChaptersForNovel(novelUrl: String)
 
@@ -85,4 +94,13 @@ interface OfflineDao {
 data class NovelChapterCount(
     val novelUrl: String,
     val count: Int
+)
+
+/**
+ * Helper class for download data with timestamps
+ */
+data class NovelDownloadData(
+    val novelUrl: String,
+    val count: Int,
+    val lastDownloadedAt: Long?
 )

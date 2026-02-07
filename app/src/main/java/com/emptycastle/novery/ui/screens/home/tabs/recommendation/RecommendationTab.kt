@@ -141,6 +141,11 @@ fun RecommendationTab(
                 }
 
                 else -> {
+                    // Deduplicate recommendation groups to prevent potential key issues
+                    val uniqueGroups = remember(uiState.recommendationGroups) {
+                        uiState.recommendationGroups.distinctBy { it.type }
+                    }
+
                     LazyColumn(
                         modifier = Modifier.fillMaxSize(),
                         contentPadding = PaddingValues(
@@ -163,8 +168,8 @@ fun RecommendationTab(
                         }
 
                         itemsIndexed(
-                            items = uiState.recommendationGroups,
-                            key = { index, group -> "group_${index}_${group.type.name}" }
+                            items = uniqueGroups,
+                            key = { index, group -> "group_${group.type.name}_$index" }
                         ) { _, group ->
                             RecommendationSection(
                                 group = group,

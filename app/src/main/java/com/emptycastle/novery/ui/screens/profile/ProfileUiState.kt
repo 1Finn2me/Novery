@@ -1,6 +1,4 @@
-// com/emptycastle/novery/ui/screens/home/tabs/profile/ProfileUiState.kt
-
-package com.emptycastle.novery.ui.screens.home.tabs.profile
+package com.emptycastle.novery.ui.screens.profile
 
 /**
  * UI State for the Profile/Statistics tab

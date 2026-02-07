@@ -1,6 +1,4 @@
-// com/emptycastle/novery/ui/screens/home/tabs/profile/ProfileViewModel.kt
-
-package com.emptycastle.novery.ui.screens.home.tabs.profile
+package com.emptycastle.novery.ui.screens.profile
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -26,7 +24,7 @@ class ProfileViewModel : ViewModel() {
     val uiState: StateFlow<ProfileUiState> = _uiState.asStateFlow()
 
     // One-time events channel
-    private val _events = Channel<ProfileEvent>(Channel.BUFFERED)
+    private val _events = Channel<ProfileEvent>(Channel.Factory.BUFFERED)
     val events = _events.receiveAsFlow()
 
     // Reader level definitions

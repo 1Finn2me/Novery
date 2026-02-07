@@ -9,7 +9,10 @@ import androidx.room.PrimaryKey
  */
 @Entity(
     tableName = "offline_chapters",
-    indices = [Index(value = ["novelUrl"])]
+    indices = [
+        Index(value = ["novelUrl"]),
+        Index(value = ["downloadedAt"])
+    ]
 )
 data class OfflineChapterEntity(
     @PrimaryKey
@@ -17,5 +20,5 @@ data class OfflineChapterEntity(
     val novelUrl: String,
     val title: String,
     val content: String,
-    val savedAt: Long = System.currentTimeMillis()
+    val downloadedAt: Long = System.currentTimeMillis()
 )

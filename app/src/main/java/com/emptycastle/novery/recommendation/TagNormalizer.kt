@@ -1,4 +1,3 @@
-// com/emptycastle/novery/recommendation/TagNormalizer.kt
 package com.emptycastle.novery.recommendation
 
 /**

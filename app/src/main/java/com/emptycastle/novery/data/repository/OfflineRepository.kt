@@ -1,5 +1,6 @@
 package com.emptycastle.novery.data.repository
 
+import com.emptycastle.novery.data.local.dao.NovelDownloadData
 import com.emptycastle.novery.data.local.dao.OfflineDao
 import com.emptycastle.novery.data.local.entity.NovelDetailsEntity
 import com.emptycastle.novery.data.local.entity.OfflineChapterEntity
@@ -95,6 +96,14 @@ class OfflineRepository(
         }
 
     /**
+     * Get all download data including timestamps for sorting
+     */
+    suspend fun getAllDownloadData(): List<NovelDownloadData> =
+        withContext(Dispatchers.IO) {
+            offlineDao.getAllNovelDownloadData()
+        }
+
+    /**
      * Check if novel has any downloads
      */
     suspend fun isNovelDownloaded(novelUrl: String): Boolean =
@@ -127,7 +136,8 @@ class OfflineRepository(
             url = chapterUrl,
             novelUrl = novelUrl,
             title = title,
-            content = content
+            content = content,
+            downloadedAt = System.currentTimeMillis()
         )
         offlineDao.saveChapter(entity)
     }

@@ -14,10 +14,12 @@ import com.emptycastle.novery.data.local.NovelDatabase
 import com.emptycastle.novery.data.local.PreferencesManager
 import com.emptycastle.novery.domain.model.AppSettings
 import com.emptycastle.novery.ui.screens.details.DetailsScreen
+import com.emptycastle.novery.ui.screens.downloads.DownloadsScreen
 import com.emptycastle.novery.ui.screens.home.HomeScreen
 import com.emptycastle.novery.ui.screens.home.tabs.browse.ProviderBrowseScreen
 import com.emptycastle.novery.ui.screens.home.tabs.browse.ProviderWebViewScreen
 import com.emptycastle.novery.ui.screens.notification.NotificationScreen
+import com.emptycastle.novery.ui.screens.profile.ProfileScreen
 import com.emptycastle.novery.ui.screens.reader.ReaderScreen
 import com.emptycastle.novery.ui.screens.reader.settings.ReaderSettingsScreen
 import com.emptycastle.novery.ui.screens.settings.SettingsScreen
@@ -58,6 +60,12 @@ fun NoveryNavGraph(
                 },
                 onNavigateToNotifications = {
                     navController.navigate(NavRoutes.Notifications.route)
+                },
+                onNavigateToProfile = {
+                    navController.navigate(NavRoutes.Profile.route)
+                },
+                onNavigateToDownloads = {
+                    navController.navigate(NavRoutes.Downloads.route)
                 }
             )
         }
@@ -107,6 +115,34 @@ fun NoveryNavGraph(
                 cacheManager = cacheManager,
                 backupManager = backupManager,
                 onBack = { navController.popBackStack() }
+            )
+        }
+
+        // ================================================================
+        // PROFILE
+        // ================================================================
+        composable(route = NavRoutes.Profile.route) {
+            ProfileScreen(
+                onBackClick = { navController.popBackStack() },
+                onNovelClick = { novelUrl, providerName ->
+                    navController.navigate(
+                        NavRoutes.Details.createRoute(novelUrl, providerName)
+                    )
+                }
+            )
+        }
+
+        // ================================================================
+        // DOWNLOADS
+        // ================================================================
+        composable(route = NavRoutes.Downloads.route) {
+            DownloadsScreen(
+                onBackClick = { navController.popBackStack() },
+                onNovelClick = { novelUrl, providerName ->
+                    navController.navigate(
+                        NavRoutes.Details.createRoute(novelUrl, providerName)
+                    )
+                }
             )
         }
 
@@ -202,17 +238,18 @@ fun NoveryNavGraph(
                         NavRoutes.Reader.createRoute(chapterUrl, nUrl, provider)
                     )
                 },
-                // Navigate to related novel's details
                 onNovelClick = { relatedNovelUrl, relatedProviderName ->
                     navController.navigate(
                         NavRoutes.Details.createRoute(relatedNovelUrl, relatedProviderName)
                     )
                 },
-                // Navigate to WebView with novel URL
                 onOpenInWebView = { provider, url ->
                     navController.navigate(
                         NavRoutes.ProviderWebView.createRoute(provider, url)
                     )
+                },
+                onNavigateToDownloads = {  // Add this
+                    navController.navigate(NavRoutes.Downloads.route)
                 }
             )
         }

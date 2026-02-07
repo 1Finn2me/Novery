@@ -20,7 +20,7 @@ import com.emptycastle.novery.ui.screens.home.shared.LibraryStateHolder
 import com.emptycastle.novery.ui.screens.home.tabs.browse.BrowseTab
 import com.emptycastle.novery.ui.screens.home.tabs.history.HistoryTab
 import com.emptycastle.novery.ui.screens.home.tabs.library.LibraryTab
-import com.emptycastle.novery.ui.screens.home.tabs.profile.ProfileTab
+import com.emptycastle.novery.ui.screens.home.tabs.more.MoreTab
 import com.emptycastle.novery.ui.screens.home.tabs.recommendation.RecommendationTab
 
 @Composable
@@ -30,7 +30,9 @@ fun HomeScreen(
     onNavigateToReader: (chapterUrl: String, novelUrl: String, providerName: String) -> Unit,
     onNavigateToSettings: () -> Unit,
     onNavigateToProviderBrowse: (providerName: String) -> Unit,
-    onNavigateToNotifications: () -> Unit
+    onNavigateToNotifications: () -> Unit,
+    onNavigateToProfile: () -> Unit,
+    onNavigateToDownloads: () -> Unit
 ) {
     // Initialize shared state
     LaunchedEffect(Unit) {
@@ -105,12 +107,11 @@ fun HomeScreen(
                     )
                 }
 
-                composable(HomeTabs.PROFILE.route) {
-                    ProfileTab(
-                        onNavigateToSettings = onNavigateToSettings,
-                        onNovelClick = { novelUrl, providerName ->
-                            onNavigateToDetails(novelUrl, providerName)
-                        }
+                composable(HomeTabs.MORE.route) {
+                    MoreTab(
+                        onNavigateToProfile = onNavigateToProfile,
+                        onNavigateToDownloads = onNavigateToDownloads,
+                        onNavigateToSettings = onNavigateToSettings
                     )
                 }
             }

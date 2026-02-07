@@ -1,4 +1,3 @@
-// com/emptycastle/novery/recommendation/AuthorPreferenceManager.kt
 package com.emptycastle.novery.recommendation
 
 import android.util.Log
