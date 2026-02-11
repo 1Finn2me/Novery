@@ -13,6 +13,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
@@ -208,8 +209,8 @@ fun ReaderContainer(
                                     fontFamily = fontFamily,
                                     fontSize = settings.fontSize,
                                     horizontalPadding = horizontalPadding,
-                                    paragraphSpacing = paragraphSpacing
-                                )
+                                    paragraphSpacing = paragraphSpacing,
+                                    primaryColor = MaterialTheme.colorScheme.primary                                )
                             }
 
                             is ReaderDisplayItem.Segment -> {

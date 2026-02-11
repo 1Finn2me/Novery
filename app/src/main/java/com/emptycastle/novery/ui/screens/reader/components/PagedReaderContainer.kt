@@ -584,8 +584,8 @@ private fun PageContent(
                             fontFamily = fontFamily,
                             fontSize = settings.fontSize,
                             horizontalPadding = horizontalPadding,
-                            paragraphSpacing = paragraphSpacing
-                        )
+                            paragraphSpacing = paragraphSpacing,
+                            primaryColor = MaterialTheme.colorScheme.primary                        )
                     }
 
                     is ReaderDisplayItem.Image -> {

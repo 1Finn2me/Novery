@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.ClickableText
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
@@ -29,6 +30,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -37,8 +39,13 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -58,6 +65,7 @@ fun AuthorNoteItem(
     fontSize: Int,
     horizontalPadding: Dp,
     paragraphSpacing: Dp,
+    primaryColor: Color,
     modifier: Modifier = Modifier
 ) {
     if (displayMode == AuthorNoteDisplayMode.HIDDEN) {
@@ -65,6 +73,7 @@ fun AuthorNoteItem(
     }
 
     val authorNote = item.authorNote
+    val uriHandler = LocalUriHandler.current
 
     var isExpanded by rememberSaveable(item.itemId) {
         mutableStateOf(displayMode == AuthorNoteDisplayMode.EXPANDED)
@@ -103,13 +112,29 @@ fun AuthorNoteItem(
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(8.dp))
                 .background(noteBackground)
-                .clickable { isExpanded = !isExpanded }
+                .then(
+                    // Only make the whole card clickable when collapsed
+                    // When expanded, only the header is clickable to avoid conflicts with links
+                    if (!isExpanded) {
+                        Modifier.clickable { isExpanded = true }
+                    } else {
+                        Modifier
+                    }
+                )
                 .animateContentSize()
                 .padding(12.dp)
         ) {
-            // Header row
+            // Header row - clickable when expanded to collapse
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .then(
+                        if (isExpanded) {
+                            Modifier.clickable { isExpanded = false }
+                        } else {
+                            Modifier
+                        }
+                    ),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -192,14 +217,27 @@ fun AuthorNoteItem(
                     authorNote.sections.forEach { section ->
                         when (section) {
                             is AuthorNoteSection.TextSection -> {
-                                Text(
-                                    text = section.annotatedString,
+                                val styledText = remember(section.annotatedString, primaryColor) {
+                                    section.annotatedString.applyLinkStyle(primaryColor)
+                                }
+
+                                ClickableText(
+                                    text = styledText,
                                     style = MaterialTheme.typography.bodyMedium.copy(
                                         fontSize = (fontSize - 1).sp,
-                                        lineHeight = (fontSize * 1.5f).sp
+                                        lineHeight = (fontSize * 1.5f).sp,
+                                        color = colors.text,
+                                        fontFamily = fontFamily
                                     ),
-                                    color = colors.text,
-                                    fontFamily = fontFamily
+                                    onClick = { offset ->
+                                        styledText.getStringAnnotations(
+                                            tag = "URL",
+                                            start = offset,
+                                            end = offset
+                                        ).firstOrNull()?.let { annotation ->
+                                            uriHandler.openUri(annotation.item)
+                                        }
+                                    }
                                 )
                             }
 
@@ -214,6 +252,30 @@ fun AuthorNoteItem(
                     }
                 }
             }
+        }
+    }
+}
+
+/**
+ * Applies the link color and underline decoration to all URL annotations in the AnnotatedString.
+ */
+private fun AnnotatedString.applyLinkStyle(linkColor: Color): AnnotatedString {
+    val urlAnnotations = getStringAnnotations(tag = "URL", start = 0, end = length)
+    if (urlAnnotations.isEmpty()) {
+        return this
+    }
+
+    return buildAnnotatedString {
+        append(this@applyLinkStyle)
+        urlAnnotations.forEach { annotation ->
+            addStyle(
+                SpanStyle(
+                    color = linkColor,
+                    textDecoration = TextDecoration.Underline
+                ),
+                annotation.start,
+                annotation.end
+            )
         }
     }
 }

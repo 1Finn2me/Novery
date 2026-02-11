@@ -96,6 +96,76 @@ private data class StyleState(
     val backgroundColor: Color? = null
 )
 
+/**
+ * Helper class to build styled text sections for author notes
+ */
+private class AuthorNoteTextBuilder {
+    private var annotatedBuilder = AnnotatedString.Builder()
+    private var plainBuilder = StringBuilder()
+
+    val length: Int get() = annotatedBuilder.length
+    val isEmpty: Boolean get() = plainBuilder.toString().isBlank()
+
+    fun appendStyledText(text: String, style: StyleState) {
+        if (text.isEmpty()) return
+
+        val startIndex = annotatedBuilder.length
+        annotatedBuilder.append(text)
+        plainBuilder.append(text)
+
+        val spanStyle = buildSpanStyle(style)
+        if (spanStyle != SpanStyle()) {
+            annotatedBuilder.addStyle(spanStyle, startIndex, annotatedBuilder.length)
+        }
+
+        style.linkUrl?.let { url ->
+            annotatedBuilder.addStringAnnotation(
+                tag = "URL",
+                annotation = url,
+                start = startIndex,
+                end = annotatedBuilder.length
+            )
+        }
+    }
+
+    fun build(): Pair<AnnotatedString, String> {
+        return Pair(annotatedBuilder.toAnnotatedString(), plainBuilder.toString().trim())
+    }
+
+    fun clear() {
+        annotatedBuilder = AnnotatedString.Builder()
+        plainBuilder = StringBuilder()
+    }
+
+    companion object {
+        private fun buildSpanStyle(state: StyleState): SpanStyle {
+            val decorations = mutableListOf<TextDecoration>()
+            if (state.isUnderline) decorations.add(TextDecoration.Underline)
+            if (state.isStrikethrough) decorations.add(TextDecoration.LineThrough)
+
+            return SpanStyle(
+                fontWeight = if (state.isBold) FontWeight.Bold else null,
+                fontStyle = if (state.isItalic) FontStyle.Italic else null,
+                fontFamily = if (state.isCode) FontFamily.Monospace else null,
+                fontSize = when {
+                    state.isSuperscript || state.isSubscript -> 0.75.em
+                    state.isSmallCaps -> 0.85.em
+                    else -> androidx.compose.ui.unit.TextUnit.Unspecified
+                },
+                baselineShift = when {
+                    state.isSuperscript -> BaselineShift.Superscript
+                    state.isSubscript -> BaselineShift.Subscript
+                    else -> null
+                },
+                textDecoration = if (decorations.isNotEmpty()) TextDecoration.combine(decorations) else null,
+                color = state.textColor ?: Color.Unspecified,
+                background = state.backgroundColor ?: Color.Unspecified,
+                fontFeatureSettings = if (state.isSmallCaps) "smcp" else null
+            )
+        }
+    }
+}
+
 object RichTextParser {
 
     private val boldTags = setOf("b", "strong")
@@ -439,7 +509,7 @@ object RichTextParser {
             .ifEmpty { listOf(container) }
 
         for (contentElement in contentElements) {
-            parseAuthorNoteContent(contentElement, sections, plainTextBuilder)
+            parseAuthorNoteContent(contentElement, sections, plainTextBuilder, StyleState())
         }
 
         if (sections.isEmpty()) {
@@ -457,20 +527,36 @@ object RichTextParser {
 
     /**
      * Recursively parse content inside an author note, collecting text and images
+     * while preserving text styling and links
      */
     private fun parseAuthorNoteContent(
         element: Element,
         sections: MutableList<AuthorNoteSection>,
-        plainTextBuilder: StringBuilder
+        plainTextBuilder: StringBuilder,
+        inheritedStyle: StyleState
     ) {
-        // Process all child nodes
-        for (node in element.childNodes()) {
+        val textBuilder = AuthorNoteTextBuilder()
+
+        fun flushTextSection() {
+            if (!textBuilder.isEmpty) {
+                val (annotated, plain) = textBuilder.build()
+                sections.add(AuthorNoteSection.TextSection(annotated, plain))
+
+                if (plainTextBuilder.isNotEmpty() && !plainTextBuilder.endsWith("\n")) {
+                    plainTextBuilder.append("\n")
+                }
+                plainTextBuilder.append(plain)
+
+                textBuilder.clear()
+            }
+        }
+
+        fun processNode(node: org.jsoup.nodes.Node, currentStyle: StyleState) {
             when (node) {
                 is TextNode -> {
-                    val text = node.wholeText.trim()
-                    if (text.isNotBlank()) {
-                        // Add to current text section or create new one
-                        addTextToSections(text, sections, plainTextBuilder)
+                    val text = node.wholeText
+                    if (text.isNotEmpty()) {
+                        textBuilder.appendStyledText(text, currentStyle)
                     }
                 }
 
@@ -478,8 +564,9 @@ object RichTextParser {
                     val tagName = node.tagName().lowercase()
 
                     when {
-                        // Handle images inside author notes
+                        // Handle images inside author notes - flush text and add image
                         tagName == "img" -> {
+                            flushTextSection()
                             val src = node.attr("src")
                             if (src.isNotBlank()) {
                                 val alt = node.attr("alt").takeIf { it.isNotBlank() }
@@ -487,25 +574,9 @@ object RichTextParser {
                             }
                         }
 
-                        // Handle paragraphs and divs - process their content
-                        tagName in setOf("p", "div", "span", "a", "strong", "b", "em", "i", "u") -> {
-                            parseAuthorNoteContent(node, sections, plainTextBuilder)
-                            // Add paragraph break after block elements
-                            if (tagName == "p" || tagName == "div") {
-                                if (plainTextBuilder.isNotEmpty() && !plainTextBuilder.endsWith("\n\n")) {
-                                    plainTextBuilder.append("\n\n")
-                                }
-                            }
-                        }
-
                         // Handle line breaks
                         tagName == "br" -> {
-                            plainTextBuilder.append("\n")
-                        }
-
-                        // Handle tables and other complex elements - extract text
-                        tagName in setOf("table", "tbody", "tr", "td", "th") -> {
-                            parseAuthorNoteContent(node, sections, plainTextBuilder)
+                            textBuilder.appendStyledText("\n", currentStyle)
                         }
 
                         // Skip separator elements
@@ -513,44 +584,37 @@ object RichTextParser {
                             // Skip
                         }
 
+                        // Handle block elements - add line break after if needed
+                        tagName in setOf("p", "div") -> {
+                            val newStyle = updateStyleForTag(currentStyle, node)
+                            for (child in node.childNodes()) {
+                                processNode(child, newStyle)
+                            }
+                            // Add a single line break after block elements (not double)
+                            if (textBuilder.length > 0) {
+                                textBuilder.appendStyledText("\n", currentStyle)
+                            }
+                        }
+
+                        // Handle inline elements - update style and continue
                         else -> {
-                            // For other elements, try to get text content
-                            parseAuthorNoteContent(node, sections, plainTextBuilder)
+                            val newStyle = updateStyleForTag(currentStyle, node)
+                            for (child in node.childNodes()) {
+                                processNode(child, newStyle)
+                            }
                         }
                     }
                 }
             }
         }
-    }
 
-    /**
-     * Add text to sections, merging with the last text section if possible
-     */
-    private fun addTextToSections(
-        text: String,
-        sections: MutableList<AuthorNoteSection>,
-        plainTextBuilder: StringBuilder
-    ) {
-        val lastSection = sections.lastOrNull()
-
-        if (lastSection is AuthorNoteSection.TextSection) {
-            // Merge with existing text section
-            val combinedText = lastSection.plainText + " " + text
-            val combinedAnnotated = buildAnnotatedString {
-                append(lastSection.annotatedString)
-                append(" ")
-                append(text)
-            }
-            sections[sections.lastIndex] = AuthorNoteSection.TextSection(combinedAnnotated, combinedText)
-        } else {
-            // Create new text section
-            sections.add(AuthorNoteSection.TextSection(AnnotatedString(text), text))
+        // Process all child nodes
+        for (node in element.childNodes()) {
+            processNode(node, inheritedStyle)
         }
 
-        if (plainTextBuilder.isNotEmpty() && !plainTextBuilder.endsWith(" ") && !plainTextBuilder.endsWith("\n")) {
-            plainTextBuilder.append(" ")
-        }
-        plainTextBuilder.append(text)
+        // Flush any remaining text
+        flushTextSection()
     }
 
     private fun processInlineNode(
