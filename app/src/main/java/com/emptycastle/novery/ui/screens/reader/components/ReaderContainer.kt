@@ -16,6 +16,7 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -23,6 +24,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -35,6 +38,8 @@ import com.emptycastle.novery.ui.screens.reader.logic.AuthorNoteDisplayMode
 import com.emptycastle.novery.ui.screens.reader.logic.BlockType
 import com.emptycastle.novery.ui.screens.reader.model.ReaderDisplayItem
 import com.emptycastle.novery.ui.screens.reader.model.ReaderUiState
+import com.emptycastle.novery.ui.screens.reader.model.SentenceBoundsInSegment
+import com.emptycastle.novery.ui.screens.reader.model.TTSScrollEdge
 import com.emptycastle.novery.ui.screens.reader.theme.FontProvider
 import com.emptycastle.novery.ui.screens.reader.theme.ReaderColors
 import com.emptycastle.novery.domain.model.TextAlign as ReaderTextAlign
@@ -44,17 +49,22 @@ fun ReaderContainer(
     uiState: ReaderUiState,
     colors: ReaderColors,
     listState: LazyListState,
+    isScrollBounded: Boolean = false,
+    highlightedDisplayIndex: Int = -1,
+    ensureVisibleIndex: Int? = null,
+    onEnsureVisibleHandled: () -> Unit = {},
+    onSentenceBoundsUpdated: ((Int, Float, Float) -> Unit)? = null,
+    currentSentenceBounds: SentenceBoundsInSegment = SentenceBoundsInSegment.INVALID,
     onPrevious: () -> Unit,
     onNext: () -> Unit,
     onBack: () -> Unit,
     onRetryChapter: (Int) -> Unit
 ) {
     val settings = uiState.settings
+    val density = LocalDensity.current
 
-    // State for full-screen image viewer
     var fullScreenImageUrl by remember { mutableStateOf<String?>(null) }
 
-    // Determine layout direction based on reading direction setting
     val layoutDirection = remember(settings.readingDirection) {
         when (settings.readingDirection) {
             ReadingDirection.RTL -> LayoutDirection.Rtl
@@ -62,7 +72,6 @@ fun ReaderContainer(
         }
     }
 
-    // Get font from FontProvider
     val fontFamily = remember(settings.fontFamily) {
         FontProvider.getFontFamily(settings.fontFamily)
     }
@@ -75,7 +84,6 @@ fun ReaderContainer(
         mapFontWeight(settings.fontWeight)
     }
 
-    // Apply high contrast adjustments
     val effectiveColors = remember(colors, settings.forceHighContrast) {
         if (settings.forceHighContrast) {
             colors.copy(
@@ -90,7 +98,6 @@ fun ReaderContainer(
         }
     }
 
-    // Calculate spacing and padding from settings
     val horizontalPadding = remember(settings.marginHorizontal, settings.largerTouchTargets) {
         if (settings.largerTouchTargets) {
             (settings.marginHorizontal - 4).coerceAtLeast(8).dp
@@ -103,7 +110,6 @@ fun ReaderContainer(
         (settings.fontSize * settings.paragraphSpacing * 0.5f).dp
     }
 
-    // Calculate max width
     val maxWidth = remember(settings.maxWidth) {
         when (settings.maxWidth) {
             MaxWidth.NARROW -> 480.dp
@@ -114,38 +120,115 @@ fun ReaderContainer(
         }
     }
 
-    // System insets
     val statusBarPadding = WindowInsets.statusBars.asPaddingValues()
     val navBarPadding = WindowInsets.navigationBars.asPaddingValues()
 
-    // Larger touch targets adjustments
     val touchTargetPadding = if (settings.largerTouchTargets) 8.dp else 0.dp
 
-    // Top padding adjusts based on whether controls are visible
     val topPadding = if (uiState.showControls) {
         100.dp + touchTargetPadding
     } else {
         statusBarPadding.calculateTopPadding() + settings.marginVertical.dp
     }
 
-    // Bottom padding includes nav bar + margin
     val bottomPadding = navBarPadding.calculateBottomPadding() + 100.dp +
             settings.marginVertical.dp + touchTargetPadding
 
-    // Create custom fling behavior based on scroll sensitivity
+    val topPaddingPx = with(density) { topPadding.roundToPx() }
+    val bottomPaddingPx = with(density) { bottomPadding.roundToPx() }
+
+    // Create bounded scroll connection with SENTENCE bounds
+    val ttsBoundedScrollConnection = rememberTTSBoundedScrollConnection(
+        listState = listState,
+        highlightedIndex = highlightedDisplayIndex,
+        isActive = isScrollBounded,
+        topPadding = topPaddingPx,
+        bottomPadding = bottomPaddingPx,
+        sentenceTopOffset = currentSentenceBounds.topOffset,
+        sentenceBottomOffset = currentSentenceBounds.bottomOffset
+    )
+
     val flingBehavior = rememberCustomFlingBehavior(
         sensitivity = settings.scrollSensitivity,
         smoothScroll = settings.smoothScroll,
         reduceMotion = settings.reduceMotion
     )
 
-    // Apply layout direction
+    // QuickNovel-style auto-scroll: scroll when sentence would go off-screen
+    // Position at opposite edge (top->bottom flip, bottom->top flip)
+    LaunchedEffect(ensureVisibleIndex, currentSentenceBounds) {
+        if (ensureVisibleIndex == null || ensureVisibleIndex < 0) return@LaunchedEffect
+
+        val layoutInfo = listState.layoutInfo
+        val targetItem = layoutInfo.visibleItemsInfo.find { it.index == ensureVisibleIndex }
+
+        val viewportTop = layoutInfo.viewportStartOffset + topPaddingPx
+        val viewportBottom = layoutInfo.viewportEndOffset - bottomPaddingPx
+        val viewportHeight = viewportBottom - viewportTop
+
+        if (targetItem == null) {
+            // Item completely off-screen, scroll to bring it into view
+            // Use flip behavior: if it was below, put at top; if above, put at bottom
+            try {
+                // Calculate where to position the item
+                val scrollOffset = when (uiState.lastTTSScrollEdge) {
+                    TTSScrollEdge.BOTTOM -> {
+                        // Sentence went off bottom, put it at top of viewport
+                        topPaddingPx
+                    }
+                    TTSScrollEdge.TOP -> {
+                        // Sentence went off top, put it at bottom of viewport
+                        // This means we need negative offset so item appears near bottom
+                        -(viewportHeight - (currentSentenceBounds.height.toInt().coerceAtLeast(100)))
+                    }
+                    TTSScrollEdge.NONE -> {
+                        // Default: put at upper third of viewport
+                        topPaddingPx + (viewportHeight / 4)
+                    }
+                }
+
+                listState.animateScrollToItem(
+                    index = ensureVisibleIndex,
+                    scrollOffset = -scrollOffset.coerceAtLeast(0)
+                )
+            } catch (e: Exception) {
+                // Fallback
+                try {
+                    listState.animateScrollToItem(ensureVisibleIndex)
+                } catch (_: Exception) { }
+            }
+        } else if (currentSentenceBounds.isValid) {
+            // Item is visible, but check if SENTENCE is visible
+            val sentenceTopInViewport = targetItem.offset + currentSentenceBounds.topOffset.toInt()
+            val sentenceBottomInViewport = targetItem.offset + currentSentenceBounds.bottomOffset.toInt()
+
+            when {
+                sentenceBottomInViewport > viewportBottom -> {
+                    // Sentence is below viewport - scroll to put it at TOP
+                    val scrollAmount = sentenceTopInViewport - viewportTop - 20 // Small margin
+                    try {
+                        listState.animateScrollBy(scrollAmount.toFloat())
+                    } catch (e: Exception) { }
+                }
+                sentenceTopInViewport < viewportTop -> {
+                    // Sentence is above viewport - scroll to put it at BOTTOM
+                    val targetBottom = viewportBottom - currentSentenceBounds.height.toInt() - 20
+                    val scrollAmount = sentenceTopInViewport - targetBottom
+                    try {
+                        listState.animateScrollBy(scrollAmount.toFloat())
+                    } catch (e: Exception) { }
+                }
+            }
+        }
+
+        onEnsureVisibleHandled()
+    }
+
     CompositionLocalProvider(LocalLayoutDirection provides layoutDirection) {
         Box(
             modifier = Modifier.fillMaxSize(),
             contentAlignment = Alignment.TopCenter
         ) {
-            // Conditionally wrap in SelectionContainer based on settings
             val content: @Composable () -> Unit = {
                 LazyColumn(
                     state = listState,
@@ -157,12 +240,20 @@ fun ReaderContainer(
                             } else {
                                 Modifier
                             }
+                        )
+                        .then(
+                            if (isScrollBounded) {
+                                Modifier.nestedScroll(ttsBoundedScrollConnection)
+                            } else {
+                                Modifier
+                            }
                         ),
                     contentPadding = PaddingValues(
                         top = topPadding,
                         bottom = bottomPadding
                     ),
-                    flingBehavior = flingBehavior
+                    flingBehavior = flingBehavior,
+                    userScrollEnabled = true
                 ) {
                     itemsIndexed(
                         items = uiState.displayItems,
@@ -196,9 +287,7 @@ fun ReaderContainer(
                             }
 
                             is ReaderDisplayItem.AuthorNote -> {
-                                // Get display mode from preferences
                                 val authorNoteDisplayMode = remember {
-                                    // This should come from ViewModel/preferences
                                     AuthorNoteDisplayMode.COLLAPSED
                                 }
 
@@ -210,11 +299,11 @@ fun ReaderContainer(
                                     fontSize = settings.fontSize,
                                     horizontalPadding = horizontalPadding,
                                     paragraphSpacing = paragraphSpacing,
-                                    primaryColor = MaterialTheme.colorScheme.primary                                )
+                                    primaryColor = MaterialTheme.colorScheme.primary
+                                )
                             }
 
                             is ReaderDisplayItem.Segment -> {
-                                // Check block type for special rendering
                                 when (item.segment.blockType) {
                                     BlockType.BLOCKQUOTE -> {
                                         BlockquoteSegmentItem(
@@ -272,7 +361,9 @@ fun ReaderContainer(
                                             horizontalPadding = horizontalPadding,
                                             paragraphSpacing = paragraphSpacing,
                                             linkColor = effectiveColors.linkColor,
-                                            onLinkClick = null
+                                            onLinkClick = null,
+                                            // NEW: Report sentence bounds
+                                            onSentenceBoundsCalculated = onSentenceBoundsUpdated
                                         )
                                     }
                                 }
@@ -319,7 +410,6 @@ fun ReaderContainer(
                 }
             }
 
-            // Wrap in SelectionContainer if long press selection is enabled
             if (settings.longPressSelection) {
                 SelectionContainer {
                     content()
@@ -328,7 +418,6 @@ fun ReaderContainer(
                 content()
             }
 
-            // Full-screen image viewer dialog
             fullScreenImageUrl?.let { url ->
                 ImageViewerDialog(
                     imageUrl = url,

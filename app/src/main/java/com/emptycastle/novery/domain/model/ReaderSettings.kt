@@ -100,6 +100,7 @@ data class ReaderSettings(
 
     // TTS behavior
     val ttsAutoAdvanceChapter: Boolean = true,
+    val lockScrollDuringTTS: Boolean = true,
 
     /** Keep screen on while reading */
     val keepScreenOn: Boolean = true,

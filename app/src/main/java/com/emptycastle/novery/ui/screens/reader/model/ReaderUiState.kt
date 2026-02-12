@@ -78,7 +78,7 @@ data class TargetScrollPosition(
 data class LoadedChapter(
     val chapter: Chapter,
     val chapterIndex: Int,
-    val contentItems: List<ChapterContentItem> = emptyList(), // Ordered content (text + images)
+    val contentItems: List<ChapterContentItem> = emptyList(),
     val isLoading: Boolean = false,
     val isFromCache: Boolean = false,
     val error: String? = null
@@ -87,24 +87,15 @@ data class LoadedChapter(
      * Get only text segments (for TTS and word count)
      */
     val segments: List<ContentSegment>
-        get() = contentItems
-            .filterIsInstance<ChapterContentItem.Text>()
-            .map { it.segment }
+        get() = contentItems.filterIsInstance<ChapterContentItem.Text>().map { it.segment }
 
     /**
      * Get only images
      */
     val images: List<ContentImage>
-        get() = contentItems
-            .filterIsInstance<ChapterContentItem.Image>()
-            .map { it.image }
+        get() = contentItems.filterIsInstance<ChapterContentItem.Image>().map { it.image }
 
-    /**
-     * Total content item count (text + images)
-     */
-    val contentCount: Int
-        get() = contentItems.size
-
+    val contentCount: Int get() = contentItems.size
     val totalSentences: Int get() = segments.sumOf { it.sentenceCount }
 
     val displayItemCount: Int get() = when {
@@ -115,8 +106,23 @@ data class LoadedChapter(
 }
 
 // =============================================================================
-// TTS STATE
+// TTS STATE - UPDATED
 // =============================================================================
+
+/**
+ * Bounds of a sentence relative to its parent segment/paragraph
+ */
+data class SentenceBoundsInSegment(
+    val topOffset: Float = 0f,      // Pixels from top of segment to top of sentence
+    val bottomOffset: Float = 0f,   // Pixels from top of segment to bottom of sentence
+    val height: Float = 0f          // Height of the sentence in pixels
+) {
+    val isValid: Boolean get() = height > 0f
+
+    companion object {
+        val INVALID = SentenceBoundsInSegment()
+    }
+}
 
 data class TTSPosition(
     val segmentIndex: Int = -1,
@@ -129,7 +135,8 @@ data class TTSPosition(
 data class SentenceHighlight(
     val segmentDisplayIndex: Int,
     val sentenceIndex: Int,
-    val sentence: ParsedSentence
+    val sentence: ParsedSentence,
+    val boundsInSegment: SentenceBoundsInSegment = SentenceBoundsInSegment.INVALID
 )
 
 data class TTSSettingsState(
@@ -142,14 +149,20 @@ data class TTSSettingsState(
     val pauseOnCalls: Boolean = true,
     val useSystemVoice: Boolean = false
 )
-// =============================================================================
-// MAIN UI STATE
-// =============================================================================
+
+/**
+ * Tracks the scroll position needed for QuickNovel-style scrolling
+ */
+enum class TTSScrollEdge {
+    NONE,   // Sentence is comfortably visible
+    TOP,    // Sentence is at/near top edge
+    BOTTOM  // Sentence is at/near bottom edge
+}
 
 data class ReaderUiState(
     // Loading & Error
     val isLoading: Boolean = true,
-    val isContentReady: Boolean = false,  // NEW: Indicates content is fully ready to display
+    val isContentReady: Boolean = false,
     val error: String? = null,
 
     // Chapters
@@ -170,6 +183,8 @@ data class ReaderUiState(
     val currentChapterSegmentCount: Int = 0,
     val currentChapterFirstSegmentIndex: Int = 0,
     val currentChapterLastSegmentIndex: Int = 0,
+
+    // Pending scroll reset flag
     val pendingScrollReset: Boolean = false,
 
     // Scroll State
@@ -216,13 +231,15 @@ data class ReaderUiState(
     val currentSentenceHighlight: SentenceHighlight? = null,
     val totalTTSSentences: Int = 0,
     val currentGlobalSentenceIndex: Int = 0,
-    val ttsSettings: TTSSettingsState = TTSSettingsState()
+    val ttsSettings: TTSSettingsState = TTSSettingsState(),
+
+    // NEW: Track which edge the sentence was last at for flip behavior
+    val lastTTSScrollEdge: TTSScrollEdge = TTSScrollEdge.NONE
 ) {
-    // Computed property to determine if we should show loading overlay
     val shouldShowLoadingOverlay: Boolean
         get() = isLoading || !isContentReady || pendingScrollReset
 
-val savedScrollPosition: TargetScrollPosition? get() = targetScrollPosition
+    val savedScrollPosition: TargetScrollPosition? get() = targetScrollPosition
 
     fun getAllSegments(): List<ReaderDisplayItem.Segment> {
         return displayItems.filterIsInstance<ReaderDisplayItem.Segment>()

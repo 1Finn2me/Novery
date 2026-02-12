@@ -38,6 +38,7 @@ import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.HighlightAlt
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.RecordVoiceOver
@@ -112,6 +113,8 @@ private object TTSTheme {
     val violetMuted = Color(0xFF8B5CF6).copy(alpha = 0.15f)
     val amber = Color(0xFFF59E0B)
     val amberMuted = Color(0xFFF59E0B).copy(alpha = 0.15f)
+    val blue = Color(0xFF3B82F6)
+    val blueMuted = Color(0xFF3B82F6).copy(alpha = 0.15f)
 
     val cornerRadiusMedium = 20.dp
     val cornerRadiusSmall = 14.dp
@@ -137,12 +140,14 @@ fun TTSSettingsPanel(
     selectedVoiceId: String?,
     autoScroll: Boolean,
     highlightSentence: Boolean,
+    lockScrollDuringTTS: Boolean,  // NEW PARAMETER
     useSystemVoice: Boolean,
     onSpeedChange: (Float) -> Unit,
     onPitchChange: (Float) -> Unit,
     onVoiceSelected: (VoiceInfo) -> Unit,
     onAutoScrollChange: (Boolean) -> Unit,
     onHighlightChange: (Boolean) -> Unit,
+    onLockScrollChange: (Boolean) -> Unit,  // NEW CALLBACK
     onUseSystemVoiceChange: (Boolean) -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier
@@ -170,7 +175,7 @@ fun TTSSettingsPanel(
     Surface(
         modifier = modifier
             .fillMaxWidth()
-            .heightIn(max = 480.dp),
+            .heightIn(max = 520.dp),  // Slightly increased for new setting
         shape = RoundedCornerShape(TTSTheme.cornerRadiusMedium),
         color = Color.Transparent,
         tonalElevation = 8.dp,
@@ -271,6 +276,7 @@ fun TTSSettingsPanel(
                             TTSTab.OPTIONS -> OptionsTabContent(
                                 autoScroll = autoScroll,
                                 highlightSentence = highlightSentence,
+                                lockScrollDuringTTS = lockScrollDuringTTS,  // NEW
                                 sleepTimerRemaining = sleepTimerRemaining,
                                 useSystemVoice = useSystemVoice,
                                 onAutoScrollChange = {
@@ -280,6 +286,10 @@ fun TTSSettingsPanel(
                                 onHighlightChange = {
                                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                     onHighlightChange(it)
+                                },
+                                onLockScrollChange = {  // NEW
+                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    onLockScrollChange(it)
                                 },
                                 onSetSleepTimer = { minutes ->
                                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -459,7 +469,7 @@ private fun TTSTabBar(
 }
 
 // =============================================================================
-// TAB CONTENT - VOICE
+// TAB CONTENT - VOICE (unchanged)
 // =============================================================================
 
 @Composable
@@ -693,7 +703,7 @@ private fun SystemTTSSettingsButton() {
 }
 
 // =============================================================================
-// TAB CONTENT - PLAYBACK
+// TAB CONTENT - PLAYBACK (unchanged)
 // =============================================================================
 
 @Composable
@@ -834,17 +844,19 @@ private fun PlaybackTabContent(
 }
 
 // =============================================================================
-// TAB CONTENT - OPTIONS
+// TAB CONTENT - OPTIONS (UPDATED with Lock Scroll)
 // =============================================================================
 
 @Composable
 private fun OptionsTabContent(
     autoScroll: Boolean,
     highlightSentence: Boolean,
+    lockScrollDuringTTS: Boolean,  // NEW
     sleepTimerRemaining: Int?,
     useSystemVoice: Boolean,
     onAutoScrollChange: (Boolean) -> Unit,
     onHighlightChange: (Boolean) -> Unit,
+    onLockScrollChange: (Boolean) -> Unit,  // NEW
     onSetSleepTimer: (Int) -> Unit,
     onCancelSleepTimer: () -> Unit
 ) {
@@ -869,6 +881,48 @@ private fun OptionsTabContent(
                     accentColor = TTSTheme.primary,
                     onCheckedChange = onHighlightChange
                 )
+
+                // NEW: Lock Scroll Setting
+                TTSToggleSetting(
+                    icon = Icons.Default.Lock,
+                    title = "Lock Scroll During Playback",
+                    subtitle = "Prevent manual scrolling while TTS is active",
+                    checked = lockScrollDuringTTS,
+                    accentColor = TTSTheme.blue,
+                    onCheckedChange = onLockScrollChange
+                )
+
+                // Info about lock scroll when enabled
+                AnimatedVisibility(
+                    visible = lockScrollDuringTTS,
+                    enter = expandVertically() + fadeIn(),
+                    exit = shrinkVertically() + fadeOut()
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = TTSTheme.blueMuted
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(12.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Lock,
+                                contentDescription = null,
+                                tint = TTSTheme.blue,
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Text(
+                                text = "Screen will stay focused on the current sentence. Disable to scroll freely while listening.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = TTSTheme.blue
+                            )
+                        }
+                    }
+                }
             }
         }
 

@@ -68,6 +68,7 @@ import com.emptycastle.novery.ui.screens.reader.components.ReaderTopBar
 import com.emptycastle.novery.ui.screens.reader.components.ScrollUtils
 import com.emptycastle.novery.ui.screens.reader.model.ReaderDisplayItem
 import com.emptycastle.novery.ui.screens.reader.model.ReaderUiState
+import com.emptycastle.novery.ui.screens.reader.model.SentenceBoundsInSegment
 import com.emptycastle.novery.ui.screens.reader.theme.ReaderColors
 import com.emptycastle.novery.ui.screens.reader.theme.ReaderDefaults
 import com.emptycastle.novery.util.ImmersiveModeEffect
@@ -92,6 +93,9 @@ fun ReaderScreen(
     viewModel: ReaderViewModel = viewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    val ttsScrollLocked by viewModel.ttsScrollLocked.collectAsState()
+    val ensureVisibleIndex by viewModel.ttsShouldEnsureVisible.collectAsState()
+    val sentenceBounds by viewModel.sentenceBounds.collectAsState()
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
@@ -305,32 +309,14 @@ fun ReaderScreen(
         }
     }
 
-    LaunchedEffect(listState, uiState.isContentReady) {
-        if (!uiState.isContentReady) return@LaunchedEffect
-
-        snapshotFlow {
-            val layoutInfo = listState.layoutInfo
-            val lastVisibleIndex = layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
-            val totalItems = layoutInfo.totalItemsCount
-            Pair(lastVisibleIndex, totalItems)
-        }.collect { (lastVisibleIndex, totalItems) ->
-            if (totalItems > 0 && lastVisibleIndex >= totalItems - ReaderDefaults.PRELOAD_THRESHOLD_ITEMS) {
-                val displayItems = uiState.displayItems
-                val lastItem = displayItems.getOrNull(lastVisibleIndex)
-                val chapterIndex = when (lastItem) {
-                    is ReaderDisplayItem.Segment -> lastItem.chapterIndex
-                    is ReaderDisplayItem.Image -> lastItem.chapterIndex
-                    is ReaderDisplayItem.ChapterDivider -> lastItem.chapterIndex
-                    else -> return@collect
-                }
-                viewModel.onApproachingEnd(chapterIndex)
-            }
-        }
-    }
-
-    // Auto-scroll to current segment during TTS
-    LaunchedEffect(uiState.currentSegmentIndex, uiState.isTTSActive, uiState.ttsSettings.autoScroll) {
-        if (uiState.isTTSActive && uiState.currentSegmentIndex >= 0 && uiState.ttsSettings.autoScroll) {
+    // Auto-scroll to current segment during TTS (when NOT using bounded scroll)
+    // When bounded scroll is active, the ReaderContainer handles keeping the item visible
+    LaunchedEffect(uiState.currentSegmentIndex, uiState.isTTSActive, uiState.ttsSettings.autoScroll, ttsScrollLocked) {
+        if (uiState.isTTSActive &&
+            uiState.currentSegmentIndex >= 0 &&
+            uiState.ttsSettings.autoScroll &&
+            !ttsScrollLocked  // Only auto-scroll when NOT locked (bounded scroll handles locked case)
+        ) {
             try {
                 if (uiState.settings.smoothScroll && !uiState.settings.reduceMotion) {
                     listState.animateScrollToItem(
@@ -400,6 +386,16 @@ fun ReaderScreen(
         }
     }
 
+    // Derive highlighted display index for bounded scrolling
+    val highlightedDisplayIndex by remember {
+        derivedStateOf {
+            uiState.currentSentenceHighlight?.segmentDisplayIndex ?: -1
+        }
+    }
+
+    // Determine if scroll should be bounded
+    val isScrollBounded = uiState.isTTSActive && ttsScrollLocked
+
     // Scroll by page function for tap zones and volume keys
     val scrollByPage: (Boolean) -> Unit = remember(
         listState,
@@ -441,6 +437,13 @@ fun ReaderScreen(
         listState = listState,
         chapterProgress = chapterProgress,
         estimatedTimeLeft = if (uiState.settings.showReadingTime) estimatedTimeLeft else null,
+        isScrollBounded = isScrollBounded,
+        highlightedDisplayIndex = highlightedDisplayIndex,
+        ensureVisibleIndex = ensureVisibleIndex,
+        ttsScrollLocked = ttsScrollLocked,
+        currentSentenceBounds = sentenceBounds,
+        onSentenceBoundsUpdated = viewModel::updateSentenceBounds,
+        onEnsureVisibleHandled = { viewModel.clearTTSEnsureVisible() },
         onTapAction = { action ->
             when (action) {
                 TapAction.TOGGLE_CONTROLS -> viewModel.toggleControls()
@@ -477,6 +480,7 @@ fun ReaderScreen(
         onTTSVoiceSelected = viewModel::updateTTSVoice,
         onTTSAutoScrollChange = viewModel::updateTTSAutoScroll,
         onTTSHighlightChange = viewModel::updateTTSHighlightSentence,
+        onTTSLockScrollChange = viewModel::setTTSScrollLock,
         onTTSUseSystemVoiceChange = viewModel::updateTTSUseSystemVoice,
         onPrevious = viewModel::navigateToPrevious,
         onNext = viewModel::navigateToNext,
@@ -620,6 +624,13 @@ private fun ReaderScreenContent(
     listState: LazyListState,
     chapterProgress: Float,
     estimatedTimeLeft: String?,
+    isScrollBounded: Boolean,
+    highlightedDisplayIndex: Int,
+    ensureVisibleIndex: Int?,
+    ttsScrollLocked: Boolean,
+    currentSentenceBounds: SentenceBoundsInSegment = SentenceBoundsInSegment.INVALID,
+    onSentenceBoundsUpdated: (Int, Float, Float) -> Unit = { _, _, _ -> },
+    onEnsureVisibleHandled: () -> Unit,
     onTapAction: (TapAction) -> Unit,
     onBack: () -> Unit,
     onRetry: () -> Unit,
@@ -642,6 +653,7 @@ private fun ReaderScreenContent(
     onTTSVoiceSelected: (VoiceInfo) -> Unit,
     onTTSAutoScrollChange: (Boolean) -> Unit,
     onTTSHighlightChange: (Boolean) -> Unit,
+    onTTSLockScrollChange: (Boolean) -> Unit,
     onTTSUseSystemVoiceChange: (Boolean) -> Unit,
     onPrevious: () -> Unit,
     onNext: () -> Unit,
@@ -744,6 +756,14 @@ private fun ReaderScreenContent(
                             uiState = uiState,
                             colors = colors,
                             listState = listState,
+                            isScrollBounded = isScrollBounded,
+                            highlightedDisplayIndex = highlightedDisplayIndex,
+                            ensureVisibleIndex = ensureVisibleIndex,
+                            onEnsureVisibleHandled = onEnsureVisibleHandled,
+                            onSentenceBoundsUpdated = { displayIndex, top, bottom ->
+                                onSentenceBoundsUpdated(displayIndex, top, bottom)
+                            },
+                            currentSentenceBounds = currentSentenceBounds,
                             onPrevious = onPrevious,
                             onNext = onNext,
                             onBack = onBack,
@@ -797,6 +817,7 @@ private fun ReaderScreenContent(
                             pitch = uiState.ttsSettings.pitch,
                             selectedVoiceId = uiState.ttsSettings.voiceId,
                             autoScroll = uiState.ttsSettings.autoScroll,
+                            lockScrollDuringTTS = ttsScrollLocked,
                             highlightSentence = uiState.ttsSettings.highlightSentence,
                             useSystemVoice = uiState.ttsSettings.useSystemVoice,
                             onSpeedChange = onTTSSpeedChange,
@@ -804,6 +825,7 @@ private fun ReaderScreenContent(
                             onVoiceSelected = onTTSVoiceSelected,
                             onAutoScrollChange = onTTSAutoScrollChange,
                             onHighlightChange = onTTSHighlightChange,
+                            onLockScrollChange = onTTSLockScrollChange,
                             onUseSystemVoiceChange = onTTSUseSystemVoiceChange,
                             onDismiss = onHideTTSSettings,
                             modifier = Modifier.padding(16.dp)

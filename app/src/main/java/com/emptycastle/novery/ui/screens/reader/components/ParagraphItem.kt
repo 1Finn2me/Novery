@@ -29,7 +29,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -40,6 +44,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.ParagraphStyle
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
@@ -137,7 +142,7 @@ fun ChapterHeaderItem(
 }
 
 // =============================================================================
-// SEGMENT / PARAGRAPH WITH CLICKABLE LINKS
+// SEGMENT / PARAGRAPH WITH SENTENCE BOUNDS TRACKING
 // =============================================================================
 
 @Composable
@@ -155,8 +160,10 @@ fun SegmentItem(
     highlightColor: Color,
     horizontalPadding: Dp,
     paragraphSpacing: Dp,
-    linkColor: Color = Color(0xFF1976D2), // Default link color
-    onLinkClick: ((String) -> Unit)? = null
+    linkColor: Color = Color(0xFF1976D2),
+    onLinkClick: ((String) -> Unit)? = null,
+    // NEW: Callback to report sentence bounds
+    onSentenceBoundsCalculated: ((displayIndex: Int, topOffset: Float, bottomOffset: Float) -> Unit)? = null
 ) {
     val context = LocalContext.current
     val segment = item.segment
@@ -204,6 +211,53 @@ fun SegmentItem(
         }
     }
 
+    // Track text layout result for sentence bounds calculation
+    var textLayoutResult by remember { mutableStateOf<TextLayoutResult?>(null) }
+
+    // Calculate and report sentence bounds when layout is available
+    LaunchedEffect(textLayoutResult, hasSentenceHighlight, currentSentenceHighlight, displayIndex) {
+        if (hasSentenceHighlight &&
+            currentSentenceHighlight != null &&
+            textLayoutResult != null &&
+            onSentenceBoundsCalculated != null
+        ) {
+            val result = textLayoutResult!!
+            val sentence = currentSentenceHighlight.sentence
+
+            // Adjust indices for word spacing if applied
+            val adjustedStart = if (settings.wordSpacing != 1.0f) {
+                adjustIndexForWordSpacing(segment.text, sentence.startIndex, settings.wordSpacing)
+            } else {
+                sentence.startIndex
+            }
+            val adjustedEnd = if (settings.wordSpacing != 1.0f) {
+                adjustIndexForWordSpacing(segment.text, sentence.endIndex, settings.wordSpacing)
+            } else {
+                sentence.endIndex
+            }
+
+            val textLength = result.layoutInput.text.length
+            val startIndex = adjustedStart.coerceIn(0, textLength)
+            val endIndex = (adjustedEnd - 1).coerceIn(0, textLength)
+
+            if (startIndex <= endIndex && endIndex < textLength) {
+                try {
+                    // Get line bounds for the sentence
+                    val startLine = result.getLineForOffset(startIndex)
+                    val endLine = result.getLineForOffset(endIndex)
+
+                    val topOffset = result.getLineTop(startLine)
+                    val bottomOffset = result.getLineBottom(endLine)
+
+                    onSentenceBoundsCalculated(displayIndex, topOffset, bottomOffset)
+                } catch (e: Exception) {
+                    // Fall back to full text bounds
+                    onSentenceBoundsCalculated(displayIndex, 0f, result.size.height.toFloat())
+                }
+            }
+        }
+    }
+
     // Build final annotated string with link styling and TTS highlight
     val annotatedText = remember(
         processedStyledText,
@@ -213,7 +267,8 @@ fun SegmentItem(
         hyphens,
         lineBreak,
         textColor,
-        linkColor
+        linkColor,
+        settings.wordSpacing
     ) {
         buildAnnotatedString {
             // Apply paragraph style
@@ -298,7 +353,7 @@ fun SegmentItem(
             .padding(vertical = paragraphSpacing / 2 + extraPadding)
     ) {
         if (hasLinks) {
-            // Use ClickableText for segments with links
+            // For ClickableText, we can't get onTextLayout directly
             ClickableText(
                 text = annotatedText,
                 style = textStyle,
@@ -324,11 +379,33 @@ fun SegmentItem(
                     }
                 }
             )
+
+            // Estimate sentence bounds for ClickableText using line height
+            LaunchedEffect(hasSentenceHighlight, currentSentenceHighlight) {
+                if (hasSentenceHighlight && currentSentenceHighlight != null && onSentenceBoundsCalculated != null) {
+                    // Estimate: sentence roughly occupies proportional height
+                    val totalChars = segment.text.length.coerceAtLeast(1)
+                    val lineHeightPx = settings.fontSize * settings.lineHeight * context.resources.displayMetrics.density
+                    val estimatedLines = (segment.text.length / 50f).coerceAtLeast(1f) // Rough chars per line
+                    val estimatedHeight = lineHeightPx * estimatedLines
+
+                    val sentenceStartRatio = currentSentenceHighlight.sentence.startIndex.toFloat() / totalChars
+                    val sentenceEndRatio = currentSentenceHighlight.sentence.endIndex.toFloat() / totalChars
+
+                    val topOffset = estimatedHeight * sentenceStartRatio
+                    val bottomOffset = estimatedHeight * sentenceEndRatio
+
+                    onSentenceBoundsCalculated(displayIndex, topOffset, bottomOffset)
+                }
+            }
         } else {
             // Use regular Text for segments without links (better performance)
             Text(
                 text = annotatedText,
-                style = textStyle
+                style = textStyle,
+                onTextLayout = { result ->
+                    textLayoutResult = result
+                }
             )
         }
     }
