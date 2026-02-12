@@ -119,6 +119,73 @@ sealed class GridColumns {
 }
 
 /**
+ * Custom theme colors configuration
+ */
+data class CustomThemeColors(
+    val primaryColor: Long = 0xFFEA580C,      // Orange600
+    val secondaryColor: Long = 0xFFFB923C,    // Orange400
+    val backgroundColor: Long = 0xFF09090B,   // Zinc950
+    val surfaceColor: Long = 0xFF18181B       // Zinc900
+) {
+    companion object {
+        val DEFAULT = CustomThemeColors()
+
+        // Preset themes
+        val OCEAN = CustomThemeColors(
+            primaryColor = 0xFF0EA5E9,    // Sky-500
+            secondaryColor = 0xFF38BDF8,  // Sky-400
+            backgroundColor = 0xFF0C1222, // Dark navy
+            surfaceColor = 0xFF1E293B    // Slate-800
+        )
+
+        val FOREST = CustomThemeColors(
+            primaryColor = 0xFF22C55E,    // Green-500
+            secondaryColor = 0xFF4ADE80,  // Green-400
+            backgroundColor = 0xFF0A0F0A, // Dark green-black
+            surfaceColor = 0xFF14532D    // Green-900
+        )
+
+        val SUNSET = CustomThemeColors(
+            primaryColor = 0xFFF97316,    // Orange-500
+            secondaryColor = 0xFFFBBF24,  // Amber-400
+            backgroundColor = 0xFF1C0A00, // Dark warm
+            surfaceColor = 0xFF431407    // Orange-950
+        )
+
+        val PURPLE_HAZE = CustomThemeColors(
+            primaryColor = 0xFFA855F7,    // Purple-500
+            secondaryColor = 0xFFC084FC,  // Purple-400
+            backgroundColor = 0xFF0D0015, // Dark purple-black
+            surfaceColor = 0xFF3B0764    // Purple-950
+        )
+
+        val ROSE = CustomThemeColors(
+            primaryColor = 0xFFF43F5E,    // Rose-500
+            secondaryColor = 0xFFFB7185,  // Rose-400
+            backgroundColor = 0xFF0F0508, // Dark rose-black
+            surfaceColor = 0xFF4C0519    // Rose-950
+        )
+
+        val MONO = CustomThemeColors(
+            primaryColor = 0xFFA1A1AA,    // Zinc-400
+            secondaryColor = 0xFFD4D4D8,  // Zinc-300
+            backgroundColor = 0xFF09090B, // Zinc-950
+            surfaceColor = 0xFF18181B    // Zinc-900
+        )
+
+        val PRESETS = listOf(
+            "Default" to DEFAULT,
+            "Ocean" to OCEAN,
+            "Forest" to FOREST,
+            "Sunset" to SUNSET,
+            "Purple Haze" to PURPLE_HAZE,
+            "Rose" to ROSE,
+            "Mono" to MONO
+        )
+    }
+}
+
+/**
  * App-wide settings
  */
 data class AppSettings(
@@ -126,6 +193,10 @@ data class AppSettings(
     val themeMode: ThemeMode = ThemeMode.DARK,
     val amoledBlack: Boolean = false,
     val useDynamicColor: Boolean = false,
+
+    // Custom Theme
+    val useCustomTheme: Boolean = false,
+    val customThemeColors: CustomThemeColors = CustomThemeColors.DEFAULT,
 
     // Layout
     val uiDensity: UiDensity = UiDensity.DEFAULT,
@@ -182,7 +253,6 @@ enum class LibrarySortOrder {
         DATE_ADDED -> "Date Added"
         UNREAD_COUNT -> "Unread Count"
         NEW_CHAPTERS -> "New Chapters"
-
     }
 }
 

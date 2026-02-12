@@ -11,12 +11,14 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -31,6 +33,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -101,6 +104,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -111,6 +115,7 @@ import androidx.compose.ui.zIndex
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.emptycastle.novery.data.repository.RepositoryProvider
 import com.emptycastle.novery.domain.model.AppSettings
+import com.emptycastle.novery.domain.model.CustomThemeColors
 import com.emptycastle.novery.domain.model.DisplayMode
 import com.emptycastle.novery.domain.model.GridColumns
 import com.emptycastle.novery.domain.model.LibraryFilter
@@ -119,6 +124,7 @@ import com.emptycastle.novery.domain.model.RatingFormat
 import com.emptycastle.novery.domain.model.ReadingStatus
 import com.emptycastle.novery.domain.model.ThemeMode
 import com.emptycastle.novery.domain.model.UiDensity
+import com.emptycastle.novery.ui.components.ColorPickerDialog
 import sh.calvin.reorderable.ReorderableItem
 import sh.calvin.reorderable.rememberReorderableLazyListState
 
@@ -193,10 +199,34 @@ fun SettingsScreen(
                         title = "Dynamic Colors",
                         subtitle = "Use Material You colors",
                         checked = settings.useDynamicColor,
+                        enabled = !settings.useCustomTheme,
                         onCheckedChange = {
                             preferencesManager.updateAppSettings(settings.copy(useDynamicColor = it))
                         }
                     )
+                    SettingsDivider()
+                    ToggleItem(
+                        icon = Icons.Outlined.Palette,
+                        title = "Custom Theme",
+                        subtitle = "Pick your own colors",
+                        checked = settings.useCustomTheme,
+                        highlight = true,
+                        onCheckedChange = { preferencesManager.updateUseCustomTheme(it) }
+                    )
+
+                    AnimatedVisibility(
+                        visible = settings.useCustomTheme,
+                        enter = expandVertically() + fadeIn(),
+                        exit = shrinkVertically() + fadeOut()
+                    ) {
+                        Column {
+                            Spacer(Modifier.height(12.dp))
+                            CustomThemeSection(
+                                colors = settings.customThemeColors,
+                                onColorsChange = { preferencesManager.updateCustomThemeColors(it) }
+                            )
+                        }
+                    }
                 }
             }
 
@@ -1007,6 +1037,396 @@ private fun StatusChips(
             )
         }
     }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CUSTOM THEME SECTION
+// ═══════════════════════════════════════════════════════════════════════════
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun CustomThemeSection(
+    colors: CustomThemeColors,
+    onColorsChange: (CustomThemeColors) -> Unit
+) {
+    val haptics = LocalHapticFeedback.current
+    var showColorPicker by remember { mutableStateOf<ColorPickerTarget?>(null) }
+
+    Column(
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        // Preset Themes
+        Text(
+            "Presets",
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.Medium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            CustomThemeColors.PRESETS.forEach { (name, preset) ->
+                ThemePresetCard(
+                    name = name,
+                    colors = preset,
+                    isSelected = colors == preset,
+                    onClick = {
+                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                        onColorsChange(preset)
+                    }
+                )
+            }
+        }
+
+        Spacer(Modifier.height(8.dp))
+
+        // Individual Color Pickers
+        Text(
+            "Custom Colors",
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.Medium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+
+        // Color picker rows
+        ColorPickerRow(
+            label = "Primary",
+            color = Color(colors.primaryColor),
+            description = "Main accent color",
+            onClick = { showColorPicker = ColorPickerTarget.PRIMARY }
+        )
+
+        ColorPickerRow(
+            label = "Secondary",
+            color = Color(colors.secondaryColor),
+            description = "Supporting accent color",
+            onClick = { showColorPicker = ColorPickerTarget.SECONDARY }
+        )
+
+        ColorPickerRow(
+            label = "Background",
+            color = Color(colors.backgroundColor),
+            description = "App background",
+            onClick = { showColorPicker = ColorPickerTarget.BACKGROUND }
+        )
+
+        ColorPickerRow(
+            label = "Surface",
+            color = Color(colors.surfaceColor),
+            description = "Cards and dialogs",
+            onClick = { showColorPicker = ColorPickerTarget.SURFACE }
+        )
+
+        // Live Preview
+        Spacer(Modifier.height(8.dp))
+        ThemePreviewCard(colors = colors)
+    }
+
+    // Color Picker Dialog
+    showColorPicker?.let { target ->
+        val currentColor = when (target) {
+            ColorPickerTarget.PRIMARY -> Color(colors.primaryColor)
+            ColorPickerTarget.SECONDARY -> Color(colors.secondaryColor)
+            ColorPickerTarget.BACKGROUND -> Color(colors.backgroundColor)
+            ColorPickerTarget.SURFACE -> Color(colors.surfaceColor)
+        }
+
+        ColorPickerDialog(
+            currentColor = currentColor,
+            title = "Pick ${target.displayName} Color",
+            onColorSelected = { newColor ->
+                val colorLong = newColor.toArgb().toLong() and 0xFFFFFFFFL or 0xFF000000L.toLong()
+                val newColors = when (target) {
+                    ColorPickerTarget.PRIMARY -> colors.copy(primaryColor = colorLong)
+                    ColorPickerTarget.SECONDARY -> colors.copy(secondaryColor = colorLong)
+                    ColorPickerTarget.BACKGROUND -> colors.copy(backgroundColor = colorLong)
+                    ColorPickerTarget.SURFACE -> colors.copy(surfaceColor = colorLong)
+                }
+                onColorsChange(newColors)
+                showColorPicker = null
+            },
+            onDismiss = { showColorPicker = null }
+        )
+    }
+}
+
+private enum class ColorPickerTarget(val displayName: String) {
+    PRIMARY("Primary"),
+    SECONDARY("Secondary"),
+    BACKGROUND("Background"),
+    SURFACE("Surface")
+}
+
+@Composable
+private fun ThemePresetCard(
+    name: String,
+    colors: CustomThemeColors,
+    isSelected: Boolean,
+    onClick: () -> Unit
+) {
+    val borderColor by animateColorAsState(
+        targetValue = if (isSelected) MaterialTheme.colorScheme.primary
+        else Color.Transparent,
+        label = "border"
+    )
+
+    Card(
+        modifier = Modifier
+            .width(100.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .then(
+                if (isSelected) Modifier.border(
+                    2.dp,
+                    borderColor,
+                    RoundedCornerShape(12.dp)
+                ) else Modifier
+            ),
+        colors = CardDefaults.cardColors(
+            containerColor = Color(colors.backgroundColor)
+        ),
+        shape = RoundedCornerShape(12.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(8.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            // Color preview dots
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Box(
+                    Modifier
+                        .size(20.dp)
+                        .clip(CircleShape)
+                        .background(Color(colors.primaryColor))
+                )
+                Box(
+                    Modifier
+                        .size(20.dp)
+                        .clip(CircleShape)
+                        .background(Color(colors.secondaryColor))
+                )
+                Box(
+                    Modifier
+                        .size(20.dp)
+                        .clip(CircleShape)
+                        .background(Color(colors.surfaceColor))
+                        .border(1.dp, Color.White.copy(alpha = 0.2f), CircleShape)
+                )
+            }
+
+            Text(
+                name,
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                color = if (isSelected) Color(colors.primaryColor)
+                else Color.White.copy(alpha = 0.8f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+
+            if (isSelected) {
+                Icon(
+                    Icons.Default.Check,
+                    contentDescription = "Selected",
+                    modifier = Modifier.size(16.dp),
+                    tint = Color(colors.primaryColor)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ColorPickerRow(
+    label: String,
+    color: Color,
+    description: String,
+    onClick: () -> Unit
+) {
+    val haptics = LocalHapticFeedback.current
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .clickable {
+                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                onClick()
+            }
+            .padding(vertical = 8.dp, horizontal = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        // Color swatch
+        Box(
+            modifier = Modifier
+                .size(40.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(color)
+                .border(
+                    width = 2.dp,
+                    color = MaterialTheme.colorScheme.outline,
+                    shape = RoundedCornerShape(10.dp)
+                )
+        )
+
+        Column(Modifier.weight(1f)) {
+            Text(
+                label,
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = FontWeight.Medium
+            )
+            Text(
+                description,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
+        // Hex value
+        Surface(
+            color = MaterialTheme.colorScheme.surfaceVariant,
+            shape = RoundedCornerShape(6.dp)
+        ) {
+            Text(
+                colorToHex(color),
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                style = MaterialTheme.typography.labelSmall,
+                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
+        Icon(
+            Icons.Outlined.ChevronRight,
+            contentDescription = "Edit",
+            tint = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+@Composable
+private fun ThemePreviewCard(colors: CustomThemeColors) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = Color(colors.backgroundColor)
+        ),
+        shape = RoundedCornerShape(16.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text(
+                "Preview",
+                style = MaterialTheme.typography.labelMedium,
+                color = Color.White.copy(alpha = 0.5f)
+            )
+
+            // Mock card
+            Surface(
+                color = Color(colors.surfaceColor),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // Mock image
+                    Box(
+                        modifier = Modifier
+                            .size(48.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Color(colors.primaryColor).copy(alpha = 0.3f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            Icons.Outlined.MenuBook,
+                            contentDescription = null,
+                            tint = Color(colors.primaryColor)
+                        )
+                    }
+
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            "Sample Novel Title",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color.White
+                        )
+                        Text(
+                            "Chapter 42 • Author Name",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color.White.copy(alpha = 0.6f)
+                        )
+                    }
+
+                    // Mock button
+                    Surface(
+                        color = Color(colors.primaryColor),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text(
+                            "Read",
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = getContrastColor(Color(colors.primaryColor))
+                        )
+                    }
+                }
+            }
+
+            // Mock chips
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Surface(
+                    color = Color(colors.primaryColor).copy(alpha = 0.2f),
+                    shape = RoundedCornerShape(20.dp)
+                ) {
+                    Text(
+                        "Fantasy",
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color(colors.primaryColor)
+                    )
+                }
+                Surface(
+                    color = Color(colors.secondaryColor).copy(alpha = 0.2f),
+                    shape = RoundedCornerShape(20.dp)
+                ) {
+                    Text(
+                        "Adventure",
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color(colors.secondaryColor)
+                    )
+                }
+            }
+        }
+    }
+}
+
+private fun colorToHex(color: Color): String {
+    val argb = color.toArgb()
+    return String.format("#%06X", argb and 0xFFFFFF)
+}
+
+private fun getContrastColor(color: Color): Color {
+    val luminance = 0.299 * color.red + 0.587 * color.green + 0.114 * color.blue
+    return if (luminance > 0.5) Color.Black else Color.White
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

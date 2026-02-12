@@ -3,6 +3,7 @@ package com.emptycastle.novery.data.local
 import android.content.Context
 import android.content.SharedPreferences
 import com.emptycastle.novery.domain.model.AppSettings
+import com.emptycastle.novery.domain.model.CustomThemeColors
 import com.emptycastle.novery.domain.model.DisplayMode
 import com.emptycastle.novery.domain.model.FontFamily
 import com.emptycastle.novery.domain.model.FontWeight
@@ -330,12 +331,34 @@ class PreferencesManager(context: Context) {
         val disabledString = prefs.getString(KEY_DISABLED_PROVIDERS, "")
         val disabledSet = if (disabledString.isNullOrBlank()) emptySet() else disabledString.split(",").toSet()
 
+        // Load custom theme colors
+        val customThemeColors = CustomThemeColors(
+            primaryColor = prefs.getLong(
+                KEY_CUSTOM_PRIMARY_COLOR,
+                CustomThemeColors.DEFAULT.primaryColor
+            ),
+            secondaryColor = prefs.getLong(
+                KEY_CUSTOM_SECONDARY_COLOR,
+                CustomThemeColors.DEFAULT.secondaryColor
+            ),
+            backgroundColor = prefs.getLong(
+                KEY_CUSTOM_BACKGROUND_COLOR,
+                CustomThemeColors.DEFAULT.backgroundColor
+            ),
+            surfaceColor = prefs.getLong(
+                KEY_CUSTOM_SURFACE_COLOR,
+                CustomThemeColors.DEFAULT.surfaceColor
+            )
+        )
+
         return AppSettings(
             themeMode = ThemeMode.valueOf(
                 prefs.getString(KEY_THEME_MODE, ThemeMode.DARK.name) ?: ThemeMode.DARK.name
             ),
             amoledBlack = prefs.getBoolean(KEY_AMOLED_BLACK, false),
             useDynamicColor = prefs.getBoolean(KEY_DYNAMIC_COLOR, false),
+            useCustomTheme = prefs.getBoolean(KEY_USE_CUSTOM_THEME, false),
+            customThemeColors = customThemeColors,
             uiDensity = UiDensity.valueOf(
                 prefs.getString(KEY_UI_DENSITY, UiDensity.DEFAULT.name) ?: UiDensity.DEFAULT.name
             ),
@@ -360,7 +383,6 @@ class PreferencesManager(context: Context) {
                 prefs.getString(KEY_SEARCH_DISPLAY_MODE, DisplayMode.GRID.name)
                     ?: DisplayMode.GRID.name
             ),
-            // Rating format
             ratingFormat = try {
                 RatingFormat.valueOf(
                     prefs.getString(KEY_RATING_FORMAT, RatingFormat.TEN_POINT.name)
@@ -389,6 +411,14 @@ class PreferencesManager(context: Context) {
             putString(KEY_THEME_MODE, settings.themeMode.name)
             putBoolean(KEY_AMOLED_BLACK, settings.amoledBlack)
             putBoolean(KEY_DYNAMIC_COLOR, settings.useDynamicColor)
+            putBoolean(KEY_USE_CUSTOM_THEME, settings.useCustomTheme)
+
+            // Custom theme colors
+            putLong(KEY_CUSTOM_PRIMARY_COLOR, settings.customThemeColors.primaryColor)
+            putLong(KEY_CUSTOM_SECONDARY_COLOR, settings.customThemeColors.secondaryColor)
+            putLong(KEY_CUSTOM_BACKGROUND_COLOR, settings.customThemeColors.backgroundColor)
+            putLong(KEY_CUSTOM_SURFACE_COLOR, settings.customThemeColors.surfaceColor)
+
             putString(KEY_UI_DENSITY, settings.uiDensity.name)
             putInt(KEY_LIBRARY_GRID_COLUMNS, GridColumns.toInt(settings.libraryGridColumns))
             putInt(KEY_BROWSE_GRID_COLUMNS, GridColumns.toInt(settings.browseGridColumns))
@@ -406,9 +436,7 @@ class PreferencesManager(context: Context) {
                 KEY_AUTO_DOWNLOAD_STATUSES,
                 settings.autoDownloadForStatuses.joinToString(",") { it.name }
             )
-            // Rating format
             putString(KEY_RATING_FORMAT, settings.ratingFormat.name)
-            // Providers
             putString(KEY_PROVIDER_ORDER, settings.providerOrder.joinToString(","))
             putString(KEY_DISABLED_PROVIDERS, settings.disabledProviders.joinToString(","))
             putString(KEY_LIBRARY_DISPLAY_MODE, settings.libraryDisplayMode.name)
@@ -475,6 +503,45 @@ class PreferencesManager(context: Context) {
 
     fun updateAutoDownloadStatuses(statuses: Set<ReadingStatus>) {
         updateAppSettings(_appSettings.value.copy(autoDownloadForStatuses = statuses))
+    }
+
+    // =========================================================================
+// CUSTOM THEME CONVENIENCE METHODS
+// =========================================================================
+
+    fun updateUseCustomTheme(enabled: Boolean) {
+        updateAppSettings(_appSettings.value.copy(useCustomTheme = enabled))
+    }
+
+    fun updateCustomThemeColors(colors: CustomThemeColors) {
+        updateAppSettings(_appSettings.value.copy(customThemeColors = colors))
+    }
+
+    fun updateCustomPrimaryColor(color: Long) {
+        val current = _appSettings.value.customThemeColors
+        updateCustomThemeColors(current.copy(primaryColor = color))
+    }
+
+    fun updateCustomSecondaryColor(color: Long) {
+        val current = _appSettings.value.customThemeColors
+        updateCustomThemeColors(current.copy(secondaryColor = color))
+    }
+
+    fun updateCustomBackgroundColor(color: Long) {
+        val current = _appSettings.value.customThemeColors
+        updateCustomThemeColors(current.copy(backgroundColor = color))
+    }
+
+    fun updateCustomSurfaceColor(color: Long) {
+        val current = _appSettings.value.customThemeColors
+        updateCustomThemeColors(current.copy(surfaceColor = color))
+    }
+
+    fun applyCustomThemePreset(preset: CustomThemeColors) {
+        updateAppSettings(_appSettings.value.copy(
+            useCustomTheme = true,
+            customThemeColors = preset
+        ))
     }
 
     // Provider settings
@@ -1626,6 +1693,16 @@ class PreferencesManager(context: Context) {
         private const val KEY_FIRST_RUN = "first_run"
         private const val KEY_ONBOARDING_COMPLETE = "onboarding_complete"
         private const val KEY_APP_VERSION = "app_version"
+
+        // =====================================================================
+        // CUSTOM THEME KEYS
+        // =====================================================================
+
+        private const val KEY_USE_CUSTOM_THEME = "use_custom_theme"
+        private const val KEY_CUSTOM_PRIMARY_COLOR = "custom_primary_color"
+        private const val KEY_CUSTOM_SECONDARY_COLOR = "custom_secondary_color"
+        private const val KEY_CUSTOM_BACKGROUND_COLOR = "custom_background_color"
+        private const val KEY_CUSTOM_SURFACE_COLOR = "custom_surface_color"
 
         // =====================================================================
         // SINGLETON
