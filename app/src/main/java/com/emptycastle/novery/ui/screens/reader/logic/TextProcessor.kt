@@ -5,8 +5,10 @@ import com.emptycastle.novery.ui.screens.reader.model.ChapterContentItem
 import com.emptycastle.novery.ui.screens.reader.model.ContentAuthorNote
 import com.emptycastle.novery.ui.screens.reader.model.ContentHorizontalRule
 import com.emptycastle.novery.ui.screens.reader.model.ContentImage
+import com.emptycastle.novery.ui.screens.reader.model.ContentList
 import com.emptycastle.novery.ui.screens.reader.model.ContentSceneBreak
 import com.emptycastle.novery.ui.screens.reader.model.ContentSegment
+import com.emptycastle.novery.ui.screens.reader.model.ContentTable
 import com.emptycastle.novery.util.HtmlUtils
 import com.emptycastle.novery.util.SentenceParser
 
@@ -23,6 +25,8 @@ object TextProcessor {
         var ruleIndex = 0
         var breakIndex = 0
         var noteIndex = 0
+        var tableIndex = 0
+        var listIndex = 0
         var orderIndex = 0
 
         parsedContent.forEach { content ->
@@ -125,6 +129,39 @@ object TextProcessor {
                         )
                     )
                     breakIndex++
+                    orderIndex++
+                }
+
+                is ParsedContent.Table -> {
+                    items.add(
+                        ChapterContentItem.Table(
+                            id = "table_$orderIndex",
+                            orderIndex = orderIndex,
+                            table = ContentTable(
+                                id = "table_$tableIndex",
+                                rows = content.rows,
+                                caption = content.caption,
+                                plainText = content.plainText
+                            )
+                        )
+                    )
+                    tableIndex++
+                    orderIndex++
+                }
+
+                is ParsedContent.ListBlock -> {
+                    items.add(
+                        ChapterContentItem.List(
+                            id = "list_$orderIndex",
+                            orderIndex = orderIndex,
+                            list = ContentList(
+                                id = "list_$listIndex",
+                                list = content.list,
+                                plainText = content.plainText
+                            )
+                        )
+                    )
+                    listIndex++
                     orderIndex++
                 }
             }

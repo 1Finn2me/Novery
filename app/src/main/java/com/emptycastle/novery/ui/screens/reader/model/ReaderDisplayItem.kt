@@ -4,8 +4,12 @@ import androidx.compose.ui.text.AnnotatedString
 import com.emptycastle.novery.ui.screens.reader.logic.AuthorNotePosition
 import com.emptycastle.novery.ui.screens.reader.logic.AuthorNoteSection
 import com.emptycastle.novery.ui.screens.reader.logic.BlockType
+import com.emptycastle.novery.ui.screens.reader.logic.CellAlignment
+import com.emptycastle.novery.ui.screens.reader.logic.ListStyleType
+import com.emptycastle.novery.ui.screens.reader.logic.ParsedList
 import com.emptycastle.novery.ui.screens.reader.logic.RuleStyle
 import com.emptycastle.novery.ui.screens.reader.logic.SceneBreakStyle
+import com.emptycastle.novery.ui.screens.reader.logic.TableRow
 import com.emptycastle.novery.util.ParsedSentence
 
 data class ContentSegment(
@@ -38,9 +42,6 @@ data class ContentSceneBreak(
     val style: SceneBreakStyle = SceneBreakStyle.ASTERISKS
 )
 
-/**
- * Represents an author's note section with potentially multiple paragraphs and images
- */
 data class ContentAuthorNote(
     val id: String,
     val sections: List<AuthorNoteSection>,
@@ -48,6 +49,25 @@ data class ContentAuthorNote(
     val position: AuthorNotePosition = AuthorNotePosition.INLINE,
     val noteType: String = "Author's Note",
     val authorName: String? = null
+)
+
+/**
+ * Represents a table for display
+ */
+data class ContentTable(
+    val id: String,
+    val rows: List<TableRow>,
+    val caption: String? = null,
+    val plainText: String
+)
+
+/**
+ * Represents a list for display
+ */
+data class ContentList(
+    val id: String,
+    val list: ParsedList,
+    val plainText: String
 )
 
 sealed class ChapterContentItem {
@@ -82,6 +102,18 @@ sealed class ChapterContentItem {
         override val id: String,
         override val orderIndex: Int,
         val authorNote: ContentAuthorNote
+    ) : ChapterContentItem()
+
+    data class Table(
+        override val id: String,
+        override val orderIndex: Int,
+        val table: ContentTable
+    ) : ChapterContentItem()
+
+    data class List(
+        override val id: String,
+        override val orderIndex: Int,
+        val list: ContentList
     ) : ChapterContentItem()
 }
 
@@ -128,6 +160,18 @@ sealed class ReaderDisplayItem(open val itemId: String) {
         val authorNote: ContentAuthorNote,
         val orderInChapter: Int = 0
     ) : ReaderDisplayItem("authornote_${chapterIndex}_${authorNote.id}")
+
+    data class Table(
+        val chapterIndex: Int,
+        val table: ContentTable,
+        val orderInChapter: Int = 0
+    ) : ReaderDisplayItem("table_${chapterIndex}_${table.id}")
+
+    data class List(
+        val chapterIndex: Int,
+        val list: ContentList,
+        val orderInChapter: Int = 0
+    ) : ReaderDisplayItem("list_${chapterIndex}_${list.id}")
 
     data class ChapterDivider(
         val chapterIndex: Int,

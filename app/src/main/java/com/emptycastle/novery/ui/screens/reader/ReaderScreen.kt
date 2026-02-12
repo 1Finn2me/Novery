@@ -241,6 +241,8 @@ fun ReaderScreen(
                     is ReaderDisplayItem.SceneBreak -> item.chapterIndex
                     is ReaderDisplayItem.AuthorNote -> item.chapterIndex
                     is ReaderDisplayItem.ChapterDivider -> item.chapterIndex
+                    is ReaderDisplayItem.Table -> item.chapterIndex
+                    is ReaderDisplayItem.List -> item.chapterIndex
                     is ReaderDisplayItem.LoadingIndicator -> item.chapterIndex
                     is ReaderDisplayItem.ErrorIndicator -> item.chapterIndex
                     null -> return@collect
@@ -271,6 +273,8 @@ fun ReaderScreen(
                     is ReaderDisplayItem.SceneBreak -> firstItem.chapterIndex
                     is ReaderDisplayItem.AuthorNote -> firstItem.chapterIndex
                     is ReaderDisplayItem.ChapterDivider -> firstItem.chapterIndex
+                    is ReaderDisplayItem.Table -> firstItem.chapterIndex
+                    is ReaderDisplayItem.List -> firstItem.chapterIndex
                     is ReaderDisplayItem.LoadingIndicator -> firstItem.chapterIndex
                     is ReaderDisplayItem.ErrorIndicator -> firstItem.chapterIndex
                     null -> return@collect
@@ -300,6 +304,8 @@ fun ReaderScreen(
                     is ReaderDisplayItem.AuthorNote -> lastItem.chapterIndex
                     is ReaderDisplayItem.ChapterDivider -> lastItem.chapterIndex
                     is ReaderDisplayItem.ChapterHeader -> lastItem.chapterIndex
+                    is ReaderDisplayItem.Table -> lastItem.chapterIndex
+                    is ReaderDisplayItem.List -> lastItem.chapterIndex
                     is ReaderDisplayItem.LoadingIndicator -> lastItem.chapterIndex
                     is ReaderDisplayItem.ErrorIndicator -> lastItem.chapterIndex
                     null -> return@collect
@@ -514,6 +520,8 @@ private fun calculateChapterProgress(
             is ReaderDisplayItem.SceneBreak -> item.chapterIndex
             is ReaderDisplayItem.AuthorNote -> item.chapterIndex
             is ReaderDisplayItem.ChapterDivider -> item.chapterIndex
+            is ReaderDisplayItem.Table -> item.chapterIndex
+            is ReaderDisplayItem.List -> item.chapterIndex
             is ReaderDisplayItem.LoadingIndicator -> item.chapterIndex
             is ReaderDisplayItem.ErrorIndicator -> item.chapterIndex
         }

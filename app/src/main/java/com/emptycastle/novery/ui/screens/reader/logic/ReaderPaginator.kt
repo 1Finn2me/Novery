@@ -97,6 +97,25 @@ object ReaderPaginator {
                 (headerHeight + (lineHeightDp * 2.coerceAtMost(lineCount)) + padding)
             }
 
+            is ReaderDisplayItem.Table -> {
+                // Estimate table height based on number of rows
+                val rowCount = item.table.rows.size
+                val rowHeight = (config.fontSize * config.lineHeight + 16).dp // line + padding
+                val headerHeight = if (item.table.caption != null) 30.dp else 0.dp
+                val borderPadding = 24.dp
+
+                headerHeight + (rowHeight * rowCount) + borderPadding
+            }
+
+            is ReaderDisplayItem.List -> {
+                // Estimate list height based on number of items
+                val itemCount = countListItems(item.list.list)
+                val itemHeight = (config.fontSize * config.lineHeight + 8).dp // line + spacing
+                val padding = 16.dp
+
+                (itemHeight * itemCount) + padding
+            }
+
             is ReaderDisplayItem.ChapterDivider -> {
                 280.dp
             }
@@ -104,6 +123,20 @@ object ReaderPaginator {
             is ReaderDisplayItem.LoadingIndicator -> 200.dp
             is ReaderDisplayItem.ErrorIndicator -> 200.dp
         }
+    }
+
+    /**
+     * Count total items in a list including nested items
+     */
+    private fun countListItems(list: ParsedList): Int {
+        var count = 0
+        for (item in list.items) {
+            when (item) {
+                is ListItemContent.TextContent -> count++
+                is ListItemContent.NestedList -> count += countListItems(item.list)
+            }
+        }
+        return count.coerceAtLeast(1)
     }
 
     /**
@@ -135,17 +168,7 @@ object ReaderPaginator {
         displayItems.forEachIndexed { index, item ->
             val itemHeight = estimateItemHeight(item, config)
 
-            val itemChapterIndex = when (item) {
-                is ReaderDisplayItem.ChapterHeader -> item.chapterIndex
-                is ReaderDisplayItem.Segment -> item.chapterIndex
-                is ReaderDisplayItem.Image -> item.chapterIndex
-                is ReaderDisplayItem.HorizontalRule -> item.chapterIndex
-                is ReaderDisplayItem.SceneBreak -> item.chapterIndex
-                is ReaderDisplayItem.AuthorNote -> item.chapterIndex
-                is ReaderDisplayItem.ChapterDivider -> item.chapterIndex
-                is ReaderDisplayItem.LoadingIndicator -> item.chapterIndex
-                is ReaderDisplayItem.ErrorIndicator -> item.chapterIndex
-            }
+            val itemChapterIndex = getChapterIndex(item)
 
             if (itemChapterIndex != currentChapterIndex) {
                 if (currentPageItems.isNotEmpty()) {
@@ -197,6 +220,25 @@ object ReaderPaginator {
         }
 
         return pages
+    }
+
+    /**
+     * Extract chapter index from any display item type
+     */
+    private fun getChapterIndex(item: ReaderDisplayItem): Int {
+        return when (item) {
+            is ReaderDisplayItem.ChapterHeader -> item.chapterIndex
+            is ReaderDisplayItem.Segment -> item.chapterIndex
+            is ReaderDisplayItem.Image -> item.chapterIndex
+            is ReaderDisplayItem.HorizontalRule -> item.chapterIndex
+            is ReaderDisplayItem.SceneBreak -> item.chapterIndex
+            is ReaderDisplayItem.AuthorNote -> item.chapterIndex
+            is ReaderDisplayItem.Table -> item.chapterIndex
+            is ReaderDisplayItem.List -> item.chapterIndex
+            is ReaderDisplayItem.ChapterDivider -> item.chapterIndex
+            is ReaderDisplayItem.LoadingIndicator -> item.chapterIndex
+            is ReaderDisplayItem.ErrorIndicator -> item.chapterIndex
+        }
     }
 
     /**

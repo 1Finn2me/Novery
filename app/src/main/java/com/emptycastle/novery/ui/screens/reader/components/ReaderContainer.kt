@@ -303,6 +303,29 @@ fun ReaderContainer(
                                 )
                             }
 
+                            is ReaderDisplayItem.Table -> {
+                                TableItem(
+                                    item = item,
+                                    settings = settings,
+                                    fontFamily = fontFamily,
+                                    colors = effectiveColors,
+                                    horizontalPadding = horizontalPadding,
+                                    paragraphSpacing = paragraphSpacing
+                                )
+                            }
+
+                            is ReaderDisplayItem.List -> {
+                                ListItem(
+                                    item = item,
+                                    settings = settings,
+                                    fontFamily = fontFamily,
+                                    fontWeight = fontWeight,
+                                    colors = effectiveColors,
+                                    horizontalPadding = horizontalPadding,
+                                    paragraphSpacing = paragraphSpacing
+                                )
+                            }
+
                             is ReaderDisplayItem.Segment -> {
                                 when (item.segment.blockType) {
                                     BlockType.BLOCKQUOTE -> {

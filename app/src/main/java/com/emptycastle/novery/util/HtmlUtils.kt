@@ -10,7 +10,7 @@ object HtmlUtils {
 
     /**
      * Sanitize HTML content, removing potentially dangerous elements
-     * while preserving formatting and images.
+     * while preserving formatting, images, tables, and lists.
      */
     fun sanitize(html: String): String {
         val safelist = Safelist.relaxed()
@@ -22,12 +22,24 @@ object HtmlUtils {
             .addTags("img")
             // Preserve links
             .addTags("a")
+            // Preserve table elements
+            .addTags("table", "thead", "tbody", "tfoot", "tr", "th", "td", "caption", "colgroup", "col")
+            // Preserve list elements
+            .addTags("ul", "ol", "li", "dl", "dt", "dd")
             // Allow style and class attributes for custom styling
             .addAttributes(":all", "style", "class")
             // Allow image attributes
             .addAttributes("img", "src", "alt", "title", "width", "height")
             // Allow link attributes
             .addAttributes("a", "href", "title")
+            // Allow table cell attributes
+            .addAttributes("td", "colspan", "rowspan", "align", "valign")
+            .addAttributes("th", "colspan", "rowspan", "align", "valign", "scope")
+            .addAttributes("table", "border", "cellpadding", "cellspacing", "width")
+            .addAttributes("col", "span", "width")
+            // Allow list attributes
+            .addAttributes("ol", "start", "type", "reversed")
+            .addAttributes("li", "value")
             // Remove dangerous elements
             .removeTags("script", "iframe", "form", "input", "object", "embed")
             // Allow protocol-relative and data URLs for images

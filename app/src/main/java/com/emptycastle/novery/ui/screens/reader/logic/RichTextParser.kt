@@ -12,6 +12,7 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.em
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Element
+import org.jsoup.nodes.Node
 import org.jsoup.nodes.TextNode
 
 /**
@@ -27,6 +28,67 @@ sealed class AuthorNoteSection {
         val url: String,
         val altText: String? = null
     ) : AuthorNoteSection()
+}
+
+/**
+ * Represents a table cell
+ */
+data class TableCell(
+    val content: AnnotatedString,
+    val plainText: String,
+    val isHeader: Boolean = false,
+    val colspan: Int = 1,
+    val rowspan: Int = 1,
+    val alignment: CellAlignment = CellAlignment.START
+)
+
+enum class CellAlignment {
+    START, CENTER, END
+}
+
+/**
+ * Represents a table row
+ */
+data class TableRow(
+    val cells: List<TableCell>,
+    val isHeaderRow: Boolean = false
+)
+
+/**
+ * Represents a list item which can contain text or nested lists
+ */
+sealed class ListItemContent {
+    data class TextContent(
+        val annotatedString: AnnotatedString,
+        val plainText: String
+    ) : ListItemContent()
+
+    data class NestedList(
+        val list: ParsedList
+    ) : ListItemContent()
+}
+
+/**
+ * Represents a parsed list
+ */
+data class ParsedList(
+    val items: List<ListItemContent>,
+    val isOrdered: Boolean,
+    val startNumber: Int = 1,
+    val listStyleType: ListStyleType = ListStyleType.DEFAULT
+)
+
+enum class ListStyleType {
+    DEFAULT,      // disc for ul, decimal for ol
+    DISC,
+    CIRCLE,
+    SQUARE,
+    DECIMAL,
+    LOWER_ALPHA,
+    UPPER_ALPHA,
+    LOWER_ROMAN,
+    UPPER_ROMAN,
+    NONE
 }
 
 /**
@@ -59,6 +121,18 @@ sealed class ParsedContent {
         val position: AuthorNotePosition = AuthorNotePosition.INLINE,
         val noteType: String = "Author's Note",
         val authorName: String? = null
+    ) : ParsedContent()
+
+    data class Table(
+        val rows: List<TableRow>,
+        val caption: String? = null,
+        val plainText: String
+    ) : ParsedContent()
+
+    // Renamed from List to ListBlock to avoid conflict with kotlin.collections.List
+    data class ListBlock(
+        val list: ParsedList,
+        val plainText: String
     ) : ParsedContent()
 }
 
@@ -113,7 +187,7 @@ private class AuthorNoteTextBuilder {
         annotatedBuilder.append(text)
         plainBuilder.append(text)
 
-        val spanStyle = buildSpanStyle(style)
+        val spanStyle = buildSpanStyleFromState(style)
         if (spanStyle != SpanStyle()) {
             annotatedBuilder.addStyle(spanStyle, startIndex, annotatedBuilder.length)
         }
@@ -138,7 +212,7 @@ private class AuthorNoteTextBuilder {
     }
 
     companion object {
-        private fun buildSpanStyle(state: StyleState): SpanStyle {
+        private fun buildSpanStyleFromState(state: StyleState): SpanStyle {
             val decorations = mutableListOf<TextDecoration>()
             if (state.isUnderline) decorations.add(TextDecoration.Underline)
             if (state.isStrikethrough) decorations.add(TextDecoration.LineThrough)
@@ -175,12 +249,15 @@ object RichTextParser {
     private val codeTags = setOf("code", "kbd", "samp", "tt")
     private val blockTags = setOf(
         "p", "div", "h1", "h2", "h3", "h4", "h5", "h6",
-        "li", "tr", "article", "section", "aside",
+        "article", "section", "aside",
         "figure", "figcaption", "header", "footer", "main", "nav"
     )
     private val blockquoteTags = setOf("blockquote")
     private val preformattedTags = setOf("pre")
     private val breakTags = setOf("br")
+    private val tableTags = setOf("table")
+    private val listTags = setOf("ul", "ol")
+    private val descriptionListTags = setOf("dl")
 
     private val sceneBreakPatterns = listOf(
         Regex("""^\s*[*]{3,}\s*$"""),
@@ -231,11 +308,8 @@ object RichTextParser {
                     if (sceneBreak != null) {
                         firstPass.add(sceneBreak)
                     } else if (AuthorNoteDetector.isSeparatorLine(trimmedText)) {
-                        // It's just a separator line, add as horizontal rule
                         firstPass.add(ParsedContent.HorizontalRule(RuleStyle.SOLID))
                     } else if (trimmedText.isNotBlank()) {
-                        // Only convert to author note if it EXPLICITLY starts with author note markers
-                        // This is very conservative - most text will pass through as normal
                         if (AuthorNoteDetector.isExplicitAuthorNote(trimmedText)) {
                             val position = AuthorNoteDetector.detectPosition(
                                 itemIndex = index,
@@ -254,14 +328,12 @@ object RichTextParser {
                                 noteType = noteType
                             ))
                         } else {
-                            // Normal text - keep as is
                             firstPass.add(content)
                         }
                     }
                 }
 
                 is ParsedContent.AuthorNote -> {
-                    // CSS-detected author notes pass through
                     firstPass.add(content)
                 }
 
@@ -281,7 +353,6 @@ object RichTextParser {
             val current = firstPass[i]
 
             if (current is ParsedContent.AuthorNote) {
-                // Collect consecutive author notes
                 val consecutiveNotes = mutableListOf(current)
                 var j = i + 1
 
@@ -296,7 +367,6 @@ object RichTextParser {
                 }
 
                 if (consecutiveNotes.size > 1) {
-                    // Merge all consecutive notes into one
                     val mergedSections = consecutiveNotes.flatMap { it.sections }
                     val mergedPlainText = consecutiveNotes.joinToString("\n\n") { it.plainText }
                     val firstNote = consecutiveNotes.first()
@@ -324,6 +394,8 @@ object RichTextParser {
                 is ParsedContent.Text -> content.plainText.isNotBlank()
                 is ParsedContent.AuthorNote -> content.plainText.isNotBlank()
                 is ParsedContent.Image -> content.url.isNotBlank()
+                is ParsedContent.Table -> content.rows.isNotEmpty()
+                is ParsedContent.ListBlock -> content.list.items.isNotEmpty()
                 is ParsedContent.HorizontalRule -> true
                 is ParsedContent.SceneBreak -> true
             }
@@ -423,7 +495,34 @@ object RichTextParser {
                     val classAttr = node.attr("class")
 
                     when {
-                        // Handle author note CONTAINERS (extract entire content as one unit)
+                        // Handle tables
+                        tagName in tableTags -> {
+                            flushText()
+                            val table = parseTable(node, inheritedStyle)
+                            if (table != null) {
+                                results.add(table)
+                            }
+                        }
+
+                        // Handle lists (ul, ol)
+                        tagName in listTags -> {
+                            flushText()
+                            val list = parseList(node, inheritedStyle)
+                            if (list != null) {
+                                results.add(list)
+                            }
+                        }
+
+                        // Handle description lists (dl)
+                        tagName in descriptionListTags -> {
+                            flushText()
+                            val list = parseDescriptionList(node, inheritedStyle)
+                            if (list != null) {
+                                results.add(list)
+                            }
+                        }
+
+                        // Handle author note CONTAINERS
                         AuthorNoteDetector.isAuthorNoteContainer(classAttr) -> {
                             flushText()
                             val authorNote = parseAuthorNoteContainer(node)
@@ -489,6 +588,348 @@ object RichTextParser {
     }
 
     /**
+     * Parse a table element into structured data
+     */
+    private fun parseTable(tableElement: Element, inheritedStyle: StyleState): ParsedContent.Table? {
+        val rows = mutableListOf<TableRow>()
+        val plainTextBuilder = StringBuilder()
+
+        // Get caption if present
+        val caption = tableElement.selectFirst("caption")?.text()?.takeIf { it.isNotBlank() }
+
+        // Process thead, tbody, tfoot in order, or direct tr children
+        val rowElements = mutableListOf<Element>()
+
+        // First check for thead
+        tableElement.select("> thead > tr").forEach { rowElements.add(it) }
+        // Then tbody
+        tableElement.select("> tbody > tr").forEach { rowElements.add(it) }
+        // Then direct tr children (for tables without thead/tbody)
+        if (rowElements.isEmpty()) {
+            tableElement.select("> tr").forEach { rowElements.add(it) }
+        }
+        // Finally tfoot
+        tableElement.select("> tfoot > tr").forEach { rowElements.add(it) }
+
+        for (rowElement in rowElements) {
+            val cells = mutableListOf<TableCell>()
+            val isInHeader = rowElement.parent()?.tagName()?.lowercase() == "thead"
+            var rowPlainText = ""
+
+            for (cellElement in rowElement.select("> th, > td")) {
+                val isHeader = cellElement.tagName().lowercase() == "th" || isInHeader
+                val colspan = cellElement.attr("colspan").toIntOrNull() ?: 1
+                val rowspan = cellElement.attr("rowspan").toIntOrNull() ?: 1
+                val alignment = parseCellAlignment(cellElement)
+
+                // Parse cell content with styling
+                val (annotatedContent, plainContent) = parseCellContent(cellElement, inheritedStyle)
+
+                cells.add(TableCell(
+                    content = annotatedContent,
+                    plainText = plainContent,
+                    isHeader = isHeader,
+                    colspan = colspan,
+                    rowspan = rowspan,
+                    alignment = alignment
+                ))
+
+                if (rowPlainText.isNotEmpty()) rowPlainText += "\t"
+                rowPlainText += plainContent
+            }
+
+            if (cells.isNotEmpty()) {
+                rows.add(TableRow(cells = cells, isHeaderRow = isInHeader))
+                if (plainTextBuilder.isNotEmpty()) plainTextBuilder.append("\n")
+                plainTextBuilder.append(rowPlainText)
+            }
+        }
+
+        if (rows.isEmpty()) return null
+
+        return ParsedContent.Table(
+            rows = rows,
+            caption = caption,
+            plainText = plainTextBuilder.toString()
+        )
+    }
+
+    /**
+     * Parse alignment from cell element
+     */
+    private fun parseCellAlignment(element: Element): CellAlignment {
+        // Check align attribute
+        val alignAttr = element.attr("align").lowercase()
+        if (alignAttr.isNotBlank()) {
+            return when (alignAttr) {
+                "center" -> CellAlignment.CENTER
+                "right" -> CellAlignment.END
+                else -> CellAlignment.START
+            }
+        }
+
+        // Check style attribute
+        val styleAttr = element.attr("style").lowercase()
+        if (styleAttr.contains("text-align")) {
+            return when {
+                styleAttr.contains("center") -> CellAlignment.CENTER
+                styleAttr.contains("right") -> CellAlignment.END
+                else -> CellAlignment.START
+            }
+        }
+
+        return CellAlignment.START
+    }
+
+    /**
+     * Parse cell content preserving inline styles
+     */
+    private fun parseCellContent(element: Element, inheritedStyle: StyleState): Pair<AnnotatedString, String> {
+        val annotatedBuilder = AnnotatedString.Builder()
+        val plainBuilder = StringBuilder()
+
+        fun processNode(node: Node, style: StyleState) {
+            when (node) {
+                is TextNode -> {
+                    val text = node.wholeText
+                    if (text.isNotEmpty()) {
+                        val startIndex = annotatedBuilder.length
+                        annotatedBuilder.append(text)
+                        plainBuilder.append(text)
+
+                        val spanStyle = buildSpanStyle(style)
+                        if (spanStyle != SpanStyle()) {
+                            annotatedBuilder.addStyle(spanStyle, startIndex, annotatedBuilder.length)
+                        }
+
+                        style.linkUrl?.let { url ->
+                            annotatedBuilder.addStringAnnotation("URL", url, startIndex, annotatedBuilder.length)
+                        }
+                    }
+                }
+
+                is Element -> {
+                    val tagName = node.tagName().lowercase()
+                    when (tagName) {
+                        "br" -> {
+                            annotatedBuilder.append("\n")
+                            plainBuilder.append("\n")
+                        }
+                        else -> {
+                            val newStyle = updateStyleForTag(style, node)
+                            for (child in node.childNodes()) {
+                                processNode(child, newStyle)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        for (child in element.childNodes()) {
+            processNode(child, inheritedStyle)
+        }
+
+        return Pair(annotatedBuilder.toAnnotatedString(), plainBuilder.toString().trim())
+    }
+
+    /**
+     * Parse a list element (ul or ol)
+     */
+    private fun parseList(listElement: Element, inheritedStyle: StyleState): ParsedContent.ListBlock? {
+        val tagName = listElement.tagName().lowercase()
+        val isOrdered = tagName == "ol"
+        val startNumber = listElement.attr("start").toIntOrNull() ?: 1
+        val listStyleType = parseListStyleType(listElement, isOrdered)
+
+        val items = mutableListOf<ListItemContent>()
+        val plainTextBuilder = StringBuilder()
+
+        val liElements = listElement.select("> li")
+        for ((index, liElement) in liElements.withIndex()) {
+            // Check for nested lists
+            val nestedList = liElement.selectFirst("> ul, > ol")
+
+            if (nestedList != null) {
+                // Has nested list - parse text before nested list, then the nested list
+                val textBeforeList = StringBuilder()
+                val annotatedBeforeList = AnnotatedString.Builder()
+
+                for (child in liElement.childNodes()) {
+                    if (child is Element && child.tagName().lowercase() in listOf("ul", "ol")) {
+                        break // Stop at nested list
+                    }
+                    when (child) {
+                        is TextNode -> {
+                            val text = child.wholeText.trim()
+                            if (text.isNotEmpty()) {
+                                val startIdx = annotatedBeforeList.length
+                                annotatedBeforeList.append(text)
+                                textBeforeList.append(text)
+
+                                val spanStyle = buildSpanStyle(inheritedStyle)
+                                if (spanStyle != SpanStyle()) {
+                                    annotatedBeforeList.addStyle(spanStyle, startIdx, annotatedBeforeList.length)
+                                }
+                            }
+                        }
+                        is Element -> {
+                            val (ann, plain) = parseCellContent(child, inheritedStyle)
+                            if (plain.isNotBlank()) {
+                                annotatedBeforeList.append(ann)
+                                textBeforeList.append(plain)
+                            }
+                        }
+                    }
+                }
+
+                if (textBeforeList.isNotBlank()) {
+                    items.add(ListItemContent.TextContent(
+                        annotatedBeforeList.toAnnotatedString(),
+                        textBeforeList.toString()
+                    ))
+
+                    val prefix = if (isOrdered) "${startNumber + index}. " else "• "
+                    if (plainTextBuilder.isNotEmpty()) plainTextBuilder.append("\n")
+                    plainTextBuilder.append(prefix).append(textBeforeList)
+                }
+
+                // Parse nested list recursively
+                val nestedParsed = parseList(nestedList, inheritedStyle)
+                if (nestedParsed != null) {
+                    items.add(ListItemContent.NestedList(nestedParsed.list))
+                    // Add indented plain text
+                    nestedParsed.plainText.lines().forEach { line ->
+                        if (line.isNotBlank()) {
+                            plainTextBuilder.append("\n    ").append(line)
+                        }
+                    }
+                }
+            } else {
+                // No nested list - parse entire content
+                val (annotatedContent, plainContent) = parseCellContent(liElement, inheritedStyle)
+
+                if (plainContent.isNotBlank()) {
+                    items.add(ListItemContent.TextContent(annotatedContent, plainContent))
+
+                    val prefix = if (isOrdered) "${startNumber + index}. " else "• "
+                    if (plainTextBuilder.isNotEmpty()) plainTextBuilder.append("\n")
+                    plainTextBuilder.append(prefix).append(plainContent)
+                }
+            }
+        }
+
+        if (items.isEmpty()) return null
+
+        return ParsedContent.ListBlock(
+            list = ParsedList(
+                items = items,
+                isOrdered = isOrdered,
+                startNumber = startNumber,
+                listStyleType = listStyleType
+            ),
+            plainText = plainTextBuilder.toString()
+        )
+    }
+
+    /**
+     * Parse description list (dl/dt/dd)
+     */
+    private fun parseDescriptionList(dlElement: Element, inheritedStyle: StyleState): ParsedContent.ListBlock? {
+        val items = mutableListOf<ListItemContent>()
+        val plainTextBuilder = StringBuilder()
+
+        val children = dlElement.children()
+        var i = 0
+
+        while (i < children.size) {
+            val child = children[i]
+            val tagName = child.tagName().lowercase()
+
+            when (tagName) {
+                "dt" -> {
+                    // Term - make it bold
+                    val boldStyle = inheritedStyle.copy(isBold = true)
+                    val (annotated, plain) = parseCellContent(child, boldStyle)
+
+                    if (plain.isNotBlank()) {
+                        items.add(ListItemContent.TextContent(annotated, plain))
+                        if (plainTextBuilder.isNotEmpty()) plainTextBuilder.append("\n")
+                        plainTextBuilder.append(plain)
+                    }
+                }
+                "dd" -> {
+                    // Description - indented
+                    val (annotated, plain) = parseCellContent(child, inheritedStyle)
+
+                    if (plain.isNotBlank()) {
+                        // Add with indent marker (we'll handle display separately)
+                        val indentedAnnotated = buildAnnotatedString {
+                            append("    ")
+                            append(annotated)
+                        }
+                        items.add(ListItemContent.TextContent(indentedAnnotated, "    $plain"))
+                        if (plainTextBuilder.isNotEmpty()) plainTextBuilder.append("\n")
+                        plainTextBuilder.append("    ").append(plain)
+                    }
+                }
+            }
+            i++
+        }
+
+        if (items.isEmpty()) return null
+
+        return ParsedContent.ListBlock(
+            list = ParsedList(
+                items = items,
+                isOrdered = false,
+                listStyleType = ListStyleType.NONE
+            ),
+            plainText = plainTextBuilder.toString()
+        )
+    }
+
+    /**
+     * Parse list style type from element
+     */
+    private fun parseListStyleType(element: Element, isOrdered: Boolean): ListStyleType {
+        // Check type attribute (for ol)
+        val typeAttr = element.attr("type").lowercase()
+        if (typeAttr.isNotBlank()) {
+            return when (typeAttr) {
+                "1" -> ListStyleType.DECIMAL
+                "a" -> ListStyleType.LOWER_ALPHA
+                "A" -> ListStyleType.UPPER_ALPHA
+                "i" -> ListStyleType.LOWER_ROMAN
+                "I" -> ListStyleType.UPPER_ROMAN
+                "disc" -> ListStyleType.DISC
+                "circle" -> ListStyleType.CIRCLE
+                "square" -> ListStyleType.SQUARE
+                else -> ListStyleType.DEFAULT
+            }
+        }
+
+        // Check style attribute
+        val styleAttr = element.attr("style").lowercase()
+        if (styleAttr.contains("list-style-type")) {
+            return when {
+                styleAttr.contains("decimal") -> ListStyleType.DECIMAL
+                styleAttr.contains("lower-alpha") -> ListStyleType.LOWER_ALPHA
+                styleAttr.contains("upper-alpha") -> ListStyleType.UPPER_ALPHA
+                styleAttr.contains("lower-roman") -> ListStyleType.LOWER_ROMAN
+                styleAttr.contains("upper-roman") -> ListStyleType.UPPER_ROMAN
+                styleAttr.contains("disc") -> ListStyleType.DISC
+                styleAttr.contains("circle") -> ListStyleType.CIRCLE
+                styleAttr.contains("square") -> ListStyleType.SQUARE
+                styleAttr.contains("none") -> ListStyleType.NONE
+                else -> ListStyleType.DEFAULT
+            }
+        }
+
+        return ListStyleType.DEFAULT
+    }
+
+    /**
      * Parse an entire author note container as a single unit
      */
     private fun parseAuthorNoteContainer(container: Element): ParsedContent.AuthorNote? {
@@ -497,14 +938,12 @@ object RichTextParser {
         var authorName: String? = null
         var noteType = "Author's Note"
 
-        // Try to extract author name from title elements (RoyalRoad style)
         container.selectFirst(".portlet-title .caption-subject, .author-note-title, .note-title")?.let { titleElement ->
             val titleText = titleElement.text()
             authorName = AuthorNoteDetector.extractAuthorName(titleText)
             noteType = AuthorNoteDetector.extractNoteTypeLabel(titleText)
         }
 
-        // Find the content element(s)
         val contentElements = container.select(".portlet-body, .author-note-content, .author-note")
             .ifEmpty { listOf(container) }
 
@@ -525,10 +964,6 @@ object RichTextParser {
         )
     }
 
-    /**
-     * Recursively parse content inside an author note, collecting text and images
-     * while preserving text styling and links
-     */
     private fun parseAuthorNoteContent(
         element: Element,
         sections: MutableList<AuthorNoteSection>,
@@ -551,7 +986,7 @@ object RichTextParser {
             }
         }
 
-        fun processNode(node: org.jsoup.nodes.Node, currentStyle: StyleState) {
+        fun processNode(node: Node, currentStyle: StyleState) {
             when (node) {
                 is TextNode -> {
                     val text = node.wholeText
@@ -564,7 +999,6 @@ object RichTextParser {
                     val tagName = node.tagName().lowercase()
 
                     when {
-                        // Handle images inside author notes - flush text and add image
                         tagName == "img" -> {
                             flushTextSection()
                             val src = node.attr("src")
@@ -574,29 +1008,24 @@ object RichTextParser {
                             }
                         }
 
-                        // Handle line breaks
                         tagName == "br" -> {
                             textBuilder.appendStyledText("\n", currentStyle)
                         }
 
-                        // Skip separator elements
                         tagName == "hr" || node.hasClass("author-note-separator") -> {
                             // Skip
                         }
 
-                        // Handle block elements - add line break after if needed
                         tagName in setOf("p", "div") -> {
                             val newStyle = updateStyleForTag(currentStyle, node)
                             for (child in node.childNodes()) {
                                 processNode(child, newStyle)
                             }
-                            // Add a single line break after block elements (not double)
                             if (textBuilder.length > 0) {
                                 textBuilder.appendStyledText("\n", currentStyle)
                             }
                         }
 
-                        // Handle inline elements - update style and continue
                         else -> {
                             val newStyle = updateStyleForTag(currentStyle, node)
                             for (child in node.childNodes()) {
@@ -608,12 +1037,10 @@ object RichTextParser {
             }
         }
 
-        // Process all child nodes
         for (node in element.childNodes()) {
             processNode(node, inheritedStyle)
         }
 
-        // Flush any remaining text
         flushTextSection()
     }
 
@@ -639,6 +1066,24 @@ object RichTextParser {
                     val classAttr = node.attr("class")
 
                     when {
+                        // Handle tables inline
+                        tagName in tableTags -> {
+                            flushText()
+                            val table = parseTable(node, style)
+                            if (table != null) {
+                                results.add(table)
+                            }
+                        }
+
+                        // Handle lists inline
+                        tagName in listTags -> {
+                            flushText()
+                            val list = parseList(node, style)
+                            if (list != null) {
+                                results.add(list)
+                            }
+                        }
+
                         AuthorNoteDetector.isAuthorNoteContainer(classAttr) -> {
                             flushText()
                             val authorNote = parseAuthorNoteContainer(node)
@@ -838,6 +1283,14 @@ object RichTextParser {
                         append(content.annotatedString)
                     }
                     is ParsedContent.AuthorNote -> {
+                        if (index > 0) append("\n\n")
+                        append(content.plainText)
+                    }
+                    is ParsedContent.Table -> {
+                        if (index > 0) append("\n\n")
+                        append(content.plainText)
+                    }
+                    is ParsedContent.ListBlock -> {
                         if (index > 0) append("\n\n")
                         append(content.plainText)
                     }

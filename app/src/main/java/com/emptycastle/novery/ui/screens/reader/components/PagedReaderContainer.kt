@@ -571,9 +571,7 @@ private fun PageContent(
                     }
 
                     is ReaderDisplayItem.AuthorNote -> {
-                        // Get display mode from preferences
                         val authorNoteDisplayMode = remember {
-                            // This should come from ViewModel/preferences
                             AuthorNoteDisplayMode.COLLAPSED
                         }
 
@@ -585,7 +583,31 @@ private fun PageContent(
                             fontSize = settings.fontSize,
                             horizontalPadding = horizontalPadding,
                             paragraphSpacing = paragraphSpacing,
-                            primaryColor = MaterialTheme.colorScheme.primary                        )
+                            primaryColor = MaterialTheme.colorScheme.primary
+                        )
+                    }
+
+                    is ReaderDisplayItem.Table -> {
+                        TableItem(
+                            item = item,
+                            settings = settings,
+                            fontFamily = fontFamily,
+                            colors = colors,
+                            horizontalPadding = 0.dp,
+                            paragraphSpacing = paragraphSpacing
+                        )
+                    }
+
+                    is ReaderDisplayItem.List -> {
+                        ListItem(
+                            item = item,
+                            settings = settings,
+                            fontFamily = fontFamily,
+                            fontWeight = fontWeight,
+                            colors = colors,
+                            horizontalPadding = 0.dp,
+                            paragraphSpacing = paragraphSpacing
+                        )
                     }
 
                     is ReaderDisplayItem.Image -> {

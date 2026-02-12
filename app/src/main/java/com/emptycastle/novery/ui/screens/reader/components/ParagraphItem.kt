@@ -61,8 +61,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.emptycastle.novery.domain.model.ReaderSettings
 import com.emptycastle.novery.ui.components.GhostButton
+import com.emptycastle.novery.ui.screens.reader.logic.CellAlignment
+import com.emptycastle.novery.ui.screens.reader.logic.ListItemContent
+import com.emptycastle.novery.ui.screens.reader.logic.ListStyleType
+import com.emptycastle.novery.ui.screens.reader.logic.ParsedList
 import com.emptycastle.novery.ui.screens.reader.logic.RuleStyle
 import com.emptycastle.novery.ui.screens.reader.logic.SceneBreakStyle
+import com.emptycastle.novery.ui.screens.reader.logic.TableRow
 import com.emptycastle.novery.ui.screens.reader.model.ReaderDisplayItem
 import com.emptycastle.novery.ui.screens.reader.model.SentenceHighlight
 import com.emptycastle.novery.ui.screens.reader.theme.ReaderColors
@@ -1014,4 +1019,282 @@ fun SystemMessageSegmentItem(
             )
         )
     }
+}
+
+// =============================================================================
+// TABLE ITEM
+// =============================================================================
+
+@Composable
+fun TableItem(
+    item: ReaderDisplayItem.Table,
+    settings: ReaderSettings,
+    fontFamily: FontFamily,
+    colors: ReaderColors,
+    horizontalPadding: Dp,
+    paragraphSpacing: Dp
+) {
+    val table = item.table
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = horizontalPadding)
+            .padding(vertical = paragraphSpacing)
+    ) {
+        // Caption if present
+        table.caption?.let { caption ->
+            Text(
+                text = caption,
+                style = MaterialTheme.typography.labelMedium.copy(
+                    fontFamily = fontFamily,
+                    fontSize = (settings.fontSize * 0.9f).sp,
+                    color = colors.textSecondary
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 8.dp),
+                textAlign = TextAlign.Center
+            )
+        }
+
+        // Table content with border
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(8.dp),
+            color = colors.surface.copy(alpha = 0.3f),
+            border = androidx.compose.foundation.BorderStroke(
+                1.dp,
+                colors.divider.copy(alpha = 0.5f)
+            )
+        ) {
+            Column(
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                table.rows.forEachIndexed { rowIndex, row ->
+                    TableRowItem(
+                        row = row,
+                        settings = settings,
+                        fontFamily = fontFamily,
+                        colors = colors,
+                        isLastRow = rowIndex == table.rows.lastIndex
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TableRowItem(
+    row: TableRow,
+    settings: ReaderSettings,
+    fontFamily: FontFamily,
+    colors: ReaderColors,
+    isLastRow: Boolean
+) {
+    val backgroundColor = if (row.isHeaderRow) {
+        colors.accent.copy(alpha = 0.1f)
+    } else {
+        Color.Transparent
+    }
+
+    Column {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(backgroundColor)
+                .padding(vertical = 8.dp, horizontal = 12.dp),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            row.cells.forEach { cell ->
+                Box(
+                    modifier = Modifier
+                        .weight(cell.colspan.toFloat())
+                        .padding(horizontal = 4.dp),
+                    contentAlignment = when (cell.alignment) {
+                        CellAlignment.CENTER -> Alignment.Center
+                        CellAlignment.END -> Alignment.CenterEnd
+                        CellAlignment.START -> Alignment.CenterStart
+                    }
+                ) {
+                    Text(
+                        text = cell.content,
+                        style = MaterialTheme.typography.bodyMedium.copy(
+                            fontFamily = if (cell.isHeader) fontFamily else FontFamily.Default,
+                            fontSize = settings.fontSize.sp,
+                            fontWeight = if (cell.isHeader) FontWeight.Bold else FontWeight.Normal,
+                            lineHeight = (settings.fontSize * settings.lineHeight).sp,
+                            color = colors.text
+                        ),
+                        textAlign = when (cell.alignment) {
+                            CellAlignment.CENTER -> TextAlign.Center
+                            CellAlignment.END -> TextAlign.End
+                            CellAlignment.START -> TextAlign.Start
+                        }
+                    )
+                }
+            }
+        }
+
+        if (!isLastRow) {
+            HorizontalDivider(
+                color = colors.divider.copy(alpha = 0.3f),
+                thickness = 0.5.dp
+            )
+        }
+    }
+}
+
+// =============================================================================
+// LIST ITEM
+// =============================================================================
+
+@Composable
+fun ListItem(
+    item: ReaderDisplayItem.List,
+    settings: ReaderSettings,
+    fontFamily: FontFamily,
+    fontWeight: FontWeight,
+    colors: ReaderColors,
+    horizontalPadding: Dp,
+    paragraphSpacing: Dp
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = horizontalPadding)
+            .padding(vertical = paragraphSpacing / 2)
+    ) {
+        ListContent(
+            list = item.list.list,
+            settings = settings,
+            fontFamily = fontFamily,
+            fontWeight = fontWeight,
+            colors = colors,
+            indentLevel = 0
+        )
+    }
+}
+
+@Composable
+private fun ListContent(
+    list: ParsedList,
+    settings: ReaderSettings,
+    fontFamily: FontFamily,
+    fontWeight: FontWeight,
+    colors: ReaderColors,
+    indentLevel: Int
+) {
+    val indentPadding = (indentLevel * 20).dp
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = indentPadding)
+    ) {
+        list.items.forEachIndexed { index, item ->
+            when (item) {
+                is ListItemContent.TextContent -> {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp)
+                    ) {
+                        // Bullet or number
+                        val marker = when {
+                            list.listStyleType == ListStyleType.NONE -> ""
+                            list.isOrdered -> "${getOrderedMarker(list.startNumber + index, list.listStyleType)} "
+                            else -> "${getBulletMarker(list.listStyleType, indentLevel)} "
+                        }
+
+                        if (marker.isNotEmpty()) {
+                            Text(
+                                text = marker,
+                                style = MaterialTheme.typography.bodyLarge.copy(
+                                    fontFamily = fontFamily,
+                                    fontWeight = fontWeight,
+                                    fontSize = settings.fontSize.sp,
+                                    lineHeight = (settings.fontSize * settings.lineHeight).sp,
+                                    color = colors.textSecondary
+                                ),
+                                modifier = Modifier.width(
+                                    if (list.isOrdered) 32.dp else 20.dp
+                                )
+                            )
+                        }
+
+                        Text(
+                            text = item.annotatedString,
+                            style = MaterialTheme.typography.bodyLarge.copy(
+                                fontFamily = fontFamily,
+                                fontWeight = fontWeight,
+                                fontSize = settings.fontSize.sp,
+                                lineHeight = (settings.fontSize * settings.lineHeight).sp,
+                                color = colors.text
+                            ),
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+
+                is ListItemContent.NestedList -> {
+                    ListContent(
+                        list = item.list,
+                        settings = settings,
+                        fontFamily = fontFamily,
+                        fontWeight = fontWeight,
+                        colors = colors,
+                        indentLevel = indentLevel + 1
+                    )
+                }
+            }
+        }
+    }
+}
+
+private fun getOrderedMarker(number: Int, style: ListStyleType): String {
+    return when (style) {
+        ListStyleType.LOWER_ALPHA -> "${('a' + (number - 1) % 26)}."
+        ListStyleType.UPPER_ALPHA -> "${('A' + (number - 1) % 26)}."
+        ListStyleType.LOWER_ROMAN -> "${toRomanNumeral(number).lowercase()}."
+        ListStyleType.UPPER_ROMAN -> "${toRomanNumeral(number)}."
+        else -> "$number."
+    }
+}
+
+private fun getBulletMarker(style: ListStyleType, level: Int): String {
+    return when (style) {
+        ListStyleType.DISC -> "•"
+        ListStyleType.CIRCLE -> "○"
+        ListStyleType.SQUARE -> "▪"
+        ListStyleType.NONE -> ""
+        else -> when (level % 3) {
+            0 -> "•"
+            1 -> "○"
+            else -> "▪"
+        }
+    }
+}
+
+private fun toRomanNumeral(number: Int): String {
+    if (number <= 0 || number > 3999) return number.toString()
+
+    val romanValues = listOf(
+        1000 to "M", 900 to "CM", 500 to "D", 400 to "CD",
+        100 to "C", 90 to "XC", 50 to "L", 40 to "XL",
+        10 to "X", 9 to "IX", 5 to "V", 4 to "IV", 1 to "I"
+    )
+
+    var remaining = number
+    val result = StringBuilder()
+
+    for ((value, numeral) in romanValues) {
+        while (remaining >= value) {
+            result.append(numeral)
+            remaining -= value
+        }
+    }
+
+    return result.toString()
 }

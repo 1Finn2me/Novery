@@ -806,8 +806,15 @@ class ReaderViewModel : ViewModel() {
         }
 
         val charMap = characterMaps[position.chapterIndex]
-        val targetSegmentIndex = charMap?.findSegmentByCharOffset(position.characterOffset)
-            ?: position.segmentIndex
+
+        // FIX: When characterOffset is 0 (restored from prefs where it wasn't saved),
+        // use segmentIndex directly instead of computing from characterOffset
+        val targetSegmentIndex = if (position.characterOffset > 0 && charMap != null) {
+            charMap.findSegmentByCharOffset(position.characterOffset)
+        } else {
+            // characterOffset is 0, so use the saved segmentIndex
+            position.segmentIndex
+        }
 
         val displayIndex = displayItems.indexOfFirst { item ->
             when (item) {
@@ -815,9 +822,10 @@ class ReaderViewModel : ViewModel() {
                     item.chapterIndex == position.chapterIndex &&
                             item.segmentIndexInChapter >= targetSegmentIndex
 
+                // FIX: Only match header for true chapter start (segment 0, no offset)
                 is ReaderDisplayItem.ChapterHeader ->
                     item.chapterIndex == position.chapterIndex &&
-                            position.characterOffset == 0
+                            targetSegmentIndex == 0 && position.pixelOffset == 0
 
                 else -> false
             }
@@ -1196,6 +1204,30 @@ class ReaderViewModel : ViewModel() {
                                         orderInChapter = orderInChapter
                                     )
                                 )
+                            }
+
+                            is ChapterContentItem.Table -> {
+                                items.add(
+                                    ReaderDisplayItem.Table(
+                                        chapterIndex = chapterIndex,
+                                        table = contentItem.table,
+                                        orderInChapter = orderInChapter
+                                    )
+                                )
+                                // Count words in table for reading time estimation
+                                chapterWordCount += contentItem.table.plainText.split("\\s+".toRegex()).size
+                            }
+
+                            is ChapterContentItem.List -> {
+                                items.add(
+                                    ReaderDisplayItem.List(
+                                        chapterIndex = chapterIndex,
+                                        list = contentItem.list,
+                                        orderInChapter = orderInChapter
+                                    )
+                                )
+                                // Count words in list for reading time estimation
+                                chapterWordCount += contentItem.list.plainText.split("\\s+".toRegex()).size
                             }
                         }
                     }
