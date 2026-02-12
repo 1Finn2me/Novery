@@ -9,6 +9,12 @@ import com.emptycastle.novery.domain.model.NovelDetails
 import com.emptycastle.novery.domain.model.UserReview
 import com.emptycastle.novery.provider.MainProvider
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.withContext
 
 /**
@@ -143,6 +149,41 @@ class NovelRepository(
 
             results
         }
+
+    /**
+     * Search all providers concurrently, emitting results as each provider completes.
+     * Each emission is a Pair of (providerName, Result<List<Novel>>).
+     */
+    fun searchAllStreaming(query: String): Flow<Pair<String, Result<List<Novel>>>> = flow {
+        val providers = getProviders()
+
+        // Launch all searches concurrently and emit results as they complete
+        coroutineScope {
+            val deferredResults = providers.map { provider ->
+                async {
+                    val result = try {
+                        Result.success(provider.search(query))
+                    } catch (e: Exception) {
+                        Result.failure<List<Novel>>(e)
+                    }
+                    provider.name to result
+                }
+            }
+
+            // Emit results as they complete
+            val remaining = deferredResults.toMutableList()
+            while (remaining.isNotEmpty()) {
+                val completed = remaining.firstOrNull { it.isCompleted }
+                if (completed != null) {
+                    remaining.remove(completed)
+                    emit(completed.await())
+                } else {
+                    // Wait briefly for any to complete
+                    delay(50)
+                }
+            }
+        }
+    }.flowOn(Dispatchers.IO)
 
     // ================================================================
     // NOVEL DETAILS

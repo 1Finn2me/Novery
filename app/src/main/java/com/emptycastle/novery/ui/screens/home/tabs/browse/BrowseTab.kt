@@ -2,6 +2,7 @@ package com.emptycastle.novery.ui.screens.home.tabs.browse
 
 import androidx.annotation.DrawableRes
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.EaseOutCubic
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -58,7 +59,9 @@ import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.ArrowForward
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.FavoriteBorder
+import androidx.compose.material.icons.outlined.SearchOff
 import androidx.compose.material.icons.rounded.Category
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.CloudOff
@@ -73,6 +76,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -253,7 +257,7 @@ fun BrowseTab(
     if (uiState.showFilters) {
         SearchFiltersSheet(
             filters = uiState.filters,
-            availableProviders = uiState.searchResults.keys.toList(),
+            availableProviders = uiState.providerSearchStates.keys.toList(),
             onDismiss = { viewModel.toggleFiltersPanel() },
             onFiltersChanged = { viewModel.updateFilters(it) },
             onClearFilters = { viewModel.clearFilters() }
@@ -284,7 +288,7 @@ fun BrowseTab(
                 if (focused) viewModel.onSearchBarFocused()
                 else viewModel.onSearchBarUnfocused()
             },
-            showFilterButton = uiState.isInSearchMode && uiState.searchResults.isNotEmpty(),
+            showFilterButton = uiState.isInSearchMode && uiState.providerSearchStates.isNotEmpty(),
             hasActiveFilters = uiState.filters.selectedProviders.isNotEmpty() ||
                     uiState.filters.sortOrder != SearchSortOrder.RELEVANCE,
             onFilterClick = { viewModel.toggleFiltersPanel() }
@@ -297,7 +301,7 @@ fun BrowseTab(
                 targetState = Triple(
                     uiState.isInSearchMode,
                     uiState.expandedProvider,
-                    uiState.isSearching
+                    uiState.providerSearchStates.isEmpty() && uiState.isSearching
                 ),
                 transitionSpec = {
                     when {
@@ -313,12 +317,14 @@ fun BrowseTab(
                     }
                 },
                 label = "browse_content"
-            ) { (isSearchMode, expandedProvider, isSearching) ->
+            ) { (isSearchMode, expandedProvider, isInitialLoading) ->
                 when {
-                    isSearching -> {
+                    // Initial loading state (before any results come in)
+                    isInitialLoading -> {
                         SearchLoadingState()
                     }
 
+                    // All searches complete with no results
                     uiState.isSearchEmpty -> {
                         EmptySearchState(
                             query = uiState.searchQuery,
@@ -327,10 +333,19 @@ fun BrowseTab(
                         )
                     }
 
-                    expandedProvider != null && uiState.filteredSearchResults.containsKey(expandedProvider) -> {
+                    // Expanded provider view
+                    expandedProvider != null -> {
+                        val providerState = uiState.providerSearchStates[expandedProvider]
+                        val novels = when (providerState) {
+                            is ProviderSearchState.Success -> providerState.novels
+                            else -> emptyList()
+                        }
+
                         ExpandedSearchResults(
                             providerName = expandedProvider,
-                            novels = uiState.filteredSearchResults[expandedProvider] ?: emptyList(),
+                            novels = novels,
+                            isLoading = providerState is ProviderSearchState.Loading,
+                            error = (providerState as? ProviderSearchState.Error)?.message,
                             gridColumns = gridColumns,
                             onNovelClick = { novel ->
                                 onNavigateToDetails(novel.url, novel.apiName)
@@ -343,11 +358,15 @@ fun BrowseTab(
                         )
                     }
 
+                    // Search results view with real-time updates
                     isSearchMode -> {
                         SearchResultsContent(
-                            results = uiState.filteredSearchResults,
+                            providerStates = uiState.filteredProviderStates,
                             resultsPerProvider = resultsPerProvider,
                             filters = uiState.filters,
+                            isSearching = uiState.isSearching,
+                            completedCount = uiState.completedProvidersCount,
+                            totalCount = uiState.totalProviders,
                             onNovelClick = { novel ->
                                 onNavigateToDetails(novel.url, novel.apiName)
                             },
@@ -362,6 +381,7 @@ fun BrowseTab(
                         )
                     }
 
+                    // Default provider grid
                     else -> {
                         when {
                             uiState.isLoadingProviders -> ProviderGridSkeleton()
@@ -383,19 +403,24 @@ fun BrowseTab(
             }
 
             // Search suggestions dropdown overlay
-            // Use the standalone AnimatedVisibility (not ColumnScope version)
             androidx.compose.animation.AnimatedVisibility(
                 visible = uiState.showSearchHistory &&
-                        (uiState.searchHistory.isNotEmpty() || uiState.trendingSearches.isNotEmpty()),
+                        (uiState.filteredSearchHistory.isNotEmpty() ||
+                                uiState.trendingSearches.isNotEmpty() ||
+                                uiState.searchQuery.isNotBlank()),
                 enter = fadeIn() + slideInVertically { -it / 4 },
                 exit = fadeOut() + slideOutVertically { -it / 4 },
                 modifier = Modifier.align(Alignment.TopCenter)
             ) {
                 SearchSuggestionsDropdown(
-                    searchHistory = uiState.searchHistory,
+                    searchHistory = uiState.filteredSearchHistory,
                     trendingSearches = uiState.trendingSearches,
+                    currentQuery = uiState.searchQuery,
                     onHistoryItemClick = { query ->
                         viewModel.search(query)
+                    },
+                    onHistoryItemFill = { query ->
+                        viewModel.selectHistoryItem(query)
                     },
                     onRemoveHistoryItem = { query ->
                         viewModel.removeFromSearchHistory(query)
@@ -469,7 +494,7 @@ private fun SearchLoadingState() {
                     color = MaterialTheme.colorScheme.onSurface
                 )
                 Text(
-                    text = "This may take a moment",
+                    text = "Results will appear as they load",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -595,7 +620,6 @@ private fun SearchFiltersSheet(
                 .padding(bottom = 32.dp),
             verticalArrangement = Arrangement.spacedBy(24.dp)
         ) {
-            // Header
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -612,7 +636,6 @@ private fun SearchFiltersSheet(
                 }
             }
 
-            // Sort Order
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(
                     text = "Sort by",
@@ -639,7 +662,6 @@ private fun SearchFiltersSheet(
                 }
             }
 
-            // Provider Filter
             if (availableProviders.size > 1) {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Row(
@@ -688,7 +710,6 @@ private fun SearchFiltersSheet(
                 }
             }
 
-            // Apply button
             Button(
                 onClick = onDismiss,
                 modifier = Modifier
@@ -707,14 +728,17 @@ private fun SearchFiltersSheet(
 }
 
 // ============================================================================
-// Search Results Content
+// Search Results Content with Real-time Updates
 // ============================================================================
 
 @Composable
 private fun SearchResultsContent(
-    results: Map<String, List<Novel>>,
+    providerStates: Map<String, ProviderSearchState>,
     resultsPerProvider: Int,
     filters: SearchFilters,
+    isSearching: Boolean,
+    completedCount: Int,
+    totalCount: Int,
     onNovelClick: (Novel) -> Unit,
     onNovelLongClick: (Novel) -> Unit,
     onShowMore: (String) -> Unit,
@@ -723,6 +747,17 @@ private fun SearchResultsContent(
 ) {
     val dimensions = NoveryTheme.dimensions
 
+    // Calculate totals from completed providers
+    val totalResults = providerStates.values.sumOf { state ->
+        when (state) {
+            is ProviderSearchState.Success -> state.novels.size
+            else -> 0
+        }
+    }
+    val providersWithResults = providerStates.count { (_, state) ->
+        state is ProviderSearchState.Success && state.novels.isNotEmpty()
+    }
+
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(vertical = dimensions.spacingMd),
@@ -730,25 +765,66 @@ private fun SearchResultsContent(
     ) {
         item(key = "search_header") {
             SearchResultsHeader(
-                totalResults = results.values.sumOf { it.size },
-                providerCount = results.size,
+                totalResults = totalResults,
+                providersWithResults = providersWithResults,
+                completedCount = completedCount,
+                totalCount = totalCount,
+                isSearching = isSearching,
                 hasFilters = filters.selectedProviders.isNotEmpty() ||
                         filters.sortOrder != SearchSortOrder.RELEVANCE,
                 onClear = onClearSearch
             )
         }
 
-        results.forEach { (providerName, novels) ->
+        // Sort providers: loading first, then by results count
+        val sortedProviders = providerStates.entries.sortedWith(
+            compareBy<Map.Entry<String, ProviderSearchState>> { (_, state) ->
+                when (state) {
+                    is ProviderSearchState.Loading -> 0
+                    is ProviderSearchState.Success -> if (state.novels.isNotEmpty()) 1 else 3
+                    is ProviderSearchState.Error -> 2
+                }
+            }.thenByDescending { (_, state) ->
+                when (state) {
+                    is ProviderSearchState.Success -> state.novels.size
+                    else -> 0
+                }
+            }
+        )
+
+        sortedProviders.forEach { (providerName, state) ->
             item(key = "provider_$providerName") {
-                ProviderSearchResultsSection(
-                    providerName = providerName,
-                    novels = novels,
-                    maxResults = resultsPerProvider,
-                    onNovelClick = onNovelClick,
-                    onNovelLongClick = onNovelLongClick,
-                    onShowMore = { onShowMore(providerName) },
-                    appSettings = appSettings
-                )
+                AnimatedVisibility(
+                    visible = true,
+                    enter = fadeIn() + slideInVertically { it / 2 }
+                ) {
+                    when (state) {
+                        is ProviderSearchState.Loading -> {
+                            ProviderLoadingSection(providerName = providerName)
+                        }
+                        is ProviderSearchState.Success -> {
+                            if (state.novels.isEmpty()) {
+                                ProviderEmptyResultsSection(providerName = providerName)
+                            } else {
+                                ProviderSearchResultsSection(
+                                    providerName = providerName,
+                                    novels = state.novels,
+                                    maxResults = resultsPerProvider,
+                                    onNovelClick = onNovelClick,
+                                    onNovelLongClick = onNovelLongClick,
+                                    onShowMore = { onShowMore(providerName) },
+                                    appSettings = appSettings
+                                )
+                            }
+                        }
+                        is ProviderSearchState.Error -> {
+                            ProviderErrorResultsSection(
+                                providerName = providerName,
+                                errorMessage = state.message
+                            )
+                        }
+                    }
+                }
             }
         }
 
@@ -762,7 +838,10 @@ private fun SearchResultsContent(
 @Composable
 private fun SearchResultsHeader(
     totalResults: Int,
-    providerCount: Int,
+    providersWithResults: Int,
+    completedCount: Int,
+    totalCount: Int,
+    isSearching: Boolean,
     hasFilters: Boolean,
     onClear: () -> Unit
 ) {
@@ -786,6 +865,15 @@ private fun SearchResultsHeader(
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onBackground
                 )
+
+                if (isSearching) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(16.dp),
+                        strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+
                 if (hasFilters) {
                     Surface(
                         shape = RoundedCornerShape(6.dp),
@@ -801,8 +889,13 @@ private fun SearchResultsHeader(
                     }
                 }
             }
+
             Text(
-                text = "$totalResults novels from $providerCount sources",
+                text = if (isSearching) {
+                    "$totalResults novels found • $completedCount of $totalCount sources loaded"
+                } else {
+                    "$totalResults novels in $providersWithResults of $totalCount sources"
+                },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -830,6 +923,283 @@ private fun SearchResultsHeader(
                     fontWeight = FontWeight.Medium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+            }
+        }
+    }
+}
+
+/**
+ * Loading state for a provider while search is in progress
+ */
+@Composable
+private fun ProviderLoadingSection(
+    providerName: String
+) {
+    val dimensions = NoveryTheme.dimensions
+    val providerColor = remember(providerName) { ProviderColors.getColor(providerName) }
+
+    Column(modifier = Modifier.fillMaxWidth()) {
+        // Provider header
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = dimensions.gridPadding, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(8.dp)
+                    .background(providerColor, CircleShape)
+            )
+
+            Text(
+                text = providerName,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onBackground
+            )
+
+            CircularProgressIndicator(
+                modifier = Modifier.size(14.dp),
+                strokeWidth = 2.dp,
+                color = providerColor
+            )
+        }
+
+        // Shimmer loading cards
+        LazyRow(
+            contentPadding = PaddingValues(horizontal = dimensions.gridPadding),
+            horizontalArrangement = Arrangement.spacedBy(dimensions.cardSpacing),
+            userScrollEnabled = false
+        ) {
+            items(4) {
+                SearchResultCardSkeleton()
+            }
+        }
+    }
+}
+
+@Composable
+private fun SearchResultCardSkeleton() {
+    Card(
+        modifier = Modifier
+            .width(110.dp)
+            .height(165.dp),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+        )
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(8.dp),
+            verticalArrangement = Arrangement.SpaceBetween
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                    .shimmerEffect()
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(12.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                        .shimmerEffect()
+                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth(0.6f)
+                        .height(10.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                        .shimmerEffect()
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Shows a provider section with "No results" message
+ */
+@Composable
+private fun ProviderEmptyResultsSection(
+    providerName: String
+) {
+    val dimensions = NoveryTheme.dimensions
+    val providerColor = remember(providerName) { ProviderColors.getColor(providerName) }
+
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = dimensions.gridPadding, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(8.dp)
+                    .background(providerColor.copy(alpha = 0.4f), CircleShape)
+            )
+
+            Text(
+                text = providerName,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f)
+            )
+        }
+
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = dimensions.gridPadding),
+            shape = RoundedCornerShape(12.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerLow,
+            border = BorderStroke(
+                1.dp,
+                MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+            )
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Surface(
+                    shape = CircleShape,
+                    color = providerColor.copy(alpha = 0.1f),
+                    modifier = Modifier.size(36.dp)
+                ) {
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.SearchOff,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp),
+                            tint = providerColor.copy(alpha = 0.6f)
+                        )
+                    }
+                }
+
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(
+                        text = "No novels found",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                    )
+                    Text(
+                        text = "This source has no matching results",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Shows a provider section with error message
+ */
+@Composable
+private fun ProviderErrorResultsSection(
+    providerName: String,
+    errorMessage: String
+) {
+    val dimensions = NoveryTheme.dimensions
+    val providerColor = remember(providerName) { ProviderColors.getColor(providerName) }
+
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = dimensions.gridPadding, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(8.dp)
+                    .background(MaterialTheme.colorScheme.error.copy(alpha = 0.6f), CircleShape)
+            )
+
+            Text(
+                text = providerName,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f)
+            )
+        }
+
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = dimensions.gridPadding),
+            shape = RoundedCornerShape(12.dp),
+            color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.3f),
+            border = BorderStroke(
+                1.dp,
+                MaterialTheme.colorScheme.error.copy(alpha = 0.3f)
+            )
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Surface(
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.error.copy(alpha = 0.1f),
+                    modifier = Modifier.size(36.dp)
+                ) {
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.ErrorOutline,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp),
+                            tint = MaterialTheme.colorScheme.error
+                        )
+                    }
+                }
+
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(
+                        text = "Search failed",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                    Text(
+                        text = errorMessage,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.7f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
             }
         }
     }
@@ -1008,6 +1378,8 @@ private fun ViewMoreCard(
 private fun ExpandedSearchResults(
     providerName: String,
     novels: List<Novel>,
+    isLoading: Boolean,
+    error: String?,
     gridColumns: Int,
     onNovelClick: (Novel) -> Unit,
     onNovelLongClick: (Novel) -> Unit,
@@ -1057,40 +1429,164 @@ private fun ExpandedSearchResults(
                 modifier = Modifier.weight(1f)
             )
 
-            Surface(
-                shape = RoundedCornerShape(12.dp),
-                color = providerColor.copy(alpha = 0.1f),
-                border = BorderStroke(1.dp, providerColor.copy(alpha = 0.2f))
-            ) {
-                Text(
-                    text = "${novels.size} results",
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.Medium,
+            if (isLoading) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(20.dp),
+                    strokeWidth = 2.dp,
                     color = providerColor
                 )
+            } else {
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = providerColor.copy(alpha = 0.1f),
+                    border = BorderStroke(1.dp, providerColor.copy(alpha = 0.2f))
+                ) {
+                    Text(
+                        text = "${novels.size} results",
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Medium,
+                        color = providerColor
+                    )
+                }
             }
         }
 
-        LazyVerticalGrid(
-            columns = GridCells.Fixed(gridColumns),
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(
-                start = dimensions.gridPadding,
-                end = dimensions.gridPadding,
-                bottom = 80.dp
-            ),
-            horizontalArrangement = Arrangement.spacedBy(dimensions.cardSpacing),
-            verticalArrangement = Arrangement.spacedBy(dimensions.cardSpacing)
-        ) {
-            items(novels, key = { it.url }) { novel ->
-                NovelCard(
-                    novel = novel,
-                    onClick = { onNovelClick(novel) },
-                    onLongClick = { onNovelLongClick(novel) },
-                    showApiName = false,
-                    density = appSettings.uiDensity
-                )
+        when {
+            isLoading -> {
+                // Loading grid skeleton
+                LazyVerticalGrid(
+                    columns = GridCells.Fixed(gridColumns),
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(
+                        start = dimensions.gridPadding,
+                        end = dimensions.gridPadding,
+                        bottom = 80.dp
+                    ),
+                    horizontalArrangement = Arrangement.spacedBy(dimensions.cardSpacing),
+                    verticalArrangement = Arrangement.spacedBy(dimensions.cardSpacing),
+                    userScrollEnabled = false
+                ) {
+                    items(8) {
+                        SearchResultCardSkeleton()
+                    }
+                }
+            }
+
+            error != null -> {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(32.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        Surface(
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.errorContainer,
+                            modifier = Modifier.size(80.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier.fillMaxSize(),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Outlined.ErrorOutline,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(40.dp),
+                                    tint = MaterialTheme.colorScheme.error
+                                )
+                            }
+                        }
+
+                        Text(
+                            text = "Search failed",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.error
+                        )
+
+                        Text(
+                            text = error,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                }
+            }
+
+            novels.isEmpty() -> {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(32.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        Surface(
+                            shape = CircleShape,
+                            color = providerColor.copy(alpha = 0.1f),
+                            modifier = Modifier.size(80.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier.fillMaxSize(),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Outlined.SearchOff,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(40.dp),
+                                    tint = providerColor.copy(alpha = 0.6f)
+                                )
+                            }
+                        }
+
+                        Text(
+                            text = "No results from this source",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                        )
+
+                        Text(
+                            text = "Try a different search term or check another source",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                }
+            }
+
+            else -> {
+                LazyVerticalGrid(
+                    columns = GridCells.Fixed(gridColumns),
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(
+                        start = dimensions.gridPadding,
+                        end = dimensions.gridPadding,
+                        bottom = 80.dp
+                    ),
+                    horizontalArrangement = Arrangement.spacedBy(dimensions.cardSpacing),
+                    verticalArrangement = Arrangement.spacedBy(dimensions.cardSpacing)
+                ) {
+                    items(novels, key = { it.url }) { novel ->
+                        NovelCard(
+                            novel = novel,
+                            onClick = { onNovelClick(novel) },
+                            onLongClick = { onNovelLongClick(novel) },
+                            showApiName = false,
+                            density = appSettings.uiDensity
+                        )
+                    }
+                }
             }
         }
     }

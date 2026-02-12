@@ -1,4 +1,3 @@
-// NoverySearchBar.kt - Update the SearchSuggestionsDropdown to use PreferencesManager.SearchHistoryItem
 package com.emptycastle.novery.ui.components
 
 import androidx.compose.animation.AnimatedContent
@@ -40,6 +39,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.outlined.History
+import androidx.compose.material.icons.outlined.SearchOff
 import androidx.compose.material.icons.outlined.TrendingUp
 import androidx.compose.material.icons.rounded.Clear
 import androidx.compose.material.icons.rounded.FilterList
@@ -74,9 +74,12 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import com.emptycastle.novery.data.local.PreferencesManager
 import java.text.SimpleDateFormat
@@ -350,19 +353,61 @@ fun NoverySearchBar(
 
 /**
  * Search suggestions dropdown with history and trending
- * Uses PreferencesManager.SearchHistoryItem
+ * Supports filtering history based on current query
  */
 @Composable
 fun SearchSuggestionsDropdown(
     searchHistory: List<PreferencesManager.SearchHistoryItem>,
     trendingSearches: List<String>,
+    currentQuery: String,
     onHistoryItemClick: (String) -> Unit,
+    onHistoryItemFill: (String) -> Unit, // Fill search bar without searching
     onRemoveHistoryItem: (String) -> Unit,
     onClearHistory: () -> Unit,
     onTrendingClick: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val haptic = LocalHapticFeedback.current
+    val hasContent = searchHistory.isNotEmpty() || (trendingSearches.isNotEmpty() && currentQuery.isBlank())
+
+    if (!hasContent) {
+        // Show empty state when no matching history
+        if (currentQuery.isNotBlank()) {
+            Surface(
+                modifier = modifier.fillMaxWidth(),
+                color = MaterialTheme.colorScheme.surface,
+                shape = RoundedCornerShape(16.dp),
+                tonalElevation = 2.dp,
+                shadowElevation = 4.dp
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.SearchOff,
+                        contentDescription = null,
+                        modifier = Modifier.size(32.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                    )
+                    Text(
+                        text = "No matching history",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = "Press Search to find novels",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                    )
+                }
+            }
+        }
+        return
+    }
 
     Surface(
         modifier = modifier.fillMaxWidth(),
@@ -396,38 +441,61 @@ fun SearchSuggestionsDropdown(
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                             Text(
-                                text = "Recent Searches",
+                                text = if (currentQuery.isBlank()) "Recent Searches" else "Matching History",
                                 style = MaterialTheme.typography.titleSmall,
                                 fontWeight = FontWeight.SemiBold,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
+
+                            // Show count when filtering
+                            if (currentQuery.isNotBlank()) {
+                                Surface(
+                                    shape = RoundedCornerShape(6.dp),
+                                    color = MaterialTheme.colorScheme.primaryContainer
+                                ) {
+                                    Text(
+                                        text = "${searchHistory.size}",
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Medium,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                            }
                         }
 
-                        TextButton(
-                            onClick = {
-                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                onClearHistory()
-                            },
-                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
-                        ) {
-                            Text(
-                                text = "Clear all",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.primary
-                            )
+                        if (currentQuery.isBlank()) {
+                            TextButton(
+                                onClick = {
+                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    onClearHistory()
+                                },
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                            ) {
+                                Text(
+                                    text = "Clear all",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
                         }
                     }
                 }
 
                 items(
-                    items = searchHistory.take(5),
+                    items = searchHistory.take(8), // Show more items when filtered
                     key = { "${it.query}_${it.timestamp}" }
                 ) { item ->
                     SearchHistoryRow(
                         item = item,
+                        highlightQuery = currentQuery,
                         onClick = {
                             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                             onHistoryItemClick(item.query)
+                        },
+                        onFill = {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            onHistoryItemFill(item.query)
                         },
                         onRemove = {
                             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -436,16 +504,19 @@ fun SearchSuggestionsDropdown(
                     )
                 }
 
-                item {
-                    HorizontalDivider(
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
-                    )
+                // Only show divider and trending when not filtering
+                if (currentQuery.isBlank() && trendingSearches.isNotEmpty()) {
+                    item {
+                        HorizontalDivider(
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                        )
+                    }
                 }
             }
 
-            // Trending Section
-            if (trendingSearches.isNotEmpty()) {
+            // Trending Section - only show when query is empty
+            if (trendingSearches.isNotEmpty() && currentQuery.isBlank()) {
                 item {
                     Row(
                         modifier = Modifier
@@ -497,7 +568,9 @@ fun SearchSuggestionsDropdown(
 @Composable
 private fun SearchHistoryRow(
     item: PreferencesManager.SearchHistoryItem,
+    highlightQuery: String,
     onClick: () -> Unit,
+    onFill: () -> Unit,
     onRemove: () -> Unit
 ) {
     Row(
@@ -521,8 +594,9 @@ private fun SearchHistoryRow(
             )
 
             Column(modifier = Modifier.weight(1f)) {
+                // Highlight matching text
                 Text(
-                    text = item.query,
+                    text = buildHighlightedText(item.query, highlightQuery),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurface,
                     maxLines = 1,
@@ -542,27 +616,76 @@ private fun SearchHistoryRow(
                     )
                 }
             }
-
-            // Arrow to fill search bar with this query
-            Icon(
-                imageVector = Icons.Rounded.NorthWest,
-                contentDescription = "Use query",
-                modifier = Modifier.size(16.dp),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-            )
         }
 
-        IconButton(
-            onClick = onRemove,
-            modifier = Modifier.size(32.dp)
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(
-                imageVector = Icons.Default.Close,
-                contentDescription = "Remove",
-                modifier = Modifier.size(16.dp),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
-            )
+            // Fill search bar button (arrow pointing to search bar)
+            IconButton(
+                onClick = onFill,
+                modifier = Modifier.size(32.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.NorthWest,
+                    contentDescription = "Use query",
+                    modifier = Modifier.size(16.dp),
+                    tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.7f)
+                )
+            }
+
+            // Remove button
+            IconButton(
+                onClick = onRemove,
+                modifier = Modifier.size(32.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Close,
+                    contentDescription = "Remove",
+                    modifier = Modifier.size(16.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                )
+            }
         }
+    }
+}
+
+@Composable
+private fun buildHighlightedText(text: String, query: String) = buildAnnotatedString {
+    if (query.isBlank()) {
+        append(text)
+        return@buildAnnotatedString
+    }
+
+    val queryLower = query.lowercase()
+    val textLower = text.lowercase()
+    var currentIndex = 0
+
+    while (currentIndex < text.length) {
+        val matchIndex = textLower.indexOf(queryLower, currentIndex)
+        if (matchIndex == -1) {
+            // No more matches, append rest of text
+            append(text.substring(currentIndex))
+            break
+        }
+
+        // Append text before match
+        if (matchIndex > currentIndex) {
+            append(text.substring(currentIndex, matchIndex))
+        }
+
+        // Append highlighted match
+        withStyle(
+            SpanStyle(
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary
+            )
+        ) {
+            append(text.substring(matchIndex, matchIndex + query.length))
+        }
+
+        currentIndex = matchIndex + query.length
     }
 }
 

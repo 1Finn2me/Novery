@@ -1,4 +1,3 @@
-// BrowseViewModel.kt
 package com.emptycastle.novery.ui.screens.home.tabs.browse
 
 import androidx.lifecycle.ViewModel
@@ -11,6 +10,7 @@ import com.emptycastle.novery.ui.screens.home.shared.ActionSheetManager
 import com.emptycastle.novery.ui.screens.home.shared.ActionSheetSource
 import com.emptycastle.novery.ui.screens.home.shared.ActionSheetState
 import com.emptycastle.novery.ui.screens.home.shared.LibraryStateHolder
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -28,12 +28,19 @@ class BrowseViewModel : ViewModel() {
     private val actionSheetManager = ActionSheetManager()
     val actionSheetState: StateFlow<ActionSheetState> = actionSheetManager.state
 
+    // Track current search job to cancel if new search starts
+    private var currentSearchJob: Job? = null
+
+    // Track if search bar is focused
+    private var isSearchBarFocused = false
+
     private val defaultTrendingSearches = listOf(
-        "Martial God Asura",
+        "Shadow Slave",
+        "Reverend Insanity",
+        "Lord of the Mysteries",
         "Solo Leveling",
         "The Beginning After The End",
-        "Omniscient Reader",
-        "Shadow Slave"
+        "Omniscient Reader"
     )
 
     init {
@@ -49,17 +56,15 @@ class BrowseViewModel : ViewModel() {
             launch {
                 MainProvider.providersState().collect { refreshProviders() }
             }
-            // Observe search history changes
             launch {
                 preferencesManager.searchHistory.collect { history ->
                     _uiState.update { it.copy(searchHistory = history) }
                 }
             }
-            // Observe favorite providers changes
             launch {
                 preferencesManager.favoriteProviders.collect { favorites ->
                     _uiState.update { it.copy(favoriteProviders = favorites) }
-                    refreshProviders() // Re-sort providers
+                    refreshProviders()
                 }
             }
         }
@@ -115,67 +120,113 @@ class BrowseViewModel : ViewModel() {
         _uiState.update {
             it.copy(
                 searchQuery = query,
-                showSearchHistory = query.isEmpty() && it.searchHistory.isNotEmpty()
+                showSearchHistory = isSearchBarFocused && !it.hasSearched
             )
         }
     }
 
     fun onSearchBarFocused() {
-        if (_uiState.value.searchQuery.isEmpty()) {
-            _uiState.update { it.copy(showSearchHistory = true) }
+        isSearchBarFocused = true
+        _uiState.update {
+            it.copy(showSearchHistory = !it.hasSearched)
         }
     }
 
     fun onSearchBarUnfocused() {
-        _uiState.update { it.copy(showSearchHistory = false) }
+        isSearchBarFocused = false
+        viewModelScope.launch {
+            kotlinx.coroutines.delay(150)
+            if (!isSearchBarFocused) {
+                _uiState.update { it.copy(showSearchHistory = false) }
+            }
+        }
     }
 
     fun search(query: String = _uiState.value.searchQuery.trim()) {
         if (query.isBlank()) return
 
-        viewModelScope.launch {
+        // Cancel any existing search
+        currentSearchJob?.cancel()
+
+        currentSearchJob = viewModelScope.launch {
+            // Get all provider names to initialize loading states
+            val allProviders = try {
+                novelRepository.getProviders().map { it.name }
+            } catch (e: Exception) {
+                emptyList()
+            }
+
+            // Initialize all providers as loading
+            val initialStates = allProviders.associateWith { ProviderSearchState.Loading }
+
             _uiState.update {
                 it.copy(
                     searchQuery = query,
                     isSearching = true,
-                    searchResults = emptyMap(),
+                    providerSearchStates = initialStates,
                     expandedProvider = null,
                     hasSearched = true,
                     showSearchHistory = false
                 )
             }
 
-            val results = novelRepository.searchAll(query)
+            // Collect streaming results
+            var totalResults = 0
 
-            val successfulResults = results.mapValues { (_, result) ->
-                result.getOrNull() ?: emptyList()
-            }.filterValues { it.isNotEmpty() }
+            try {
+                novelRepository.searchAllStreaming(query).collect { (providerName, result) ->
+                    _uiState.update { state ->
+                        val newStates = state.providerSearchStates.toMutableMap()
 
-            _uiState.update {
-                it.copy(
-                    searchResults = successfulResults,
-                    isSearching = false
-                )
+                        result.fold(
+                            onSuccess = { novels ->
+                                newStates[providerName] = ProviderSearchState.Success(novels)
+                                totalResults += novels.size
+                            },
+                            onFailure = { error ->
+                                newStates[providerName] = ProviderSearchState.Error(
+                                    error.message ?: "Search failed"
+                                )
+                            }
+                        )
+
+                        // Check if all providers have completed
+                        val allCompleted = newStates.values.none { it is ProviderSearchState.Loading }
+
+                        state.copy(
+                            providerSearchStates = newStates,
+                            isSearching = !allCompleted
+                        )
+                    }
+                }
+            } catch (e: Exception) {
+                // Handle overall search failure
+                _uiState.update { state ->
+                    state.copy(isSearching = false)
+                }
             }
 
-            // Add to search history with result count
-            val totalResults = successfulResults.values.sumOf { it.size }
+            // Add to search history after all results are in
             preferencesManager.addSearchHistoryItem(
                 query = query,
-                providerName = null, // Cross-provider search
+                providerName = null,
                 resultCount = totalResults
             )
         }
     }
 
     fun clearSearch() {
+        currentSearchJob?.cancel()
+        isSearchBarFocused = false
         _uiState.update {
             it.copy(
                 searchQuery = "",
-                searchResults = emptyMap(),
+                providerSearchStates = emptyMap(),
                 hasSearched = false,
                 expandedProvider = null,
-                showFilters = false
+                showFilters = false,
+                showSearchHistory = false,
+                isSearching = false
             )
         }
     }
@@ -202,6 +253,15 @@ class BrowseViewModel : ViewModel() {
 
     fun clearSearchHistory() {
         preferencesManager.clearSearchHistory()
+    }
+
+    fun selectHistoryItem(query: String) {
+        _uiState.update {
+            it.copy(
+                searchQuery = query,
+                showSearchHistory = true
+            )
+        }
     }
 
     // ============================================================================
