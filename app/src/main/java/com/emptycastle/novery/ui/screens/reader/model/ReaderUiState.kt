@@ -233,7 +233,7 @@ data class ReaderUiState(
     val currentGlobalSentenceIndex: Int = 0,
     val ttsSettings: TTSSettingsState = TTSSettingsState(),
 
-    // NEW: Track which edge the sentence was last at for flip behavior
+    // Track which edge the sentence was last at for flip behavior
     val lastTTSScrollEdge: TTSScrollEdge = TTSScrollEdge.NONE
 ) {
     val shouldShowLoadingOverlay: Boolean

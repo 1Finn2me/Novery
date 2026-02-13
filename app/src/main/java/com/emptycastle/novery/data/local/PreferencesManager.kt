@@ -596,6 +596,9 @@ class PreferencesManager(context: Context) {
             showChapterTitle = prefs.getBoolean(KEY_SHOW_CHAPTER_TITLE, true),
 
             // Behavior
+            // TTS / behavior toggles
+            ttsAutoAdvanceChapter = prefs.getBoolean(KEY_READER_TTS_AUTO_ADVANCE, true),
+            lockScrollDuringTTS = prefs.getBoolean(KEY_READER_LOCK_SCROLL_DURING_TTS, true),
             keepScreenOn = prefs.getBoolean(KEY_READER_KEEP_SCREEN_ON, true),
             volumeKeyNavigation = prefs.getBoolean(KEY_VOLUME_KEY_NAVIGATION, false),
             volumeKeyDirection = loadVolumeKeyDirection(),
@@ -778,6 +781,8 @@ class PreferencesManager(context: Context) {
 
             // Behavior
             putBoolean(KEY_READER_KEEP_SCREEN_ON, settings.keepScreenOn)
+            putBoolean(KEY_READER_TTS_AUTO_ADVANCE, settings.ttsAutoAdvanceChapter)
+            putBoolean(KEY_READER_LOCK_SCROLL_DURING_TTS, settings.lockScrollDuringTTS)
             putBoolean(KEY_VOLUME_KEY_NAVIGATION, settings.volumeKeyNavigation)
             putString(KEY_VOLUME_KEY_DIRECTION, settings.volumeKeyDirection.id)
             putString(KEY_READING_DIRECTION, settings.readingDirection.id)
@@ -1315,6 +1320,8 @@ class PreferencesManager(context: Context) {
             put("showReadingTime", settings.showReadingTime)
             put("showChapterTitle", settings.showChapterTitle)
             put("keepScreenOn", settings.keepScreenOn)
+            put("ttsAutoAdvanceChapter", settings.ttsAutoAdvanceChapter)
+            put("lockScrollDuringTTS", settings.lockScrollDuringTTS)
             put("volumeKeyNavigation", settings.volumeKeyNavigation)
             put("volumeKeyDirection", settings.volumeKeyDirection.id)
             put("readingDirection", settings.readingDirection.id)
@@ -1557,6 +1564,8 @@ class PreferencesManager(context: Context) {
 
         // Behavior
         private const val KEY_READER_KEEP_SCREEN_ON = "reader_keep_screen_on"
+        private const val KEY_READER_TTS_AUTO_ADVANCE = "reader_tts_auto_advance"
+        private const val KEY_READER_LOCK_SCROLL_DURING_TTS = "reader_lock_scroll_during_tts"
         private const val KEY_VOLUME_KEY_NAVIGATION = "reader_volume_key_navigation"
         private const val KEY_VOLUME_KEY_DIRECTION = "reader_volume_key_direction"
         private const val KEY_READING_DIRECTION = "reader_reading_direction"

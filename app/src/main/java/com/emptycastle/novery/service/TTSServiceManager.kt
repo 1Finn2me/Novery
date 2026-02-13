@@ -42,6 +42,10 @@ object TTSServiceManager {
 
     // Track if using system voice
     private var _useSystemVoice = false
+    // Cached settings to apply when service binds
+    private var _cachedSpeechRate: Float = 1.0f
+    private var _cachedPitch: Float = 1.0f
+    private var _cachedAutoAdvance: Boolean = true
 
     private val _playbackState = MutableStateFlow(TTSPlaybackState())
     val playbackState: StateFlow<TTSPlaybackState> = _playbackState.asStateFlow()
@@ -83,6 +87,11 @@ object TTSServiceManager {
 
             // Apply current system voice setting
             service?.setUseSystemVoice(_useSystemVoice)
+
+            // Apply cached playback settings (speech rate / pitch / auto-advance)
+            service?.setSpeechRate(_cachedSpeechRate)
+            service?.setPitch(_cachedPitch)
+            service?.setAutoAdvanceEnabled(_cachedAutoAdvance)
 
             scope.launch {
                 service?.playbackState?.collect { state ->
@@ -261,18 +270,21 @@ object TTSServiceManager {
     // ================================================================
 
     fun setSpeechRate(rate: Float) {
+        _cachedSpeechRate = rate
         service?.setSpeechRate(rate)
     }
 
     fun getSpeechRate(): Float = service?.getSpeechRate() ?: 1.0f
 
     fun setPitch(pitch: Float) {
+        _cachedPitch = pitch
         service?.setPitch(pitch)
     }
 
     fun getPitch(): Float = service?.getPitch() ?: 1.0f
 
     fun setAutoAdvanceEnabled(enabled: Boolean) {
+        _cachedAutoAdvance = enabled
         service?.setAutoAdvanceEnabled(enabled)
     }
 
