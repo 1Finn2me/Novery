@@ -1,10 +1,9 @@
-// com/emptycastle/novery/data/backup/BackupManager.kt
-
 package com.emptycastle.novery.data.backup
 
 import android.content.Context
 import android.net.Uri
 import android.os.Build
+import com.emptycastle.novery.data.backup.quicknovel.QuickNovelBackupConverter
 import com.emptycastle.novery.data.local.NovelDatabase
 import com.emptycastle.novery.data.local.PreferencesManager
 import com.emptycastle.novery.data.local.entity.BookmarkEntity
@@ -56,6 +55,9 @@ class BackupManager(
         encodeDefaults = true
         isLenient = true
     }
+
+    // QuickNovel backup converter
+    private val quickNovelConverter = QuickNovelBackupConverter()
 
     // ================================================================
     // CREATE BACKUP
@@ -124,12 +126,32 @@ class BackupManager(
 
     /**
      * Parse backup metadata without fully restoring
+     * Supports both Novery and QuickNovel formats
      */
     suspend fun parseBackupMetadata(uri: Uri): Result<BackupMetadata> = withContext(Dispatchers.IO) {
         try {
             val backupJson = readFromUri(uri)
                 ?: return@withContext Result.failure(Exception("Could not read backup file"))
 
+            // Check if it's a QuickNovel backup
+            if (quickNovelConverter.isQuickNovelBackup(backupJson)) {
+                val converted = quickNovelConverter.convert(backupJson)
+                return@withContext Result.success(BackupMetadata(
+                    version = converted.version,
+                    createdAt = converted.createdAt,
+                    appVersion = "QuickNovel Import",
+                    deviceInfo = converted.deviceInfo,
+                    libraryCount = converted.library.size,
+                    bookmarkCount = converted.bookmarks.size,
+                    historyCount = converted.history.size,
+                    readChaptersCount = converted.readChapters.size,
+                    hasSettings = converted.appSettings != null,
+                    hasStatistics = false,
+                    sourceApp = "QuickNovel"
+                ))
+            }
+
+            // Regular Novery backup
             val backup = json.decodeFromString<BackupData>(backupJson)
 
             Result.success(BackupMetadata(
@@ -140,8 +162,10 @@ class BackupManager(
                 libraryCount = backup.library.size,
                 bookmarkCount = backup.bookmarks.size,
                 historyCount = backup.history.size,
+                readChaptersCount = backup.readChapters.size,
                 hasSettings = backup.appSettings != null,
-                hasStatistics = backup.readingStats.isNotEmpty() || backup.readingStreak != null
+                hasStatistics = backup.readingStats.isNotEmpty() || backup.readingStreak != null,
+                sourceApp = "Novery"
             ))
         } catch (e: Exception) {
             Result.failure(e)
@@ -150,6 +174,7 @@ class BackupManager(
 
     /**
      * Restore backup from URI with options
+     * Supports both Novery and QuickNovel formats
      */
     suspend fun restoreFromUri(
         uri: Uri,
@@ -163,7 +188,12 @@ class BackupManager(
                 )
 
             val backup = try {
-                json.decodeFromString<BackupData>(backupJson)
+                // Check if it's a QuickNovel backup and convert it
+                if (quickNovelConverter.isQuickNovelBackup(backupJson)) {
+                    quickNovelConverter.convert(backupJson)
+                } else {
+                    json.decodeFromString<BackupData>(backupJson)
+                }
             } catch (e: Exception) {
                 return@withContext RestoreResult(
                     success = false,
@@ -171,8 +201,9 @@ class BackupManager(
                 )
             }
 
-            // Validate version
-            if (backup.version > BackupData.CURRENT_VERSION) {
+            // Validate version (only for native Novery backups)
+            if (backup.appVersion != "QuickNovel Import" &&
+                backup.version > BackupData.CURRENT_VERSION) {
                 return@withContext RestoreResult(
                     success = false,
                     error = "Backup version ${backup.version} is newer than supported version ${BackupData.CURRENT_VERSION}"
@@ -196,7 +227,11 @@ class BackupManager(
         options: RestoreOptions = RestoreOptions()
     ): RestoreResult = withContext(Dispatchers.IO) {
         try {
-            val backup = json.decodeFromString<BackupData>(backupJson)
+            val backup = if (quickNovelConverter.isQuickNovelBackup(backupJson)) {
+                quickNovelConverter.convert(backupJson)
+            } else {
+                json.decodeFromString<BackupData>(backupJson)
+            }
             restoreBackup(backup, options)
         } catch (e: Exception) {
             RestoreResult(

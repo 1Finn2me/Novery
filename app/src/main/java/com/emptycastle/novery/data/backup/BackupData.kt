@@ -1,5 +1,3 @@
-// com/emptycastle/novery/data/backup/BackupData.kt
-
 package com.emptycastle.novery.data.backup
 
 import kotlinx.serialization.Serializable
@@ -245,6 +243,11 @@ data class BackupMetadata(
     val libraryCount: Int,
     val bookmarkCount: Int,
     val historyCount: Int,
+    val readChaptersCount: Int = 0,
     val hasSettings: Boolean,
-    val hasStatistics: Boolean
-)
+    val hasStatistics: Boolean,
+    val sourceApp: String = "Novery" // "Novery" or "QuickNovel"
+) {
+    val isQuickNovelBackup: Boolean
+        get() = sourceApp == "QuickNovel"
+}
