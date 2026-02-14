@@ -35,5 +35,5 @@ local.properties
 *.keystore
 keystore.properties
 
-# Release APKs (we upload these to GitHub Releases, not the repo)
+# Release APKs
 release/
