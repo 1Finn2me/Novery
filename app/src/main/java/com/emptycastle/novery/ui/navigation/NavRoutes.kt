@@ -30,6 +30,8 @@ sealed class NavRoutes(val route: String) {
 
     object Downloads : NavRoutes("more/downloads")
 
+    object About : NavRoutes("more/about")
+
     // ================================================================
     // READER DESTINATIONS
     // ================================================================

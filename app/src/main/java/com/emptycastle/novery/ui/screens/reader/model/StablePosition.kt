@@ -2,7 +2,6 @@ package com.emptycastle.novery.ui.screens.reader.model
 
 /**
  * Stable scroll position that survives content changes.
- * Uses character-offset approach from QuickNovel pattern.
  */
 data class StableScrollPosition(
     val chapterIndex: Int,

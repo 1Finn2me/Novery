@@ -4,25 +4,22 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    
-    <!-- Shadow/depth layer -->
-    <path
-        android:pathData="M30,38 L78,38 L78,82 L54,90 L30,82 Z"
-        android:fillColor="#22000000"/>
 
-    <!-- Left page of book -->
+    <!-- ══════ BOOK STRUCTURE ══════ -->
+
+    <!-- Left page -->
     <path
         android:pathData="M28,35 Q28,30 33,30 L51,30 L51,75 Q51,78 48,78 L33,78 Q28,78 28,73 Z"
         android:fillColor="#FFFFFF"
         android:fillAlpha="0.98"/>
 
-    <!-- Right page of book -->
+    <!-- Right page -->
     <path
         android:pathData="M57,30 L75,30 Q80,30 80,35 L80,73 Q80,78 75,78 L60,78 Q57,78 57,75 Z"
         android:fillColor="#FFFFFF"
         android:fillAlpha="0.98"/>
 
-    <!-- Book spine/center fold -->
+    <!-- Spine -->
     <path
         android:pathData="M51,30 L57,30 L57,78 L51,78 Z">
         <aapt:attr name="android:fillColor">
@@ -32,101 +29,76 @@
                 android:endX="57"
                 android:endY="54"
                 android:type="linear">
-                <item
-                    android:color="#FED7AA"
-                    android:offset="0.0" />
-                <item
-                    android:color="#FFF7ED"
-                    android:offset="0.5" />
-                <item
-                    android:color="#FED7AA"
-                    android:offset="1.0" />
+                <item android:color="#FED7AA" android:offset="0.0"/>
+                <item android:color="#FFF7ED" android:offset="0.5"/>
+                <item android:color="#FED7AA" android:offset="1.0"/>
             </gradient>
         </aapt:attr>
     </path>
 
-    <!-- Decorative bookmark ribbon -->
+    <!-- Bookmark ribbon -->
     <path
         android:pathData="M52,28 L56,28 L56,50 L54,47 L52,50 Z"
         android:fillColor="#FBBF24"/>
 
-    <!-- Left page text lines (decorative) -->
-    <path
-        android:pathData="M35,40 L46,40"
-        android:strokeColor="#F97316"
-        android:strokeWidth="1.5"
-        android:strokeAlpha="0.25"
-        android:strokeLineCap="round"/>
-    <path
-        android:pathData="M35,46 L46,46"
-        android:strokeColor="#F97316"
-        android:strokeWidth="1.5"
-        android:strokeAlpha="0.25"
-        android:strokeLineCap="round"/>
-    <path
-        android:pathData="M35,52 L46,52"
-        android:strokeColor="#F97316"
-        android:strokeWidth="1.5"
-        android:strokeAlpha="0.25"
-        android:strokeLineCap="round"/>
-    <path
-        android:pathData="M35,58 L46,58"
-        android:strokeColor="#F97316"
-        android:strokeWidth="1.5"
-        android:strokeAlpha="0.25"
-        android:strokeLineCap="round"/>
-    <path
-        android:pathData="M35,64 L46,64"
-        android:strokeColor="#F97316"
-        android:strokeWidth="1.5"
-        android:strokeAlpha="0.25"
-        android:strokeLineCap="round"/>
-
-    <!-- Right page text lines (decorative) -->
-    <path
-        android:pathData="M62,40 L73,40"
-        android:strokeColor="#EA580C"
-        android:strokeWidth="1.5"
-        android:strokeAlpha="0.25"
-        android:strokeLineCap="round"/>
-    <path
-        android:pathData="M62,46 L73,46"
-        android:strokeColor="#EA580C"
-        android:strokeWidth="1.5"
-        android:strokeAlpha="0.25"
-        android:strokeLineCap="round"/>
-    <path
-        android:pathData="M62,52 L73,52"
-        android:strokeColor="#EA580C"
-        android:strokeWidth="1.5"
-        android:strokeAlpha="0.25"
-        android:strokeLineCap="round"/>
-    <path
-        android:pathData="M62,58 L73,58"
-        android:strokeColor="#EA580C"
-        android:strokeWidth="1.5"
-        android:strokeAlpha="0.25"
-        android:strokeLineCap="round"/>
-    <path
-        android:pathData="M62,64 L73,64"
-        android:strokeColor="#EA580C"
-        android:strokeWidth="1.5"
-        android:strokeAlpha="0.25"
-        android:strokeLineCap="round"/>
-
-    <!-- Highlight shine effect -->
+    <!-- Page shine -->
     <path
         android:pathData="M33,32 Q38,32 40,34 L40,70 Q38,72 33,72 L33,32 Z"
         android:fillColor="#FFFFFF"
         android:fillAlpha="0.2"/>
 
-    <!-- Bottom "N" monogram/accent -->
+    <!-- ══════ LEFT PAGE RUNES: ᚾ ᛟ ᚢ ══════ -->
+
+    <!-- ᚾ (Naudhiz / N) — vertical stave + diagonal -->
     <path
-        android:pathData="M45,68 L45,73 M45,68 L50,73 M50,68 L50,73"
-        android:strokeColor="#FFFFFF"
-        android:strokeWidth="2.5"
+        android:pathData="M40,34 L40,46 M35,44 L45,36"
+        android:strokeColor="#92400E"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"/>
+
+    <!-- ᛟ (Othala / O) — diamond outline + two legs -->
+    <path
+        android:pathData="M40,48 L45,52 L40,56 L35,52 Z"
+        android:strokeColor="#92400E"
+        android:strokeWidth="2"
         android:strokeLineCap="round"
         android:strokeLineJoin="round"
-        android:strokeAlpha="0.8"/>
+        android:fillColor="#00000000"/>
+    <path
+        android:pathData="M40,56 L36,60 M40,56 L44,60"
+        android:strokeColor="#92400E"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"/>
+
+    <!-- ᚢ (Uruz / U) — angular arch -->
+    <path
+        android:pathData="M36,62 L36,74 M36,62 L44,62 M44,62 L36,74"
+        android:strokeColor="#92400E"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"/>
+
+    <!-- ══════ RIGHT PAGE RUNES: ᛖ ᚱ ᛁ ══════ -->
+
+    <!-- ᛖ (Ehwaz / E) — two staves + crossing diagonals -->
+    <path
+        android:pathData="M64,34 L64,46 M72,34 L72,46 M64,38 L72,42 M64,42 L72,38"
+        android:strokeColor="#92400E"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"/>
+
+    <!-- ᚱ (Raido / R) — stave + angular branch -->
+    <path
+        android:pathData="M64,48 L64,60 M64,48 L72,52 L64,56"
+        android:strokeColor="#92400E"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"/>
+
+    <!-- ᛁ (Isa / I) — single stave -->
+    <path
+        android:pathData="M68,62 L68,74"
+        android:strokeColor="#92400E"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"/>
 
 </vector>

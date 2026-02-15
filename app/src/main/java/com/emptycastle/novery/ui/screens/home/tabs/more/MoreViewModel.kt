@@ -1,5 +1,3 @@
-// ui/screens/home/tabs/more/MoreViewModel.kt
-
 package com.emptycastle.novery.ui.screens.home.tabs.more
 
 import androidx.lifecycle.ViewModel

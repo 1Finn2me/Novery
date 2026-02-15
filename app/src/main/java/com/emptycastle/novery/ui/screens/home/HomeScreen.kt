@@ -33,6 +33,7 @@ fun HomeScreen(
     onNavigateToNotifications: () -> Unit,
     onNavigateToProfile: () -> Unit,
     onNavigateToDownloads: () -> Unit,
+    onNavigateToAbout: () -> Unit,
     onNavigateToOnboarding: () -> Unit = {}
 ) {
     // Initialize shared state
@@ -112,6 +113,7 @@ fun HomeScreen(
                     MoreTab(
                         onNavigateToProfile = onNavigateToProfile,
                         onNavigateToDownloads = onNavigateToDownloads,
+                        onNavigateToAbout = { onNavigateToAbout() },
                         onNavigateToSettings = onNavigateToSettings
                     )
                 }

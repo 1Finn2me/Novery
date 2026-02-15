@@ -1,5 +1,3 @@
-// ui/screens/home/tabs/more/MoreTab.kt
-
 package com.emptycastle.novery.ui.screens.home.tabs.more
 
 import androidx.compose.foundation.background
@@ -17,19 +15,15 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
-import androidx.compose.material.icons.rounded.AutoStories
 import androidx.compose.material.icons.rounded.CloudDownload
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Insights
 import androidx.compose.material.icons.rounded.LocalFireDepartment
-import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -57,6 +51,7 @@ fun MoreTab(
     onNavigateToProfile: () -> Unit,
     onNavigateToDownloads: () -> Unit,
     onNavigateToSettings: () -> Unit,
+    onNavigateToAbout: () -> Unit,
     modifier: Modifier = Modifier,
     viewModel: MoreViewModel = viewModel()
 ) {
@@ -174,9 +169,9 @@ fun MoreTab(
             MoreMenuItem(
                 icon = Icons.Rounded.Info,
                 title = "About Novery",
-                subtitle = "Version info and credits",
+                subtitle = "Version info, updates, and credits",
                 iconTint = Color(0xFF3B82F6),
-                onClick = { /* TODO: Navigate to about */ },
+                onClick = onNavigateToAbout,
                 modifier = Modifier.padding(horizontal = dimensions.gridPadding)
             )
         }

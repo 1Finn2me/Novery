@@ -14,6 +14,7 @@ import com.emptycastle.novery.data.local.NovelDatabase
 import com.emptycastle.novery.data.local.PreferencesManager
 import com.emptycastle.novery.data.repository.RepositoryProvider
 import com.emptycastle.novery.domain.model.AppSettings
+import com.emptycastle.novery.ui.screens.about.AboutScreen
 import com.emptycastle.novery.ui.screens.details.DetailsScreen
 import com.emptycastle.novery.ui.screens.downloads.DownloadsScreen
 import com.emptycastle.novery.ui.screens.home.HomeScreen
@@ -94,6 +95,9 @@ fun NoveryNavGraph(
                 onNavigateToDownloads = {
                     navController.navigate(NavRoutes.Downloads.route)
                 },
+                onNavigateToAbout = {
+                    navController.navigate(NavRoutes.About.route)
+                },
                 onNavigateToOnboarding = {
                     navController.navigate(NavRoutes.Onboarding.route)
                 }
@@ -173,6 +177,15 @@ fun NoveryNavGraph(
                         NavRoutes.Details.createRoute(novelUrl, providerName)
                     )
                 }
+            )
+        }
+
+        // ================================================================
+        // ABOUT
+        // ================================================================
+        composable(route = NavRoutes.About.route) {
+            AboutScreen(
+                onBack = { navController.popBackStack() }
             )
         }
 
