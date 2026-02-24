@@ -1,6 +1,3 @@
-// com/emptycastle/novery/data/local/entity/LibraryEntity.kt
-// REPLACE your existing file with this enhanced version
-
 package com.emptycastle.novery.data.local.entity
 
 import androidx.room.Entity

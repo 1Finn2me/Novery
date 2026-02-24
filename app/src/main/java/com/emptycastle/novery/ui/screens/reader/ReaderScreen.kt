@@ -106,6 +106,9 @@ fun ReaderScreen(
     // Auto-hide controls timer
     var autoHideJob by remember { mutableStateOf<Job?>(null) }
 
+    var lastTapTime by remember { mutableStateOf(0L) }
+    val tapDebounceMs = 300L
+
     // Initialize context for TTS
     LaunchedEffect(Unit) {
         viewModel.setContext(context)
@@ -490,7 +493,10 @@ fun ReaderScreen(
         onTTSUseSystemVoiceChange = viewModel::updateTTSUseSystemVoice,
         onPrevious = viewModel::navigateToPrevious,
         onNext = viewModel::navigateToNext,
-        onConfirmScrollReset = viewModel::confirmScrollReset
+        onConfirmScrollReset = viewModel::confirmScrollReset,
+        lastTapTime = lastTapTime,  // ADD THIS
+        tapDebounceMs = tapDebounceMs,  // ADD THIS
+        onTapTimeUpdate = { lastTapTime = it }  // ADD THIS
     )
 }
 
@@ -665,7 +671,10 @@ private fun ReaderScreenContent(
     onTTSUseSystemVoiceChange: (Boolean) -> Unit,
     onPrevious: () -> Unit,
     onNext: () -> Unit,
-    onConfirmScrollReset: () -> Unit
+    onConfirmScrollReset: () -> Unit,
+    lastTapTime: Long,
+    tapDebounceMs: Long,
+    onTapTimeUpdate: (Long) -> Unit
 ) {
     val tapZones = uiState.settings.tapZones
     val isContinuousMode = uiState.settings.scrollMode == ScrollMode.CONTINUOUS
@@ -735,26 +744,35 @@ private fun ReaderScreenContent(
                                 if (contentVisible) {
                                     detectTapGestures(
                                         onDoubleTap = { offset ->
-                                            onTapAction(tapZones.doubleTapAction)
+                                            val now = System.currentTimeMillis()
+                                            if (now - lastTapTime > tapDebounceMs) {
+                                                onTapTimeUpdate(now)
+                                                onTapAction(tapZones.doubleTapAction)
+                                            }
                                         },
                                         onTap = { offset ->
-                                            val width = size.width.toFloat()
-                                            val height = size.height.toFloat()
+                                            val now = System.currentTimeMillis()
+                                            if (now - lastTapTime > tapDebounceMs) {
+                                                onTapTimeUpdate(now)
 
-                                            val leftZoneWidth = width * tapZones.horizontalZoneRatio
-                                            val rightZoneStart = width * (1 - tapZones.horizontalZoneRatio)
-                                            val topZoneHeight = height * tapZones.verticalZoneRatio
-                                            val bottomZoneStart = height * (1 - tapZones.verticalZoneRatio)
+                                                val width = size.width.toFloat()
+                                                val height = size.height.toFloat()
 
-                                            val action = when {
-                                                offset.y < topZoneHeight -> tapZones.topZoneAction
-                                                offset.y > bottomZoneStart -> tapZones.bottomZoneAction
-                                                offset.x < leftZoneWidth -> tapZones.leftZoneAction
-                                                offset.x > rightZoneStart -> tapZones.rightZoneAction
-                                                else -> tapZones.centerZoneAction
+                                                val leftZoneWidth = width * tapZones.horizontalZoneRatio
+                                                val rightZoneStart = width * (1 - tapZones.horizontalZoneRatio)
+                                                val topZoneHeight = height * tapZones.verticalZoneRatio
+                                                val bottomZoneStart = height * (1 - tapZones.verticalZoneRatio)
+
+                                                val action = when {
+                                                    offset.y < topZoneHeight -> tapZones.topZoneAction
+                                                    offset.y > bottomZoneStart -> tapZones.bottomZoneAction
+                                                    offset.x < leftZoneWidth -> tapZones.leftZoneAction
+                                                    offset.x > rightZoneStart -> tapZones.rightZoneAction
+                                                    else -> tapZones.centerZoneAction
+                                                }
+
+                                                onTapAction(action)
                                             }
-
-                                            onTapAction(action)
                                         }
                                     )
                                 }

@@ -8,6 +8,7 @@ import com.emptycastle.novery.domain.model.DisplayMode
 import com.emptycastle.novery.domain.model.FontFamily
 import com.emptycastle.novery.domain.model.FontWeight
 import com.emptycastle.novery.domain.model.GridColumns
+import com.emptycastle.novery.domain.model.ImportedBooksDisplay
 import com.emptycastle.novery.domain.model.LibraryFilter
 import com.emptycastle.novery.domain.model.LibrarySortOrder
 import com.emptycastle.novery.domain.model.MaxWidth
@@ -1055,6 +1056,32 @@ class PreferencesManager(context: Context) {
     }
 
     // =========================================================================
+    // EPUB IMPORT SETTINGS
+    // =========================================================================
+
+    /**
+     * Whether to show the import EPUB button in library
+     */
+    fun getShowImportButton(): Boolean = prefs.getBoolean(KEY_SHOW_IMPORT_BUTTON, true)
+
+    fun setShowImportButton(show: Boolean) {
+        prefs.edit().putBoolean(KEY_SHOW_IMPORT_BUTTON, show).apply()
+    }
+
+    /**
+     * How imported books are displayed in library
+     * Options: "mixed" (Option A), "filter" (Option B), "section" (Option C)
+     */
+    fun getImportedBooksDisplay(): ImportedBooksDisplay {
+        val value = prefs.getString(KEY_IMPORTED_BOOKS_DISPLAY, ImportedBooksDisplay.MIXED.id)
+        return ImportedBooksDisplay.fromId(value ?: ImportedBooksDisplay.MIXED.id)
+    }
+
+    fun setImportedBooksDisplay(display: ImportedBooksDisplay) {
+        prefs.edit().putString(KEY_IMPORTED_BOOKS_DISPLAY, display.id).apply()
+    }
+
+    // =========================================================================
     // READING GOALS
     // =========================================================================
 
@@ -1634,6 +1661,13 @@ class PreferencesManager(context: Context) {
         private const val KEY_CHAPTER_SORT_DESCENDING = "chapter_sort_descending"
         private const val KEY_CHAPTER_DISPLAY_MODE = "chapter_display_mode"
         private const val KEY_CHAPTERS_PER_PAGE = "chapters_per_page"
+
+        // =====================================================================
+        // EPUB IMPORT SETTINGS KEYS
+        // =====================================================================
+
+        private const val KEY_SHOW_IMPORT_BUTTON = "show_import_button"
+        private const val KEY_IMPORTED_BOOKS_DISPLAY = "imported_books_display"
 
         // =====================================================================
         // READING GOALS

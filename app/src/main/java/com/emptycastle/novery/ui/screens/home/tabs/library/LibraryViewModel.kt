@@ -3,11 +3,15 @@ package com.emptycastle.novery.ui.screens.home.tabs.library
 import android.content.Context
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
+import android.net.Uri
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.emptycastle.novery.data.repository.EpubImportRepository
 import com.emptycastle.novery.data.repository.LibraryItem
+import com.emptycastle.novery.data.repository.LibraryRepository
 import com.emptycastle.novery.data.repository.RepositoryProvider
+import com.emptycastle.novery.domain.model.ImportedBooksDisplay
 import com.emptycastle.novery.domain.model.LibraryFilter
 import com.emptycastle.novery.domain.model.LibrarySortOrder
 import com.emptycastle.novery.domain.model.ReadingStatus
@@ -31,6 +35,7 @@ class LibraryViewModel : ViewModel() {
     private val novelRepository = RepositoryProvider.getNovelRepository()
     private val preferencesManager = RepositoryProvider.getPreferencesManager()
     private val notificationRepository = RepositoryProvider.getNotificationRepository()
+    private val epubImportRepository by lazy { RepositoryProvider.getEpubImportRepository() }
 
     private val _uiState = MutableStateFlow(LibraryUiState())
     val uiState: StateFlow<LibraryUiState> = _uiState.asStateFlow()
@@ -41,6 +46,7 @@ class LibraryViewModel : ViewModel() {
     init {
         initialize()
         observeNewChapterCount()
+        loadImportSettings()
 
         viewModelScope.launch {
             preferencesManager.appSettings.collect { settings ->
@@ -52,6 +58,15 @@ class LibraryViewModel : ViewModel() {
                 }
                 applyFilters()
             }
+        }
+    }
+
+    private fun loadImportSettings() {
+        _uiState.update {
+            it.copy(
+                showImportButton = preferencesManager.getShowImportButton(),
+                importedBooksDisplay = preferencesManager.getImportedBooksDisplay()
+            )
         }
     }
 
@@ -102,6 +117,41 @@ class LibraryViewModel : ViewModel() {
     }
 
     // ================================================================
+    // SECTION MODE
+    // ================================================================
+
+    fun setSelectedSection(section: LibrarySection) {
+        _uiState.update { it.copy(selectedSection = section) }
+        applyFilters()
+    }
+
+    // ================================================================
+    // IMPORTED NOVEL HELPERS
+    // ================================================================
+
+    /**
+     * Check if a novel is imported (local EPUB)
+     */
+    fun isImportedNovel(novelUrl: String): Boolean {
+        return epubImportRepository.isImportedNovel(novelUrl)
+    }
+
+    /**
+     * Check if a novel is imported by checking the apiName
+     */
+    fun isImportedNovelByProvider(apiName: String): Boolean {
+        return apiName == LibraryRepository.IMPORTED_PROVIDER_NAME
+    }
+
+    /**
+     * Get the first chapter URL for an imported novel
+     */
+    suspend fun getFirstChapterUrl(novelUrl: String): String? {
+        val details = offlineRepository.getNovelDetails(novelUrl)
+        return details?.chapters?.firstOrNull()?.url
+    }
+
+    // ================================================================
     // FILTER & SORT
     // ================================================================
 
@@ -124,23 +174,67 @@ class LibraryViewModel : ViewModel() {
         val state = _uiState.value
         val searchQuery = state.searchQuery.lowercase().trim()
         val downloadCounts = state.downloadCounts
+        val displayMode = state.importedBooksDisplay
+
+        // First, separate items based on display mode
+        val (baseItems, shouldShowImportedFilter) = when (displayMode) {
+            ImportedBooksDisplay.MIXED -> {
+                // MIXED: All items together, no special filtering
+                state.items to false
+            }
+            ImportedBooksDisplay.FILTER -> {
+                // FILTER: When IMPORTED filter selected, show only imported
+                // When other filters selected, exclude imported
+                if (state.filter == LibraryFilter.IMPORTED) {
+                    state.items.filter {
+                        it.novel.apiName == LibraryRepository.IMPORTED_PROVIDER_NAME
+                    } to true
+                } else {
+                    state.items.filter {
+                        it.novel.apiName != LibraryRepository.IMPORTED_PROVIDER_NAME
+                    } to true
+                }
+            }
+            ImportedBooksDisplay.SECTION -> {
+                // SECTION: Filter based on selected section
+                when (state.selectedSection) {
+                    LibrarySection.ONLINE -> state.items.filter {
+                        it.novel.apiName != LibraryRepository.IMPORTED_PROVIDER_NAME
+                    }
+                    LibrarySection.LOCAL -> state.items.filter {
+                        it.novel.apiName == LibraryRepository.IMPORTED_PROVIDER_NAME
+                    }
+                } to false
+            }
+        }
 
         // Search filter
         val searched = if (searchQuery.isBlank()) {
-            state.items
+            baseItems
         } else {
-            state.items.filter { item ->
+            baseItems.filter { item ->
                 item.novel.name.lowercase().contains(searchQuery) ||
                         item.novel.apiName.lowercase().contains(searchQuery) ||
                         item.readingStatus.displayName().lowercase().contains(searchQuery)
             }
         }
 
-        // Category filter
+        // Category filter (skip IMPORTED filter in FILTER mode since we already handled it)
         val filtered = when (state.filter) {
             LibraryFilter.ALL -> searched
             LibraryFilter.DOWNLOADED -> searched.filter {
                 (downloadCounts[it.novel.url] ?: 0) > 0
+            }
+            LibraryFilter.IMPORTED -> {
+                // In FILTER mode, this is already handled above
+                // In other modes, filter to imported only
+                if (displayMode == ImportedBooksDisplay.FILTER) {
+                    searched
+                } else {
+                    searched.filter {
+                        it.novel.apiName == LibraryRepository.IMPORTED_PROVIDER_NAME
+                    }
+                }
             }
             LibraryFilter.READING -> searched.filter { it.readingStatus == ReadingStatus.READING }
             LibraryFilter.COMPLETED -> searched.filter { it.readingStatus == ReadingStatus.COMPLETED }
@@ -149,31 +243,71 @@ class LibraryViewModel : ViewModel() {
             LibraryFilter.DROPPED -> searched.filter { it.readingStatus == ReadingStatus.DROPPED }
         }
 
-        // Sort - NO new chapter priority except for NEW_CHAPTERS sort
+        // Sort
         val sorted = when (state.sortOrder) {
-            LibrarySortOrder.NEW_CHAPTERS -> {
-                // Only this sort prioritizes new chapters
-                filtered.sortedByDescending { it.newChapterCount }
+            LibrarySortOrder.NEW_CHAPTERS -> filtered.sortedByDescending { it.newChapterCount }
+            LibrarySortOrder.LAST_READ -> filtered.sortedByDescending {
+                it.lastReadPosition?.timestamp ?: it.addedAt
             }
-            LibrarySortOrder.LAST_READ -> {
-                // Pure last read sorting - no new chapter priority
-                filtered.sortedByDescending { it.lastReadPosition?.timestamp ?: it.addedAt }
-            }
-            LibrarySortOrder.TITLE_ASC -> {
-                filtered.sortedBy { it.novel.name.lowercase() }
-            }
-            LibrarySortOrder.TITLE_DESC -> {
-                filtered.sortedByDescending { it.novel.name.lowercase() }
-            }
-            LibrarySortOrder.DATE_ADDED -> {
-                filtered.sortedByDescending { it.addedAt }
-            }
-            LibrarySortOrder.UNREAD_COUNT -> {
-                filtered.sortedByDescending { it.unreadChapterCount }
-            }
+            LibrarySortOrder.TITLE_ASC -> filtered.sortedBy { it.novel.name.lowercase() }
+            LibrarySortOrder.TITLE_DESC -> filtered.sortedByDescending { it.novel.name.lowercase() }
+            LibrarySortOrder.DATE_ADDED -> filtered.sortedByDescending { it.addedAt }
+            LibrarySortOrder.UNREAD_COUNT -> filtered.sortedByDescending { it.unreadChapterCount }
         }
 
         _uiState.update { it.copy(filteredItems = sorted) }
+    }
+
+    // ================================================================
+    // EPUB IMPORT
+    // ================================================================
+
+    fun importEpub(uri: Uri) {
+        if (_uiState.value.isImporting) return
+
+        viewModelScope.launch {
+            _uiState.update {
+                it.copy(
+                    isImporting = true,
+                    importProgress = EpubImportRepository.ImportProgress(0f, "Starting import...")
+                )
+            }
+
+            try {
+                val result = epubImportRepository.importEpub(uri) { progress ->
+                    _uiState.update { it.copy(importProgress = progress) }
+                }
+
+                result.fold(
+                    onSuccess = { novel ->
+                        _uiState.update {
+                            it.copy(
+                                isImporting = false,
+                                importProgress = null,
+                                error = null
+                            )
+                        }
+                    },
+                    onFailure = { error ->
+                        _uiState.update {
+                            it.copy(
+                                isImporting = false,
+                                importProgress = null,
+                                error = error.message ?: "Import failed"
+                            )
+                        }
+                    }
+                )
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(
+                        isImporting = false,
+                        importProgress = null,
+                        error = e.message ?: "Import failed"
+                    )
+                }
+            }
+        }
     }
 
     // ================================================================
@@ -257,6 +391,11 @@ class LibraryViewModel : ViewModel() {
         currentIndex: Int,
         totalNovels: Int
     ) {
+        // Skip imported novels - they're already fully downloaded
+        if (item.novel.apiName == LibraryRepository.IMPORTED_PROVIDER_NAME) {
+            return
+        }
+
         val provider = novelRepository.getProvider(item.novel.apiName)
         if (provider == null) {
             Log.w(TAG, "Provider not found for ${item.novel.apiName}")
@@ -354,6 +493,7 @@ class LibraryViewModel : ViewModel() {
 
                 val eligibleNovels = _uiState.value.items.filter { item ->
                     item.hasNewChapters &&
+                            item.novel.apiName != LibraryRepository.IMPORTED_PROVIDER_NAME &&
                             settings.autoDownloadForStatuses.contains(item.readingStatus)
                 }
 
@@ -422,6 +562,7 @@ class LibraryViewModel : ViewModel() {
             val filterDisplayName = when (currentFilter) {
                 LibraryFilter.ALL -> "all novels"
                 LibraryFilter.DOWNLOADED -> "downloaded novels"
+                LibraryFilter.IMPORTED -> "imported novels"
                 LibraryFilter.READING -> "reading novels"
                 LibraryFilter.COMPLETED -> "completed novels"
                 LibraryFilter.ON_HOLD -> "on-hold novels"
@@ -564,7 +705,12 @@ class LibraryViewModel : ViewModel() {
     fun removeFromLibrary(novelUrl: String) {
         viewModelScope.launch {
             try {
-                actionSheetManager.removeFromLibrary(novelUrl)
+                // If it's an imported novel, also delete the imported data
+                if (isImportedNovel(novelUrl)) {
+                    epubImportRepository.deleteImportedNovel(novelUrl)
+                } else {
+                    actionSheetManager.removeFromLibrary(novelUrl)
+                }
             } catch (e: Exception) {
                 Log.e(TAG, "Error removing from library: $novelUrl", e)
             }

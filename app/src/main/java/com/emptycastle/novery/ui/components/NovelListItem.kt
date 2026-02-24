@@ -25,7 +25,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -40,6 +39,7 @@ import androidx.compose.material.icons.outlined.MenuBook
 import androidx.compose.material.icons.rounded.AutoStories
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.NewReleases
+import androidx.compose.material.icons.rounded.PhoneAndroid
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
@@ -145,7 +145,8 @@ fun NovelListItem(
     readingStatus: ReadingStatus? = null,
     lastReadChapter: String? = null,
     showApiName: Boolean = false,
-    isSelected: Boolean = false
+    isSelected: Boolean = false,
+    showLocalBadge: Boolean = false
 ) {
     val haptic = LocalHapticFeedback.current
     val interactionSource = remember { MutableInteractionSource() }
@@ -341,28 +342,38 @@ fun NovelListItem(
                     }
                 }
 
-                // Bottom row: Status + Last read chapter
+                // Bottom row: Status + Last read chapter + Local badge
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // Status badge (not in compact mode - it's shown on image)
-                    AnimatedVisibility(
-                        visible = readingStatus != null && density != UiDensity.COMPACT,
-                        enter = fadeIn() + slideInHorizontally { -it },
-                        exit = fadeOut() + slideOutHorizontally { -it }
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        readingStatus?.let {
-                            ListStatusBadge(
-                                status = it,
-                                compact = false
-                            )
+                        // Status badge (not in compact mode - it's shown on image)
+                        AnimatedVisibility(
+                            visible = readingStatus != null && density != UiDensity.COMPACT,
+                            enter = fadeIn() + slideInHorizontally { -it },
+                            exit = fadeOut() + slideOutHorizontally { -it }
+                        ) {
+                            readingStatus?.let {
+                                ListStatusBadge(
+                                    status = it,
+                                    compact = false
+                                )
+                            }
                         }
-                    }
 
-                    if (readingStatus == null || density == UiDensity.COMPACT) {
-                        Spacer(modifier = Modifier.width(1.dp))
+                        // Local badge
+                        AnimatedVisibility(
+                            visible = showLocalBadge,
+                            enter = fadeIn() + scaleIn(),
+                            exit = fadeOut() + scaleOut()
+                        ) {
+                            ListLocalBadge()
+                        }
                     }
 
                     // Last read chapter with styled indicator
@@ -592,6 +603,40 @@ private fun ListStatusDot(
                     .size(ListItemTokens.StatusDotSize)
                     .shadow(2.dp, CircleShape)
                     .background(statusColor, CircleShape)
+            )
+        }
+    }
+}
+
+@Composable
+private fun ListLocalBadge(
+    modifier: Modifier = Modifier
+) {
+    val localColor = Color(0xFF9333EA) // Purple for local/imported
+
+    Surface(
+        modifier = modifier,
+        shape = ListItemTokens.BadgeShape,
+        color = localColor.copy(alpha = 0.15f),
+        shadowElevation = 1.dp
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.PhoneAndroid,
+                contentDescription = null,
+                modifier = Modifier.size(12.dp),
+                tint = localColor
+            )
+            Text(
+                text = "Local",
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.SemiBold,
+                color = localColor,
+                fontSize = 10.sp
             )
         }
     }

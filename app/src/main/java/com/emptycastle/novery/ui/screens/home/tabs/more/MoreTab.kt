@@ -168,8 +168,8 @@ fun MoreTab(
         item(key = "about_menu") {
             MoreMenuItem(
                 icon = Icons.Rounded.Info,
-                title = "About Novery",
-                subtitle = "Version info, updates, and credits",
+                title = "About",
+                subtitle = "App info",
                 iconTint = Color(0xFF3B82F6),
                 onClick = onNavigateToAbout,
                 modifier = Modifier.padding(horizontal = dimensions.gridPadding)

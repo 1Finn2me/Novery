@@ -1,5 +1,3 @@
-// com/emptycastle/novery/ui/components/NovelCard.kt
-
 package com.emptycastle.novery.ui.components
 
 import androidx.compose.animation.AnimatedVisibility
@@ -41,6 +39,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AutoStories
 import androidx.compose.material.icons.rounded.MenuBook
 import androidx.compose.material.icons.rounded.NewReleases
+import androidx.compose.material.icons.rounded.PhoneAndroid
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
@@ -145,7 +144,8 @@ fun NovelCard(
     readingStatus: ReadingStatus? = null,
     lastReadChapter: String? = null,
     showApiName: Boolean = false,
-    isSelected: Boolean = false
+    isSelected: Boolean = false,
+    showLocalBadge: Boolean = false
 ) {
     val semanticsLabel = buildString {
         append(novel.name)
@@ -167,7 +167,8 @@ fun NovelCard(
             readingStatus = readingStatus,
             lastReadChapter = lastReadChapter,
             showApiName = showApiName,
-            isSelected = isSelected
+            isSelected = isSelected,
+            showLocalBadge = showLocalBadge  // ADD THIS
         )
         else -> CompactNovelCard(
             novel = novel,
@@ -182,7 +183,8 @@ fun NovelCard(
             lastReadChapter = lastReadChapter,
             showApiName = showApiName,
             isCompact = density == UiDensity.COMPACT,
-            isSelected = isSelected
+            isSelected = isSelected,
+            showLocalBadge = showLocalBadge  // ADD THIS
         )
     }
 }
@@ -202,7 +204,8 @@ private fun ComfortableNovelCard(
     readingStatus: ReadingStatus?,
     lastReadChapter: String?,
     showApiName: Boolean,
-    isSelected: Boolean
+    isSelected: Boolean,
+    showLocalBadge: Boolean
 ) {
     val haptic = LocalHapticFeedback.current
     val interactionSource = remember { MutableInteractionSource() }
@@ -286,6 +289,7 @@ private fun ComfortableNovelCard(
                     readingStatus = readingStatus,
                     newChapterCount = newChapterCount,
                     compactMode = false,
+                    showLocalBadge = showLocalBadge,
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(NovelCardTokens.Padding.Badge)
@@ -347,7 +351,8 @@ private fun CompactNovelCard(
     lastReadChapter: String?,
     showApiName: Boolean,
     isCompact: Boolean,
-    isSelected: Boolean
+    isSelected: Boolean,
+    showLocalBadge: Boolean
 ) {
     val haptic = LocalHapticFeedback.current
     val interactionSource = remember { MutableInteractionSource() }
@@ -411,6 +416,7 @@ private fun CompactNovelCard(
                 readingStatus = readingStatus,
                 newChapterCount = newChapterCount,
                 compactMode = isCompact,
+                showLocalBadge = showLocalBadge,
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(NovelCardTokens.Padding.Badge)
@@ -612,6 +618,7 @@ private fun BadgeRow(
     readingStatus: ReadingStatus?,
     newChapterCount: Int,
     compactMode: Boolean,
+    showLocalBadge: Boolean = false,  // ADD THIS
     modifier: Modifier = Modifier
 ) {
     Row(
@@ -620,16 +627,30 @@ private fun BadgeRow(
         verticalAlignment = Alignment.Top
     ) {
         // Status badge - left
-        AnimatedVisibility(
-            visible = readingStatus != null,
-            enter = fadeIn() + slideInVertically { -it },
-            exit = fadeOut() + slideOutVertically { -it }
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            readingStatus?.let {
-                StatusBadge(
-                    status = it,
-                    compactMode = compactMode
-                )
+            AnimatedVisibility(
+                visible = readingStatus != null,
+                enter = fadeIn() + slideInVertically { -it },
+                exit = fadeOut() + slideOutVertically { -it }
+            ) {
+                readingStatus?.let {
+                    StatusBadge(
+                        status = it,
+                        compactMode = compactMode
+                    )
+                }
+            }
+
+            // Local badge
+            AnimatedVisibility(
+                visible = showLocalBadge,
+                enter = fadeIn() + scaleIn(),
+                exit = fadeOut() + scaleOut()
+            ) {
+                LocalBadge(compactMode = compactMode)
             }
         }
 
@@ -647,6 +668,53 @@ private fun BadgeRow(
             NewChaptersBadge(
                 count = newChapterCount,
                 compactMode = compactMode
+            )
+        }
+    }
+}
+
+// Add this new composable for the Local badge
+@Composable
+private fun LocalBadge(
+    compactMode: Boolean,
+    modifier: Modifier = Modifier
+) {
+    val localColor = Color(0xFF9333EA) // Purple for local/imported
+
+    if (compactMode) {
+        Surface(
+            modifier = modifier,
+            shape = CircleShape,
+            color = Color.Black.copy(alpha = 0.5f),
+            shadowElevation = 2.dp
+        ) {
+            Box(
+                modifier = Modifier.padding(6.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.PhoneAndroid,
+                    contentDescription = "Local",
+                    modifier = Modifier.size(12.dp),
+                    tint = localColor
+                )
+            }
+        }
+    } else {
+        Surface(
+            modifier = modifier,
+            shape = NovelCardTokens.BadgeShape,
+            color = localColor,
+            shadowElevation = NovelCardTokens.Elevation.Badge,
+            tonalElevation = 2.dp
+        ) {
+            Text(
+                text = "Local",
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.SemiBold,
+                color = Color.White,
+                fontSize = 9.sp
             )
         }
     }

@@ -48,6 +48,7 @@ import androidx.compose.material.icons.outlined.Contrast
 import androidx.compose.material.icons.outlined.DarkMode
 import androidx.compose.material.icons.outlined.DownloadForOffline
 import androidx.compose.material.icons.outlined.Extension
+import androidx.compose.material.icons.outlined.FileOpen
 import androidx.compose.material.icons.outlined.FilterList
 import androidx.compose.material.icons.outlined.GridView
 import androidx.compose.material.icons.outlined.Info
@@ -118,6 +119,7 @@ import com.emptycastle.novery.domain.model.AppSettings
 import com.emptycastle.novery.domain.model.CustomThemeColors
 import com.emptycastle.novery.domain.model.DisplayMode
 import com.emptycastle.novery.domain.model.GridColumns
+import com.emptycastle.novery.domain.model.ImportedBooksDisplay
 import com.emptycastle.novery.domain.model.LibraryFilter
 import com.emptycastle.novery.domain.model.LibrarySortOrder
 import com.emptycastle.novery.domain.model.RatingFormat
@@ -314,6 +316,27 @@ fun SettingsScreen(
             }
 
             // ═══════════════════════════════════════════════════════════
+            // EPUB IMPORT
+            // ═══════════════════════════════════════════════════════════
+            item { SectionHeader("EPUB Import", Icons.Outlined.FileOpen) }
+            item {
+                SettingsCard {
+                    ToggleItem(
+                        icon = Icons.Outlined.FileOpen,
+                        title = "Show Import Button",
+                        subtitle = "Display floating button in library to import EPUB files",
+                        checked = preferencesManager.getShowImportButton(),
+                        onCheckedChange = { preferencesManager.setShowImportButton(it) }
+                    )
+                    SettingsDivider()
+                    ImportedBooksDisplayItem(
+                        selectedDisplay = preferencesManager.getImportedBooksDisplay(),
+                        onDisplayChange = { preferencesManager.setImportedBooksDisplay(it) }
+                    )
+                }
+            }
+
+            // ═══════════════════════════════════════════════════════════
             // BROWSE & SEARCH (Discovery Settings)
             // ═══════════════════════════════════════════════════════════
             item { SectionHeader("Browse & Search", Icons.Outlined.Search) }
@@ -479,6 +502,95 @@ fun SettingsScreen(
             }
 
             item { Spacer(Modifier.height(80.dp)) }
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// IMPORTED BOOKS DISPLAY SETTING
+// ═══════════════════════════════════════════════════════════════════════════
+
+@Composable
+private fun ImportedBooksDisplayItem(
+    selectedDisplay: ImportedBooksDisplay,
+    onDisplayChange: (ImportedBooksDisplay) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val haptics = LocalHapticFeedback.current
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .clickable {
+                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                expanded = true
+            }
+            .padding(vertical = 8.dp, horizontal = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            Icons.Outlined.LibraryBooks,
+            null,
+            Modifier.size(24.dp),
+            MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Column(Modifier.weight(1f)) {
+            Text(
+                "Imported Books Display",
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = FontWeight.Medium
+            )
+            Text(
+                selectedDisplay.displayName(),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.primary
+            )
+        }
+        Icon(
+            Icons.Outlined.ChevronRight,
+            null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false }
+        ) {
+            ImportedBooksDisplay.entries.forEach { display ->
+                DropdownMenuItem(
+                    text = {
+                        Column {
+                            Text(
+                                display.displayName(),
+                                fontWeight = if (selectedDisplay == display) FontWeight.SemiBold else FontWeight.Normal,
+                                color = if (selectedDisplay == display) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = display.description(),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    },
+                    onClick = {
+                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                        onDisplayChange(display)
+                        expanded = false
+                    },
+                    leadingIcon = if (selectedDisplay == display) {
+                        {
+                            Icon(
+                                Icons.Default.Check,
+                                null,
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    } else null
+                )
+            }
         }
     }
 }

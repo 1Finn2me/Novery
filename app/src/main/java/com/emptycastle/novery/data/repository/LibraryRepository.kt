@@ -64,6 +64,11 @@ class LibraryRepository(
     private val offlineDao: OfflineDao
 ) {
 
+    companion object {
+        // Provider name for imported EPUB books
+        const val IMPORTED_PROVIDER_NAME = "Local"
+    }
+
     // ================================================================
     // OBSERVE LIBRARY
     // ================================================================
@@ -372,6 +377,11 @@ class LibraryRepository(
         novelsToRefresh.forEachIndexed { index, entity ->
             onProgress(index + 1, novelsToRefresh.size, entity.name)
 
+            // Skip imported/local novels - they don't need refreshing from providers
+            if (entity.apiName == IMPORTED_PROVIDER_NAME) {
+                return@forEachIndexed
+            }
+
             val provider = getProvider(entity.apiName)
             if (provider != null) {
                 try {
@@ -427,6 +437,10 @@ class LibraryRepository(
                 (downloadCounts[entity.url] ?: 0) > 0
             }
 
+            LibraryFilter.IMPORTED -> novels.filter { entity ->
+                entity.apiName == IMPORTED_PROVIDER_NAME
+            }
+
             LibraryFilter.READING -> novels.filter { entity ->
                 entity.getStatus() == ReadingStatus.READING
             }
@@ -459,6 +473,31 @@ class LibraryRepository(
 
     suspend fun getDownloadCount(novelUrl: String): Int = withContext(Dispatchers.IO) {
         offlineDao.getDownloadedCount(novelUrl)
+    }
+
+    // ================================================================
+    // IMPORTED NOVELS HELPERS
+    // ================================================================
+
+    /**
+     * Check if a novel is an imported/local novel
+     */
+    fun isImportedNovel(apiName: String): Boolean {
+        return apiName == IMPORTED_PROVIDER_NAME
+    }
+
+    /**
+     * Get all imported novels
+     */
+    suspend fun getImportedNovels(): List<LibraryItem> = withContext(Dispatchers.IO) {
+        getLibrary().filter { it.novel.apiName == IMPORTED_PROVIDER_NAME }
+    }
+
+    /**
+     * Get imported novel count
+     */
+    suspend fun getImportedNovelCount(): Int = withContext(Dispatchers.IO) {
+        libraryDao.getAll().count { it.apiName == IMPORTED_PROVIDER_NAME }
     }
 
     // ================================================================

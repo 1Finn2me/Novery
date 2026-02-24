@@ -1428,7 +1428,9 @@ class ReaderViewModel : ViewModel() {
                 startReadingTimeTracking()
             }
 
-            _uiState.update { it.copy(isPreloading = false) }
+            // Mark preloading finished; content can be presented now that all preloads
+            // and target scroll position resolution have been attempted.
+            _uiState.update { it.copy(isPreloading = false, isContentReady = true, isLoading = false) }
 
             Log.d(TAG, "Initial load complete, unblocking all tracking")
             isTransitioning.set(false)
@@ -1458,9 +1460,17 @@ class ReaderViewModel : ViewModel() {
 
         val chapter = allChapters[chapterIndex]
         val isBeforeCurrentChapter = chapterIndex < state.currentChapterIndex
-        val itemCountBefore = state.displayItems.size
 
-        // Save TTS state before rebuild
+        // Track items BEFORE loading
+        val itemCountBefore = state.displayItems.size
+        val firstDisplayIndexBefore = state.displayItems.indexOfFirst { item ->
+            when (item) {
+                is ReaderDisplayItem.ChapterHeader -> item.chapterIndex == chapterIndex
+                is ReaderDisplayItem.Segment -> item.chapterIndex == chapterIndex
+                else -> false
+            }
+        }
+
         val ttsWasActive = _uiState.value.isTTSActive && _uiState.value.ttsStatus != TTSStatus.STOPPED
         val savedTTSCoordinate = currentTTSCoordinate
         val savedTTSText = currentTTSSentenceText
@@ -1486,8 +1496,6 @@ class ReaderViewModel : ViewModel() {
                     _uiState.update {
                         it.copy(
                             loadedChapters = it.loadedChapters + (chapterIndex to result.loadedChapter),
-                            isLoading = if (chapterIndex == it.initialChapterIndex) false else it.isLoading,
-                            isContentReady = if (chapterIndex == it.initialChapterIndex) true else it.isContentReady,
                             currentChapterName = if (chapterIndex == it.currentChapterIndex) chapter.name else it.currentChapterName,
                             isOfflineMode = result.loadedChapter.isFromCache && it.isOfflineMode
                         )
@@ -1495,11 +1503,31 @@ class ReaderViewModel : ViewModel() {
 
                     rebuildDisplayItemsWithTTSPreserve(ttsWasActive, savedTTSCoordinate, savedTTSText)
 
+                    // Calculate actual items added
                     if (isBeforeCurrentChapter && !isInitialLoad && !isTransitioning.get()) {
                         val itemCountAfter = _uiState.value.displayItems.size
                         val itemsAdded = itemCountAfter - itemCountBefore
-                        if (itemsAdded > 0) {
-                            adjustScrollPositionBy(itemsAdded)
+
+                        // Find where the new chapter actually appears
+                        val firstDisplayIndexAfter = _uiState.value.displayItems.indexOfFirst { item ->
+                            when (item) {
+                                is ReaderDisplayItem.ChapterHeader -> item.chapterIndex == chapterIndex
+                                is ReaderDisplayItem.Segment -> item.chapterIndex == chapterIndex
+                                else -> false
+                            }
+                        }
+
+                        if (itemsAdded > 0 && firstDisplayIndexAfter >= 0) {
+                            // Store shift to be applied
+                            pendingIndexShift = DisplayIndexShift(
+                                beforeIndex = firstDisplayIndexAfter,
+                                shiftAmount = itemsAdded
+                            )
+
+                            // Apply immediately if not in the middle of other operations
+                            if (!blockInfiniteScroll.get()) {
+                                applyPendingIndexShift()
+                            }
                         }
                     }
                 }
@@ -1509,8 +1537,6 @@ class ReaderViewModel : ViewModel() {
                     _uiState.update {
                         it.copy(
                             loadedChapters = it.loadedChapters + (chapterIndex to errorChapter),
-                            isLoading = if (chapterIndex == it.initialChapterIndex) false else it.isLoading,
-                            isContentReady = if (chapterIndex == it.initialChapterIndex) true else it.isContentReady,
                             error = if (chapterIndex == it.initialChapterIndex) result.message else it.error
                         )
                     }
@@ -1694,6 +1720,11 @@ class ReaderViewModel : ViewModel() {
                 currentChapterWordCount = currentChapterWordCount
             )
         }
+
+        // Apply any pending index shifts after rebuild
+        if (!isTransitioning.get() && !blockInfiniteScroll.get()) {
+            applyPendingIndexShift()
+        }
     }
 
     fun retryChapter(chapterIndex: Int) {
@@ -1773,19 +1804,20 @@ class ReaderViewModel : ViewModel() {
             return PositionResolution.ChapterNotLoaded(position.chapterIndex)
         }
 
+        // Try character offset first (most accurate)
         val charMap = characterMaps[position.chapterIndex]
-
         val targetSegmentIndex = if (position.characterOffset > 0 && charMap != null) {
             charMap.findSegmentByCharOffset(position.characterOffset)
         } else {
             position.segmentIndex
         }
 
+        // Find the segment in display items
         val displayIndex = displayItems.indexOfFirst { item ->
             when (item) {
                 is ReaderDisplayItem.Segment ->
                     item.chapterIndex == position.chapterIndex &&
-                            item.segmentIndexInChapter >= targetSegmentIndex
+                            item.segmentIndexInChapter == targetSegmentIndex
 
                 is ReaderDisplayItem.ChapterHeader ->
                     item.chapterIndex == position.chapterIndex &&
@@ -1795,19 +1827,33 @@ class ReaderViewModel : ViewModel() {
             }
         }
 
-        return if (displayIndex >= 0) {
-            PositionResolution.Found(displayIndex, position.pixelOffset, 1.0f)
-        } else {
-            val headerIndex = displayItems.indexOfFirst { item ->
-                item is ReaderDisplayItem.ChapterHeader &&
-                        item.chapterIndex == position.chapterIndex
-            }
-            if (headerIndex >= 0) {
-                PositionResolution.Found(headerIndex, 0, 0.5f)
-            } else {
-                PositionResolution.NotFound
-            }
+        if (displayIndex >= 0) {
+            return PositionResolution.Found(displayIndex, position.pixelOffset, 1.0f)
         }
+
+        // Fallback 1: Find any segment from this chapter (closest match)
+        val anySegmentFromChapter = displayItems.indexOfFirst { item ->
+            (item is ReaderDisplayItem.Segment && item.chapterIndex == position.chapterIndex) ||
+                    (item is ReaderDisplayItem.ChapterHeader && item.chapterIndex == position.chapterIndex)
+        }
+
+        if (anySegmentFromChapter >= 0) {
+            Log.d(TAG, "Position resolution: found chapter but not exact segment, using $anySegmentFromChapter")
+            return PositionResolution.Found(anySegmentFromChapter, 0, 0.5f)
+        }
+
+        // Fallback 2: Chapter header
+        val headerIndex = displayItems.indexOfFirst { item ->
+            item is ReaderDisplayItem.ChapterHeader &&
+                    item.chapterIndex == position.chapterIndex
+        }
+
+        if (headerIndex >= 0) {
+            return PositionResolution.Found(headerIndex, 0, 0.3f)
+        }
+
+        Log.w(TAG, "Position resolution failed for chapter ${position.chapterIndex}")
+        return PositionResolution.NotFound
     }
 
     private fun displayIndexToStablePosition(
@@ -2006,11 +2052,10 @@ class ReaderViewModel : ViewModel() {
         val center = state.currentChapterIndex
         val keepRange = (center - preloadBefore - 1)..(center + preloadAfter + 1)
 
-        // CRITICAL: Also protect TTS chapter
         val protected = setOf(
             state.currentChapterIndex,
             state.currentTTSChapterIndex,
-            currentTTSCoordinate.chapterIndex,  // Extra protection
+            currentTTSCoordinate.chapterIndex,
             requestedChapterIndex
         ).filter { it >= 0 }
 
@@ -2021,11 +2066,12 @@ class ReaderViewModel : ViewModel() {
         if (toUnload.isNotEmpty()) {
             Log.d(TAG, "Unloading chapters: $toUnload (protected: $protected)")
 
-            stateMutex.withLock {
-                toUnload.forEach { idx ->
-                    characterMaps.remove(idx)
-                }
-            }
+            // DON'T clear character maps - they're lightweight and needed for position restoration
+            // stateMutex.withLock {
+            //     toUnload.forEach { idx ->
+            //         characterMaps.remove(idx)
+            //     }
+            // }
 
             _uiState.update {
                 val updated = it.loadedChapters.toMutableMap()
@@ -2244,6 +2290,41 @@ class ReaderViewModel : ViewModel() {
 
     fun onReaderExit() {
         VolumeKeyManager.setReaderActive(false)
+    }
+
+    /**
+     * Tracks display index shifts when chapters are loaded/unloaded.
+     */
+    private data class DisplayIndexShift(
+        val beforeIndex: Int,
+        val shiftAmount: Int
+    )
+
+    private var pendingIndexShift: DisplayIndexShift? = null
+
+    /**
+     * Apply pending index shift to current scroll position
+     */
+    private fun applyPendingIndexShift() {
+        val shift = pendingIndexShift ?: return
+        pendingIndexShift = null
+
+        val currentState = _uiState.value
+        if (currentState.currentScrollIndex >= shift.beforeIndex) {
+            val newIndex = (currentState.currentScrollIndex + shift.shiftAmount).coerceAtLeast(0)
+
+            Log.d(TAG, "Applying index shift: ${currentState.currentScrollIndex} -> $newIndex")
+
+            _uiState.update {
+                it.copy(
+                    currentScrollIndex = newIndex,
+                    targetScrollPosition = TargetScrollPosition(
+                        displayIndex = newIndex,
+                        offsetPixels = it.currentScrollOffset
+                    )
+                )
+            }
+        }
     }
 
     // =========================================================================

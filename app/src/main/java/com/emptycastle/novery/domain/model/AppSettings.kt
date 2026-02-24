@@ -262,6 +262,7 @@ enum class LibrarySortOrder {
 enum class LibraryFilter {
     ALL,
     DOWNLOADED,
+    IMPORTED,
     READING,
     COMPLETED,
     ON_HOLD,
@@ -271,6 +272,7 @@ enum class LibraryFilter {
     fun displayName(): String = when (this) {
         ALL -> "All"
         DOWNLOADED -> "Downloaded"
+        IMPORTED -> "Imported"
         READING -> "Reading"
         COMPLETED -> "Completed"
         ON_HOLD -> "On Hold"

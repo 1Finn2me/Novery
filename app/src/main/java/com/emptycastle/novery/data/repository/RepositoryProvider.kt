@@ -1,8 +1,6 @@
-// com/emptycastle/novery/data/repository/RepositoryProvider.kt
-// REPLACE YOUR ENTIRE FILE WITH THIS
-
 package com.emptycastle.novery.data.repository
 
+import android.annotation.SuppressLint
 import android.content.Context
 import com.emptycastle.novery.data.local.NovelDatabase
 import com.emptycastle.novery.data.local.PreferencesManager
@@ -17,10 +15,12 @@ import com.emptycastle.novery.recommendation.UserPreferenceManager
 /**
  * Provides singleton instances of repositories
  */
+@SuppressLint("StaticFieldLeak")
 object RepositoryProvider {
 
     private var database: NovelDatabase? = null
     private var preferencesManager: PreferencesManager? = null
+    private var context: Context? = null
 
     // Repositories
     private var novelRepository: NovelRepository? = null
@@ -30,6 +30,7 @@ object RepositoryProvider {
     private var statsRepository: StatsRepository? = null
     private var bookmarkRepository: BookmarkRepository? = null
     private var notificationRepository: NotificationRepository? = null
+    private var epubImportRepository: EpubImportRepository? = null
 
     private var userPreferenceManager: UserPreferenceManager? = null
     private var recommendationEngine: RecommendationEngine? = null
@@ -43,6 +44,9 @@ object RepositoryProvider {
      * Initialize the repository provider with application context
      */
     fun initialize(context: Context) {
+        // FIXED: Store the application context
+        this.context = context.applicationContext
+
         if (database == null) {
             database = NovelDatabase.getInstance(context)
         }
@@ -126,7 +130,7 @@ object RepositoryProvider {
             offlineDao = getDatabase().offlineDao(),
             recommendationDao = getDatabase().recommendationDao(),
             userFilterManager = getUserFilterManager(),
-            authorPreferenceManager = getAuthorPreferenceManager()  // ADD THIS
+            authorPreferenceManager = getAuthorPreferenceManager()
         ).also { recommendationEngine = it }
     }
 
@@ -159,6 +163,19 @@ object RepositoryProvider {
         return notificationRepository ?: throw IllegalStateException("NotificationRepository not initialized")
     }
 
+    fun getEpubImportRepository(): EpubImportRepository {
+        val ctx = context ?: throw IllegalStateException(
+            "RepositoryProvider not initialized. Call initialize() first."
+        )
+        return epubImportRepository ?: synchronized(this) {
+            epubImportRepository ?: EpubImportRepository(
+                context = ctx,
+                libraryDao = getDatabase().libraryDao(),
+                offlineDao = getDatabase().offlineDao()
+            ).also { epubImportRepository = it }
+        }
+    }
+
     /**
      * Clear all cached repositories (for testing)
      */
@@ -169,5 +186,13 @@ object RepositoryProvider {
         offlineRepository = null
         statsRepository = null
         bookmarkRepository = null
+        epubImportRepository = null
+        userPreferenceManager = null
+        recommendationEngine = null
+        discoveryManager = null
+        networkBudgetManager = null
+        tagEnhancementManager = null
+        authorPreferenceManager = null
+        userFilterManager = null
     }
 }
