@@ -50,6 +50,7 @@ val Info = Color(0xFF3B82F6)         // Blue-500
 // STATUS COLORS
 // ============================================
 val StatusReading = Info
+val StatusSpicy = Color(0xFFF97316)
 val StatusCompleted = Success
 val StatusOnHold = Warning
 val StatusPlanToRead = Color(0xFF8B5CF6)

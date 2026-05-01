@@ -13,6 +13,7 @@ data class RefreshProgress(
 )
 
 data class LibraryUiState(
+    val allItems: List<LibraryItem> = emptyList(),
     val items: List<LibraryItem> = emptyList(),
     val filteredItems: List<LibraryItem> = emptyList(),
     val downloadCounts: Map<String, Int> = emptyMap(),
@@ -25,6 +26,12 @@ data class LibraryUiState(
     val sortOrder: LibrarySortOrder = LibrarySortOrder.LAST_READ,
     val totalNewChapters: Int = 0,
     val showNewChaptersCard: Boolean = true,
+    val spicyPrivacyEnabled: Boolean = true,
+    val enabledShelfFilters: Set<LibraryFilter> = LibraryFilter.defaultEnabledShelves(),
+    val visibleFilters: List<LibraryFilter> = LibraryFilter.visibleFilters(
+        enabledFilters = LibraryFilter.defaultEnabledShelves(),
+        showSpicyFilter = false
+    ),
     val isAutoDownloading: Boolean = false,
     val autoDownloadProgress: AutoDownloadProgress? = null
 )

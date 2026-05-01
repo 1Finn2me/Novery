@@ -3,6 +3,8 @@ package com.emptycastle.novery.data.repository
 import com.emptycastle.novery.data.local.dao.HistoryDao
 import com.emptycastle.novery.data.local.entity.HistoryEntity
 import com.emptycastle.novery.data.local.entity.ReadChapterEntity
+import com.emptycastle.novery.data.sync.SyncTrigger
+import com.emptycastle.novery.data.sync.SyncWorker
 import com.emptycastle.novery.domain.model.Chapter
 import com.emptycastle.novery.domain.model.Novel
 import kotlinx.coroutines.Dispatchers
@@ -115,6 +117,7 @@ class HistoryRepository(
             timestamp = System.currentTimeMillis()
         )
         historyDao.insert(historyEntity)
+        SyncWorker.triggerNow(RepositoryProvider.getAppContext(), SyncTrigger.CHAPTER_OPEN)
         markChapterRead(novel.url, chapter.url)
     }
 
@@ -125,6 +128,7 @@ class HistoryRepository(
                 novelUrl = novelUrl
             )
             historyDao.markChapterRead(readEntity)
+            SyncWorker.triggerNow(RepositoryProvider.getAppContext(), SyncTrigger.CHAPTER_READ)
         }
 
     suspend fun markChaptersRead(novelUrl: String, chapterUrls: List<String>) =
@@ -167,6 +171,7 @@ class HistoryRepository(
     suspend fun clearReadChapters(novelUrl: String) = withContext(Dispatchers.IO) {
         historyDao.clearReadChapters(novelUrl)
     }
+
     // ================================================================
     // CUSTOM COVER
     // ================================================================

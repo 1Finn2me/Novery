@@ -320,6 +320,7 @@ class UserPreferenceManager(
             ReadingStatus.COMPLETED -> Triple(InteractionType.COMPLETED_NOVEL, 1, 0)
             ReadingStatus.DROPPED -> Triple(InteractionType.DROPPED_NOVEL, 0, 1)
             ReadingStatus.READING -> Triple(InteractionType.STATUS_READING, 0, 0)
+            ReadingStatus.SPICY -> Triple(InteractionType.STATUS_PLAN_TO_READ, 0, 0)
             ReadingStatus.ON_HOLD -> Triple(InteractionType.STATUS_ON_HOLD, 0, 0)
             ReadingStatus.PLAN_TO_READ -> Triple(InteractionType.STATUS_PLAN_TO_READ, 0, 0)
         }
@@ -444,6 +445,10 @@ class UserPreferenceManager(
                         getScoreChange(InteractionType.STATUS_READING) +
                                 getScoreChange(InteractionType.ADDED_TO_LIBRARY) +
                                 (progress * getScoreChange(InteractionType.READ_CHAPTER) * 10).toInt()
+                    }
+                    ReadingStatus.SPICY -> {
+                        getScoreChange(InteractionType.STATUS_PLAN_TO_READ) +
+                                getScoreChange(InteractionType.ADDED_TO_LIBRARY)
                     }
                     ReadingStatus.ON_HOLD -> {
                         getScoreChange(InteractionType.STATUS_ON_HOLD) +

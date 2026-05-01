@@ -51,6 +51,9 @@ interface HistoryDao {
     @Query("DELETE FROM read_chapters WHERE novelUrl = :novelUrl")
     suspend fun clearReadChapters(novelUrl: String)
 
+    @Query("DELETE FROM read_chapters")
+    suspend fun clearAllReadChapters()
+
     @Query("SELECT COUNT(*) FROM read_chapters WHERE novelUrl = :novelUrl")
     suspend fun getReadCountForNovel(novelUrl: String): Int
 

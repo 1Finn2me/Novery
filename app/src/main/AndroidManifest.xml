@@ -56,6 +56,34 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".ui.sync.GoogleDriveLoginActivity"
+            android:exported="true"
+            android:label="Google Drive">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+
+                <data android:scheme="com.emptycastle.novery.google.oauth" />
+            </intent-filter>
+        </activity>
+
+        <receiver
+            android:name=".data.sync.SyncActionReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.emptycastle.novery.action.SYNC_CANCEL" />
+            </intent-filter>
+        </receiver>
+
+        <service
+            android:name="androidx.work.impl.foreground.SystemForegroundService"
+            android:foregroundServiceType="dataSync"
+            android:exported="false"
+            tools:node="merge" />
+
         <!-- Download Service (Background Downloads) -->
         <service
             android:name=".service.DownloadService"

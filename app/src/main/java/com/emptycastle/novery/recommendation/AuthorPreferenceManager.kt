@@ -227,6 +227,9 @@ class AuthorPreferenceManager(
             ReadingStatus.READING -> {
                 scoreDelta += 25 // Small boost for actively reading
             }
+            ReadingStatus.SPICY -> {
+                scoreDelta += 10 // Mild interest signal, similar to shelving for later
+            }
             ReadingStatus.ON_HOLD -> {
                 scoreDelta -= 15 // Small penalty for putting on hold
             }
@@ -325,6 +328,9 @@ class AuthorPreferenceManager(
                     }
                     ReadingStatus.READING -> {
                         totalScore += 50 + (item.progressPercent * 50).toInt()
+                    }
+                    ReadingStatus.SPICY -> {
+                        totalScore += 30
                     }
                     ReadingStatus.ON_HOLD -> {
                         totalScore += 25

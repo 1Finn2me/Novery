@@ -19,6 +19,9 @@ interface StatsDao {
     @Query("SELECT * FROM reading_stats WHERE novelUrl = :novelUrl AND date = :date")
     suspend fun getStatsForDay(novelUrl: String, date: Long): ReadingStatsEntity?
 
+    @Query("SELECT * FROM reading_stats WHERE novelUrl = :novelUrl AND date = :date")
+    suspend fun getStatsForNovelDay(novelUrl: String, date: Long): ReadingStatsEntity?
+
     @Query("SELECT * FROM reading_stats WHERE date = :date")
     suspend fun getAllStatsForDay(date: Long): List<ReadingStatsEntity>
 

@@ -2,6 +2,12 @@ package com.emptycastle.novery.data.local
 
 import android.content.Context
 import android.content.SharedPreferences
+import androidx.security.crypto.EncryptedSharedPreferences
+import androidx.security.crypto.MasterKey
+import com.emptycastle.novery.data.sync.SyncDataSelection
+import com.emptycastle.novery.data.sync.SyncServiceType
+import com.emptycastle.novery.data.sync.SyncSettings
+import com.emptycastle.novery.data.sync.SyncTriggerOptions
 import com.emptycastle.novery.domain.model.AppSettings
 import com.emptycastle.novery.domain.model.CustomThemeColors
 import com.emptycastle.novery.domain.model.DisplayMode
@@ -35,6 +41,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import java.util.UUID
 
 /**
  * Manages user preferences using SharedPreferences.
@@ -52,6 +59,8 @@ class PreferencesManager(context: Context) {
         Context.MODE_PRIVATE
     )
 
+    private val secureSyncPrefs: SharedPreferences = createSecureSyncPreferences(context)
+
     private val json = Json {
         ignoreUnknownKeys = true
         encodeDefaults = true
@@ -67,11 +76,24 @@ class PreferencesManager(context: Context) {
     private val _appSettings = MutableStateFlow(loadAppSettings())
     val appSettings: StateFlow<AppSettings> = _appSettings.asStateFlow()
 
+    private val _syncSettings = MutableStateFlow(loadSyncSettings())
+    val syncSettings: StateFlow<SyncSettings> = _syncSettings.asStateFlow()
+
+    private val _syncDataSelection = MutableStateFlow(loadSyncDataSelection())
+    val syncDataSelection: StateFlow<SyncDataSelection> = _syncDataSelection.asStateFlow()
+
+    private val _syncTriggerOptions = MutableStateFlow(loadSyncTriggerOptions())
+    val syncTriggerOptions: StateFlow<SyncTriggerOptions> = _syncTriggerOptions.asStateFlow()
+
     private val _searchHistory = MutableStateFlow<List<SearchHistoryItem>>(loadSearchHistory())
     val searchHistory: StateFlow<List<SearchHistoryItem>> = _searchHistory.asStateFlow()
 
     private val _favoriteProviders = MutableStateFlow<Set<String>>(loadFavoriteProviders())
     val favoriteProviders: StateFlow<Set<String>> = _favoriteProviders.asStateFlow()
+
+    // Session-only privacy state for the hidden spicy shelf.
+    private val _isSpicyShelfRevealed = MutableStateFlow(false)
+    val isSpicyShelfRevealed: StateFlow<Boolean> = _isSpicyShelfRevealed.asStateFlow()
 
     // =========================================================================
     // AUTHOR NOTE SETTINGS
@@ -331,6 +353,24 @@ class PreferencesManager(context: Context) {
         val disabledString = prefs.getString(KEY_DISABLED_PROVIDERS, "")
         val disabledSet = if (disabledString.isNullOrBlank()) emptySet() else disabledString.split(",").toSet()
 
+        val enabledLibraryFiltersString = prefs.getString(KEY_ENABLED_LIBRARY_FILTERS, null)
+        val enabledLibraryFilters = when {
+            enabledLibraryFiltersString == null -> LibraryFilter.defaultEnabledShelves()
+            enabledLibraryFiltersString.isBlank() -> emptySet()
+            else -> LibraryFilter.sanitizeEnabledShelves(
+                enabledLibraryFiltersString
+                    .split(",")
+                    .mapNotNull { filterName ->
+                        try {
+                            LibraryFilter.valueOf(filterName.trim())
+                        } catch (e: Exception) {
+                            null
+                        }
+                    }
+                    .toSet()
+            )
+        }
+
         // Load custom theme colors
         val customThemeColors = CustomThemeColors(
             primaryColor = prefs.getLong(
@@ -391,10 +431,17 @@ class PreferencesManager(context: Context) {
             } catch (e: Exception) {
                 RatingFormat.TEN_POINT
             },
-            defaultLibraryFilter = LibraryFilter.valueOf(
-                prefs.getString(KEY_DEFAULT_LIBRARY_FILTER, LibraryFilter.DOWNLOADED.name)
-                    ?: LibraryFilter.DOWNLOADED.name
-            ),
+            defaultLibraryFilter = try {
+                val storedFilter = LibraryFilter.valueOf(
+                    prefs.getString(KEY_DEFAULT_LIBRARY_FILTER, LibraryFilter.DOWNLOADED.name)
+                        ?: LibraryFilter.DOWNLOADED.name
+                )
+                LibraryFilter.sanitizeDefault(storedFilter, enabledLibraryFilters)
+            } catch (e: Exception) {
+                LibraryFilter.sanitizeDefault(LibraryFilter.DOWNLOADED, enabledLibraryFilters)
+            },
+            hideSpicyLibraryContent = prefs.getBoolean(KEY_HIDE_SPICY_LIBRARY_CONTENT, true),
+            enabledLibraryFilters = enabledLibraryFilters,
             keepScreenOn = prefs.getBoolean(KEY_KEEP_SCREEN_ON, true),
             infiniteScroll = prefs.getBoolean(KEY_INFINITE_SCROLL, false),
             autoDownloadEnabled = prefs.getBoolean(KEY_AUTO_DOWNLOAD_ENABLED, false),
@@ -407,45 +454,64 @@ class PreferencesManager(context: Context) {
     }
 
     fun updateAppSettings(settings: AppSettings) {
+        val sanitizedEnabledLibraryFilters = LibraryFilter.sanitizeEnabledShelves(
+            settings.enabledLibraryFilters
+        )
+        val sanitizedSettings = settings.copy(
+            enabledLibraryFilters = sanitizedEnabledLibraryFilters,
+            defaultLibraryFilter = LibraryFilter.sanitizeDefault(
+                settings.defaultLibraryFilter,
+                sanitizedEnabledLibraryFilters
+            )
+        )
+
         prefs.edit().apply {
-            putString(KEY_THEME_MODE, settings.themeMode.name)
-            putBoolean(KEY_AMOLED_BLACK, settings.amoledBlack)
-            putBoolean(KEY_DYNAMIC_COLOR, settings.useDynamicColor)
-            putBoolean(KEY_USE_CUSTOM_THEME, settings.useCustomTheme)
+            putString(KEY_THEME_MODE, sanitizedSettings.themeMode.name)
+            putBoolean(KEY_AMOLED_BLACK, sanitizedSettings.amoledBlack)
+            putBoolean(KEY_DYNAMIC_COLOR, sanitizedSettings.useDynamicColor)
+            putBoolean(KEY_USE_CUSTOM_THEME, sanitizedSettings.useCustomTheme)
 
             // Custom theme colors
-            putLong(KEY_CUSTOM_PRIMARY_COLOR, settings.customThemeColors.primaryColor)
-            putLong(KEY_CUSTOM_SECONDARY_COLOR, settings.customThemeColors.secondaryColor)
-            putLong(KEY_CUSTOM_BACKGROUND_COLOR, settings.customThemeColors.backgroundColor)
-            putLong(KEY_CUSTOM_SURFACE_COLOR, settings.customThemeColors.surfaceColor)
+            putLong(KEY_CUSTOM_PRIMARY_COLOR, sanitizedSettings.customThemeColors.primaryColor)
+            putLong(KEY_CUSTOM_SECONDARY_COLOR, sanitizedSettings.customThemeColors.secondaryColor)
+            putLong(KEY_CUSTOM_BACKGROUND_COLOR, sanitizedSettings.customThemeColors.backgroundColor)
+            putLong(KEY_CUSTOM_SURFACE_COLOR, sanitizedSettings.customThemeColors.surfaceColor)
 
-            putString(KEY_UI_DENSITY, settings.uiDensity.name)
-            putInt(KEY_LIBRARY_GRID_COLUMNS, GridColumns.toInt(settings.libraryGridColumns))
-            putInt(KEY_BROWSE_GRID_COLUMNS, GridColumns.toInt(settings.browseGridColumns))
-            putInt(KEY_SEARCH_GRID_COLUMNS, GridColumns.toInt(settings.searchGridColumns))
-            putInt(KEY_SEARCH_RESULTS_PER_PROVIDER, settings.searchResultsPerProvider)
-            putBoolean(KEY_SHOW_BADGES, settings.showBadges)
-            putString(KEY_DEFAULT_LIBRARY_SORT, settings.defaultLibrarySort.name)
-            putString(KEY_DEFAULT_LIBRARY_FILTER, settings.defaultLibraryFilter.name)
-            putBoolean(KEY_KEEP_SCREEN_ON, settings.keepScreenOn)
-            putBoolean(KEY_INFINITE_SCROLL, settings.infiniteScroll)
-            putBoolean(KEY_AUTO_DOWNLOAD_ENABLED, settings.autoDownloadEnabled)
-            putBoolean(KEY_AUTO_DOWNLOAD_WIFI_ONLY, settings.autoDownloadOnWifiOnly)
-            putInt(KEY_AUTO_DOWNLOAD_LIMIT, settings.autoDownloadLimit)
+            putString(KEY_UI_DENSITY, sanitizedSettings.uiDensity.name)
+            putInt(KEY_LIBRARY_GRID_COLUMNS, GridColumns.toInt(sanitizedSettings.libraryGridColumns))
+            putInt(KEY_BROWSE_GRID_COLUMNS, GridColumns.toInt(sanitizedSettings.browseGridColumns))
+            putInt(KEY_SEARCH_GRID_COLUMNS, GridColumns.toInt(sanitizedSettings.searchGridColumns))
+            putInt(KEY_SEARCH_RESULTS_PER_PROVIDER, sanitizedSettings.searchResultsPerProvider)
+            putBoolean(KEY_SHOW_BADGES, sanitizedSettings.showBadges)
+            putString(KEY_DEFAULT_LIBRARY_SORT, sanitizedSettings.defaultLibrarySort.name)
+            putString(KEY_DEFAULT_LIBRARY_FILTER, sanitizedSettings.defaultLibraryFilter.name)
+            putBoolean(KEY_HIDE_SPICY_LIBRARY_CONTENT, sanitizedSettings.hideSpicyLibraryContent)
+            putString(
+                KEY_ENABLED_LIBRARY_FILTERS,
+                LibraryFilter.shelfOptions()
+                    .filter { it in sanitizedSettings.enabledLibraryFilters }
+                    .joinToString(",") { it.name }
+            )
+            putBoolean(KEY_KEEP_SCREEN_ON, sanitizedSettings.keepScreenOn)
+            putBoolean(KEY_INFINITE_SCROLL, sanitizedSettings.infiniteScroll)
+            putBoolean(KEY_AUTO_DOWNLOAD_ENABLED, sanitizedSettings.autoDownloadEnabled)
+            putBoolean(KEY_AUTO_DOWNLOAD_WIFI_ONLY, sanitizedSettings.autoDownloadOnWifiOnly)
+            putInt(KEY_AUTO_DOWNLOAD_LIMIT, sanitizedSettings.autoDownloadLimit)
             putString(
                 KEY_AUTO_DOWNLOAD_STATUSES,
-                settings.autoDownloadForStatuses.joinToString(",") { it.name }
+                sanitizedSettings.autoDownloadForStatuses.joinToString(",") { it.name }
             )
-            putString(KEY_RATING_FORMAT, settings.ratingFormat.name)
-            putString(KEY_PROVIDER_ORDER, settings.providerOrder.joinToString(","))
-            putString(KEY_DISABLED_PROVIDERS, settings.disabledProviders.joinToString(","))
-            putString(KEY_LIBRARY_DISPLAY_MODE, settings.libraryDisplayMode.name)
-            putString(KEY_BROWSE_DISPLAY_MODE, settings.browseDisplayMode.name)
-            putString(KEY_SEARCH_DISPLAY_MODE, settings.searchDisplayMode.name)
+            putString(KEY_RATING_FORMAT, sanitizedSettings.ratingFormat.name)
+            putString(KEY_PROVIDER_ORDER, sanitizedSettings.providerOrder.joinToString(","))
+            putString(KEY_DISABLED_PROVIDERS, sanitizedSettings.disabledProviders.joinToString(","))
+            putString(KEY_LIBRARY_DISPLAY_MODE, sanitizedSettings.libraryDisplayMode.name)
+            putString(KEY_BROWSE_DISPLAY_MODE, sanitizedSettings.browseDisplayMode.name)
+            putString(KEY_SEARCH_DISPLAY_MODE, sanitizedSettings.searchDisplayMode.name)
+            putLong(KEY_APP_SETTINGS_UPDATED_AT, System.currentTimeMillis())
 
             apply()
         }
-        _appSettings.value = settings
+        _appSettings.value = sanitizedSettings
     }
 
     fun updateRatingFormat(format: RatingFormat) {
@@ -503,6 +569,23 @@ class PreferencesManager(context: Context) {
 
     fun updateAutoDownloadStatuses(statuses: Set<ReadingStatus>) {
         updateAppSettings(_appSettings.value.copy(autoDownloadForStatuses = statuses))
+    }
+
+    fun setSpicyShelfRevealed(revealed: Boolean) {
+        _isSpicyShelfRevealed.value = revealed
+    }
+
+    fun setLibraryShelfEnabled(filter: LibraryFilter, enabled: Boolean) {
+        if (filter == LibraryFilter.ALL) return
+
+        val current = _appSettings.value.enabledLibraryFilters.toMutableSet()
+        if (enabled) current.add(filter) else current.remove(filter)
+
+        if (filter == LibraryFilter.SPICY && !enabled) {
+            _isSpicyShelfRevealed.value = false
+        }
+
+        updateAppSettings(_appSettings.value.copy(enabledLibraryFilters = current))
     }
 
     // =========================================================================
@@ -810,6 +893,7 @@ class PreferencesManager(context: Context) {
             putBoolean(KEY_FORCE_HIGH_CONTRAST, settings.forceHighContrast)
             putBoolean(KEY_REDUCE_MOTION, settings.reduceMotion)
             putBoolean(KEY_LARGER_TOUCH_TARGETS, settings.largerTouchTargets)
+            putLong(KEY_READER_SETTINGS_UPDATED_AT, System.currentTimeMillis())
 
             apply()
         }
@@ -1243,6 +1327,192 @@ class PreferencesManager(context: Context) {
         prefs.edit().putInt(KEY_AUTO_BACKUP_INTERVAL, days.coerceIn(1, 30)).apply()
     }
 
+    private fun loadSyncSettings(): SyncSettings {
+        return SyncSettings(
+            service = SyncServiceType.fromName(
+                prefs.getString(KEY_SYNC_SERVICE, SyncServiceType.NONE.name)
+            ),
+            intervalMinutes = prefs.getInt(KEY_SYNC_INTERVAL_MINUTES, 0),
+            lastSyncTimestamp = prefs.getLong(KEY_LAST_SYNC_TIME, 0L),
+            showProgressNotifications = prefs.getBoolean(KEY_SYNC_SHOW_PROGRESS_NOTIFICATIONS, true),
+            googleDriveSignedIn = hasGoogleDriveTokens()
+        )
+    }
+
+    private fun loadSyncDataSelection(): SyncDataSelection {
+        return SyncDataSelection(
+            syncLibrary = prefs.getBoolean(KEY_SYNC_LIBRARY, true),
+            syncBookmarks = prefs.getBoolean(KEY_SYNC_BOOKMARKS, true),
+            syncHistory = prefs.getBoolean(KEY_SYNC_HISTORY, true),
+            syncStatistics = prefs.getBoolean(KEY_SYNC_STATISTICS, true),
+            syncSettings = prefs.getBoolean(KEY_SYNC_SETTINGS, true)
+        )
+    }
+
+    private fun loadSyncTriggerOptions(): SyncTriggerOptions {
+        return SyncTriggerOptions(
+            syncOnChapterRead = prefs.getBoolean(KEY_SYNC_ON_CHAPTER_READ, false),
+            syncOnChapterOpen = prefs.getBoolean(KEY_SYNC_ON_CHAPTER_OPEN, false),
+            syncOnAppStart = prefs.getBoolean(KEY_SYNC_ON_APP_START, false),
+            syncOnAppResume = prefs.getBoolean(KEY_SYNC_ON_APP_RESUME, false)
+        )
+    }
+
+    fun getSyncSettingsUpdatedAt(): Long = prefs.getLong(KEY_SYNC_SETTINGS_UPDATED_AT, 0L)
+
+    fun getSyncSettings(): SyncSettings = _syncSettings.value
+
+    fun refreshSyncSettings() {
+        _syncSettings.value = loadSyncSettings()
+    }
+
+    fun updateSyncSettings(settings: SyncSettings) {
+        prefs.edit().apply {
+            putString(KEY_SYNC_SERVICE, settings.service.name)
+            putInt(KEY_SYNC_INTERVAL_MINUTES, settings.intervalMinutes.coerceAtLeast(0))
+            putLong(KEY_LAST_SYNC_TIME, settings.lastSyncTimestamp)
+            putBoolean(KEY_SYNC_SHOW_PROGRESS_NOTIFICATIONS, settings.showProgressNotifications)
+            putLong(KEY_SYNC_SETTINGS_UPDATED_AT, System.currentTimeMillis())
+            apply()
+        }
+        _syncSettings.value = settings.copy(googleDriveSignedIn = hasGoogleDriveTokens())
+    }
+
+    fun setSyncService(service: SyncServiceType) {
+        updateSyncSettings(_syncSettings.value.copy(service = service))
+    }
+
+    fun setSyncIntervalMinutes(minutes: Int) {
+        updateSyncSettings(_syncSettings.value.copy(intervalMinutes = minutes.coerceAtLeast(0)))
+    }
+
+    fun setLastSyncTime(timestamp: Long) {
+        prefs.edit().putLong(KEY_LAST_SYNC_TIME, timestamp).apply()
+        _syncSettings.value = _syncSettings.value.copy(lastSyncTimestamp = timestamp)
+    }
+
+    fun setSyncProgressNotifications(enabled: Boolean) {
+        updateSyncSettings(_syncSettings.value.copy(showProgressNotifications = enabled))
+    }
+
+    fun getSyncDataSelection(): SyncDataSelection = _syncDataSelection.value
+
+    fun updateSyncDataSelection(selection: SyncDataSelection) {
+        prefs.edit().apply {
+            putBoolean(KEY_SYNC_LIBRARY, selection.syncLibrary)
+            putBoolean(KEY_SYNC_BOOKMARKS, selection.syncBookmarks)
+            putBoolean(KEY_SYNC_HISTORY, selection.syncHistory)
+            putBoolean(KEY_SYNC_STATISTICS, selection.syncStatistics)
+            putBoolean(KEY_SYNC_SETTINGS, selection.syncSettings)
+            putLong(KEY_SYNC_SETTINGS_UPDATED_AT, System.currentTimeMillis())
+            apply()
+        }
+        _syncDataSelection.value = selection
+    }
+
+    fun getSyncTriggerOptions(): SyncTriggerOptions = _syncTriggerOptions.value
+
+    fun updateSyncTriggerOptions(options: SyncTriggerOptions) {
+        prefs.edit().apply {
+            putBoolean(KEY_SYNC_ON_CHAPTER_READ, options.syncOnChapterRead)
+            putBoolean(KEY_SYNC_ON_CHAPTER_OPEN, options.syncOnChapterOpen)
+            putBoolean(KEY_SYNC_ON_APP_START, options.syncOnAppStart)
+            putBoolean(KEY_SYNC_ON_APP_RESUME, options.syncOnAppResume)
+            putLong(KEY_SYNC_SETTINGS_UPDATED_AT, System.currentTimeMillis())
+            apply()
+        }
+        _syncTriggerOptions.value = options
+    }
+
+    fun getGoogleDriveAccessToken(): String {
+        val secureToken = secureSyncPrefs.getString(KEY_GOOGLE_DRIVE_ACCESS_TOKEN, "") ?: ""
+        if (secureToken.isNotBlank()) {
+            return secureToken
+        }
+
+        val legacyAccessToken = prefs.getString(KEY_GOOGLE_DRIVE_ACCESS_TOKEN, "") ?: ""
+        val legacyRefreshToken = prefs.getString(KEY_GOOGLE_DRIVE_REFRESH_TOKEN, "") ?: ""
+        if (legacyAccessToken.isNotBlank() && legacyRefreshToken.isNotBlank()) {
+            migrateGoogleDriveTokens(legacyAccessToken, legacyRefreshToken)
+        }
+        return legacyAccessToken
+    }
+
+    fun getGoogleDriveRefreshToken(): String {
+        val secureToken = secureSyncPrefs.getString(KEY_GOOGLE_DRIVE_REFRESH_TOKEN, "") ?: ""
+        if (secureToken.isNotBlank()) {
+            return secureToken
+        }
+
+        val legacyAccessToken = prefs.getString(KEY_GOOGLE_DRIVE_ACCESS_TOKEN, "") ?: ""
+        val legacyRefreshToken = prefs.getString(KEY_GOOGLE_DRIVE_REFRESH_TOKEN, "") ?: ""
+        if (legacyAccessToken.isNotBlank() && legacyRefreshToken.isNotBlank()) {
+            migrateGoogleDriveTokens(legacyAccessToken, legacyRefreshToken)
+        }
+        return legacyRefreshToken
+    }
+
+    fun setGoogleDriveTokens(accessToken: String, refreshToken: String) {
+        secureSyncPrefs.edit().apply {
+            putString(KEY_GOOGLE_DRIVE_ACCESS_TOKEN, accessToken)
+            putString(KEY_GOOGLE_DRIVE_REFRESH_TOKEN, refreshToken)
+            apply()
+        }
+        prefs.edit().apply {
+            remove(KEY_GOOGLE_DRIVE_ACCESS_TOKEN)
+            remove(KEY_GOOGLE_DRIVE_REFRESH_TOKEN)
+            putLong(KEY_SYNC_SETTINGS_UPDATED_AT, System.currentTimeMillis())
+            apply()
+        }
+        refreshSyncSettings()
+    }
+
+    fun clearGoogleDriveTokens() {
+        secureSyncPrefs.edit().apply {
+            remove(KEY_GOOGLE_DRIVE_ACCESS_TOKEN)
+            remove(KEY_GOOGLE_DRIVE_REFRESH_TOKEN)
+            apply()
+        }
+        prefs.edit().apply {
+            remove(KEY_GOOGLE_DRIVE_ACCESS_TOKEN)
+            remove(KEY_GOOGLE_DRIVE_REFRESH_TOKEN)
+            putLong(KEY_SYNC_SETTINGS_UPDATED_AT, System.currentTimeMillis())
+            apply()
+        }
+        refreshSyncSettings()
+    }
+
+    fun hasGoogleDriveTokens(): Boolean {
+        return getGoogleDriveAccessToken().isNotBlank() && getGoogleDriveRefreshToken().isNotBlank()
+    }
+
+    fun getGoogleDriveAuthState(): String {
+        return prefs.getString(KEY_GOOGLE_DRIVE_AUTH_STATE, "") ?: ""
+    }
+
+    fun setGoogleDriveAuthState(state: String) {
+        prefs.edit().putString(KEY_GOOGLE_DRIVE_AUTH_STATE, state).apply()
+    }
+
+    fun clearGoogleDriveAuthState() {
+        prefs.edit().remove(KEY_GOOGLE_DRIVE_AUTH_STATE).apply()
+    }
+
+    fun getUniqueDeviceId(): String {
+        val existing = prefs.getString(KEY_SYNC_UNIQUE_DEVICE_ID, null)
+        if (!existing.isNullOrBlank()) {
+            return existing
+        }
+
+        val generated = UUID.randomUUID().toString()
+        prefs.edit().putString(KEY_SYNC_UNIQUE_DEVICE_ID, generated).apply()
+        return generated
+    }
+
+    fun getAppSettingsUpdatedAt(): Long = prefs.getLong(KEY_APP_SETTINGS_UPDATED_AT, 0L)
+
+    fun getReaderSettingsUpdatedAt(): Long = prefs.getLong(KEY_READER_SETTINGS_UPDATED_AT, 0L)
+
     // =========================================================================
     // CACHE SETTINGS
     // =========================================================================
@@ -1348,6 +1618,13 @@ class PreferencesManager(context: Context) {
             put("showBadges", settings.showBadges)
             put("defaultLibrarySort", settings.defaultLibrarySort.name)
             put("defaultLibraryFilter", settings.defaultLibraryFilter.name)
+            put("hideSpicyLibraryContent", settings.hideSpicyLibraryContent)
+            put(
+                "enabledLibraryFilters",
+                LibraryFilter.shelfOptions()
+                    .filter { it in settings.enabledLibraryFilters }
+                    .map { it.name }
+            )
             put("keepScreenOn", settings.keepScreenOn)
             put("infiniteScroll", settings.infiniteScroll)
             put("autoDownloadEnabled", settings.autoDownloadEnabled)
@@ -1402,6 +1679,7 @@ class PreferencesManager(context: Context) {
     fun resetToDefaults() {
         // Reset app settings to defaults
         updateAppSettings(AppSettings())
+        _isSpicyShelfRevealed.value = false
 
         // Reset reader settings to defaults
         resetReaderSettings()
@@ -1421,6 +1699,9 @@ class PreferencesManager(context: Context) {
         // Reset notification settings to defaults
         resetNotificationSettings()
 
+        // Reset sync settings to defaults
+        resetSyncSettings()
+
         // Reset search history and favorite providers
         clearSearchHistory()
         clearFavoriteProviders()
@@ -1431,6 +1712,7 @@ class PreferencesManager(context: Context) {
      */
     fun resetAppSettings() {
         updateAppSettings(AppSettings())
+        _isSpicyShelfRevealed.value = false
     }
 
     /**
@@ -1498,6 +1780,42 @@ class PreferencesManager(context: Context) {
             putBoolean(KEY_DOWNLOAD_NOTIFICATIONS, true)
             apply()
         }
+    }
+
+    /**
+     * Resets sync preferences to defaults but keeps the generated device id.
+     */
+    private fun resetSyncSettings() {
+        prefs.edit().apply {
+            putString(KEY_SYNC_SERVICE, SyncServiceType.NONE.name)
+            putInt(KEY_SYNC_INTERVAL_MINUTES, 0)
+            putLong(KEY_LAST_SYNC_TIME, 0L)
+            putBoolean(KEY_SYNC_SHOW_PROGRESS_NOTIFICATIONS, true)
+            putBoolean(KEY_SYNC_LIBRARY, true)
+            putBoolean(KEY_SYNC_BOOKMARKS, true)
+            putBoolean(KEY_SYNC_HISTORY, true)
+            putBoolean(KEY_SYNC_STATISTICS, true)
+            putBoolean(KEY_SYNC_SETTINGS, true)
+            putBoolean(KEY_SYNC_ON_CHAPTER_READ, false)
+            putBoolean(KEY_SYNC_ON_CHAPTER_OPEN, false)
+            putBoolean(KEY_SYNC_ON_APP_START, false)
+            putBoolean(KEY_SYNC_ON_APP_RESUME, false)
+            remove(KEY_GOOGLE_DRIVE_ACCESS_TOKEN)
+            remove(KEY_GOOGLE_DRIVE_REFRESH_TOKEN)
+            remove(KEY_GOOGLE_DRIVE_AUTH_STATE)
+            putLong(KEY_SYNC_SETTINGS_UPDATED_AT, System.currentTimeMillis())
+            apply()
+        }
+
+        secureSyncPrefs.edit().apply {
+            remove(KEY_GOOGLE_DRIVE_ACCESS_TOKEN)
+            remove(KEY_GOOGLE_DRIVE_REFRESH_TOKEN)
+            apply()
+        }
+
+        _syncSettings.value = loadSyncSettings()
+        _syncDataSelection.value = loadSyncDataSelection()
+        _syncTriggerOptions.value = loadSyncTriggerOptions()
     }
 
     /**
@@ -1666,6 +1984,8 @@ class PreferencesManager(context: Context) {
         private const val KEY_SHOW_BADGES = "show_badges"
         private const val KEY_DEFAULT_LIBRARY_SORT = "default_library_sort"
         private const val KEY_DEFAULT_LIBRARY_FILTER = "default_library_filter"
+        private const val KEY_HIDE_SPICY_LIBRARY_CONTENT = "hide_spicy_library_content"
+        private const val KEY_ENABLED_LIBRARY_FILTERS = "enabled_library_filters"
         private const val KEY_KEEP_SCREEN_ON = "keep_screen_on"
         private const val KEY_INFINITE_SCROLL = "infinite_scroll"
         private const val KEY_SEARCH_RESULTS_PER_PROVIDER = "search_results_per_provider"
@@ -1687,6 +2007,27 @@ class PreferencesManager(context: Context) {
         private const val KEY_LAST_BACKUP_TIME = "last_backup_time"
         private const val KEY_AUTO_BACKUP_ENABLED = "auto_backup_enabled"
         private const val KEY_AUTO_BACKUP_INTERVAL = "auto_backup_interval"
+        private const val KEY_LAST_SYNC_TIME = "last_sync_time"
+        private const val KEY_SYNC_SERVICE = "sync_service"
+        private const val KEY_SYNC_INTERVAL_MINUTES = "sync_interval_minutes"
+        private const val KEY_SYNC_SHOW_PROGRESS_NOTIFICATIONS = "sync_show_progress_notifications"
+        private const val KEY_SYNC_LIBRARY = "sync_library"
+        private const val KEY_SYNC_BOOKMARKS = "sync_bookmarks"
+        private const val KEY_SYNC_HISTORY = "sync_history"
+        private const val KEY_SYNC_STATISTICS = "sync_statistics"
+        private const val KEY_SYNC_SETTINGS = "sync_settings"
+        private const val KEY_SYNC_ON_CHAPTER_READ = "sync_on_chapter_read"
+        private const val KEY_SYNC_ON_CHAPTER_OPEN = "sync_on_chapter_open"
+        private const val KEY_SYNC_ON_APP_START = "sync_on_app_start"
+        private const val KEY_SYNC_ON_APP_RESUME = "sync_on_app_resume"
+        private const val KEY_GOOGLE_DRIVE_ACCESS_TOKEN = "google_drive_access_token"
+        private const val KEY_GOOGLE_DRIVE_REFRESH_TOKEN = "google_drive_refresh_token"
+        private const val KEY_GOOGLE_DRIVE_AUTH_STATE = "google_drive_auth_state"
+        private const val KEY_SYNC_UNIQUE_DEVICE_ID = "sync_unique_device_id"
+        private const val KEY_SYNC_SETTINGS_UPDATED_AT = "sync_settings_updated_at"
+        private const val KEY_APP_SETTINGS_UPDATED_AT = "app_settings_updated_at"
+        private const val KEY_READER_SETTINGS_UPDATED_AT = "reader_settings_updated_at"
+        private const val SECURE_SYNC_PREFS_NAME = "novery_secure_sync_prefs"
 
         // =====================================================================
         // CACHE
@@ -1726,6 +2067,42 @@ class PreferencesManager(context: Context) {
                 INSTANCE = instance
                 instance
             }
+        }
+    }
+
+    private fun createSecureSyncPreferences(context: Context): SharedPreferences {
+        return runCatching {
+            val masterKey = MasterKey.Builder(context)
+                .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+                .build()
+
+            EncryptedSharedPreferences.create(
+                context,
+                SECURE_SYNC_PREFS_NAME,
+                masterKey,
+                EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+            )
+        }.getOrElse {
+            context.getSharedPreferences(SECURE_SYNC_PREFS_NAME, Context.MODE_PRIVATE)
+        }
+    }
+
+    private fun migrateGoogleDriveTokens(accessToken: String, refreshToken: String) {
+        if (accessToken.isBlank() || refreshToken.isBlank()) {
+            return
+        }
+
+        secureSyncPrefs.edit().apply {
+            putString(KEY_GOOGLE_DRIVE_ACCESS_TOKEN, accessToken)
+            putString(KEY_GOOGLE_DRIVE_REFRESH_TOKEN, refreshToken)
+            apply()
+        }
+
+        prefs.edit().apply {
+            remove(KEY_GOOGLE_DRIVE_ACCESS_TOKEN)
+            remove(KEY_GOOGLE_DRIVE_REFRESH_TOKEN)
+            apply()
         }
     }
 }

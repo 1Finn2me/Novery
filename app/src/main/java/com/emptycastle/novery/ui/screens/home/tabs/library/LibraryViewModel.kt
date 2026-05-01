@@ -23,6 +23,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 private const val TAG = "LibraryViewModel"
+private const val ALL_FILTER_DOUBLE_TAP_WINDOW_MS = 500L
 
 class LibraryViewModel : ViewModel() {
 
@@ -35,21 +36,33 @@ class LibraryViewModel : ViewModel() {
     private val _uiState = MutableStateFlow(LibraryUiState())
     val uiState: StateFlow<LibraryUiState> = _uiState.asStateFlow()
 
+    private var lastAllFilterTapAt = 0L
+
     private val actionSheetManager = ActionSheetManager()
     val actionSheetState: StateFlow<com.emptycastle.novery.ui.screens.home.shared.ActionSheetState> = actionSheetManager.state
 
     init {
         initialize()
-        observeNewChapterCount()
 
         viewModelScope.launch {
             preferencesManager.appSettings.collect { settings ->
-                _uiState.update {
-                    it.copy(
-                        filter = settings.defaultLibraryFilter,
-                        sortOrder = settings.defaultLibrarySort
+                _uiState.update { state ->
+                    state.applyLibrarySettings(
+                        settings = settings,
+                        spicyShelfRevealed = preferencesManager.isSpicyShelfRevealed.value
                     )
                 }
+                updateVisibleItems()
+                applyFilters()
+            }
+        }
+
+        viewModelScope.launch {
+            preferencesManager.isSpicyShelfRevealed.collect { spicyShelfRevealed ->
+                _uiState.update { state ->
+                    state.applySpicyShelfVisibility(spicyShelfRevealed)
+                }
+                updateVisibleItems()
                 applyFilters()
             }
         }
@@ -59,10 +72,10 @@ class LibraryViewModel : ViewModel() {
         viewModelScope.launch {
             try {
                 val settings = preferencesManager.appSettings.value
-                _uiState.update {
-                    it.copy(
-                        filter = settings.defaultLibraryFilter,
-                        sortOrder = settings.defaultLibrarySort
+                _uiState.update { state ->
+                    state.applyLibrarySettings(
+                        settings = settings,
+                        spicyShelfRevealed = preferencesManager.isSpicyShelfRevealed.value
                     )
                 }
 
@@ -70,11 +83,11 @@ class LibraryViewModel : ViewModel() {
                     val counts = offlineRepository.getAllDownloadCounts()
                     _uiState.update { state ->
                         state.copy(
-                            items = items,
                             downloadCounts = counts,
                             isLoading = false
                         )
                     }
+                    updateVisibleItems(items)
                     applyFilters()
                 }
             } catch (e: Exception) {
@@ -84,20 +97,21 @@ class LibraryViewModel : ViewModel() {
         }
     }
 
-    private fun observeNewChapterCount() {
-        viewModelScope.launch {
-            try {
-                libraryRepository.observeTotalNewChapterCount().collect { count ->
-                    _uiState.update {
-                        it.copy(
-                            totalNewChapters = count,
-                            showNewChaptersCard = if (count > 0) true else it.showNewChaptersCard
-                        )
-                    }
+    private fun updateVisibleItems(allItems: List<LibraryItem> = _uiState.value.allItems) {
+        _uiState.update { state ->
+            val hiddenStatuses = getHiddenStatuses(state)
+            val visibleItems = allItems.filterNot { it.readingStatus in hiddenStatuses }
+
+            state.copy(
+                allItems = allItems,
+                items = visibleItems,
+                totalNewChapters = visibleItems.sumOf { it.newChapterCount },
+                filter = if (state.filter !in state.visibleFilters) {
+                    LibraryFilter.ALL
+                } else {
+                    state.filter
                 }
-            } catch (e: Exception) {
-                Log.e(TAG, "Error observing new chapter count", e)
-            }
+            )
         }
     }
 
@@ -106,8 +120,32 @@ class LibraryViewModel : ViewModel() {
     // ================================================================
 
     fun setFilter(filter: LibraryFilter) {
+        if (filter !in _uiState.value.visibleFilters) return
+
         _uiState.update { it.copy(filter = filter) }
         applyFilters()
+    }
+
+    fun onFilterChipPressed(filter: LibraryFilter) {
+        if (filter != LibraryFilter.ALL) {
+            lastAllFilterTapAt = 0L
+            setFilter(filter)
+            return
+        }
+
+        val now = System.currentTimeMillis()
+        val isDoubleTap = now - lastAllFilterTapAt <= ALL_FILTER_DOUBLE_TAP_WINDOW_MS
+        lastAllFilterTapAt = now
+
+        if (_uiState.value.filter != LibraryFilter.ALL) {
+            _uiState.update { it.copy(filter = LibraryFilter.ALL) }
+            applyFilters()
+        }
+
+        if (isDoubleTap && _uiState.value.spicyPrivacyEnabled) {
+            lastAllFilterTapAt = 0L
+            toggleSpicyFilterVisibility()
+        }
     }
 
     fun setSortOrder(sortOrder: LibrarySortOrder) {
@@ -139,6 +177,7 @@ class LibraryViewModel : ViewModel() {
         // Category filter
         val filtered = when (state.filter) {
             LibraryFilter.ALL -> searched
+            LibraryFilter.SPICY -> searched.filter { it.readingStatus == ReadingStatus.SPICY }
             LibraryFilter.DOWNLOADED -> searched.filter {
                 (downloadCounts[it.novel.url] ?: 0) > 0
             }
@@ -174,6 +213,13 @@ class LibraryViewModel : ViewModel() {
         }
 
         _uiState.update { it.copy(filteredItems = sorted) }
+    }
+
+    private fun toggleSpicyFilterVisibility() {
+        val state = _uiState.value
+        if (!state.spicyPrivacyEnabled || LibraryFilter.SPICY !in state.enabledShelfFilters) return
+
+        preferencesManager.setSpicyShelfRevealed(LibraryFilter.SPICY !in state.visibleFilters)
     }
 
     // ================================================================
@@ -416,11 +462,18 @@ class LibraryViewModel : ViewModel() {
         if (_uiState.value.isRefreshing) return
 
         viewModelScope.launch {
+            val stateAtRefreshStart = _uiState.value
             val currentFilter = _uiState.value.filter
             val currentDownloadCounts = _uiState.value.downloadCounts
+            val hiddenStatuses = getHiddenStatuses(stateAtRefreshStart)
+            val hiddenNovelUrlsToRefresh = getHiddenNovelUrlsToRefresh(
+                state = stateAtRefreshStart,
+                hiddenStatuses = hiddenStatuses
+            )
 
             val filterDisplayName = when (currentFilter) {
                 LibraryFilter.ALL -> "all novels"
+                LibraryFilter.SPICY -> "spicy novels"
                 LibraryFilter.DOWNLOADED -> "downloaded novels"
                 LibraryFilter.READING -> "reading novels"
                 LibraryFilter.COMPLETED -> "completed novels"
@@ -454,6 +507,7 @@ class LibraryViewModel : ViewModel() {
                         novelRepository.getProvider(providerName)
                     },
                     filter = currentFilter,
+                    excludedStatuses = hiddenStatuses,
                     downloadCounts = currentDownloadCounts,
                     onProgress = { current, total, novelName ->
                         _uiState.update {
@@ -470,16 +524,32 @@ class LibraryViewModel : ViewModel() {
                     }
                 )
 
+                if (hiddenNovelUrlsToRefresh.isNotEmpty()) {
+                    try {
+                        libraryRepository.refreshNovelsByUrls(
+                            getProvider = { providerName ->
+                                novelRepository.getProvider(providerName)
+                            },
+                            novelUrls = hiddenNovelUrlsToRefresh,
+                            onProgress = { _, _, _ -> }
+                        )
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Error refreshing hidden library shelf entries", e)
+                    }
+                }
+
                 novelsWithNewChapters = result.updatedCount
                 totalNewChapters = result.totalNewChapters
 
-                if (totalNewChapters > 0) {
-                    val novelsWithNew = _uiState.value.items.filter { it.hasNewChapters }
-                    novelsWithNew.forEach { item ->
+                val novelsWithNew = libraryRepository.getLibrary().filter { it.hasNewChapters }
+                novelsWithNew.forEach { item ->
+                    try {
                         notificationRepository.addOrUpdateNotification(
                             novelUrl = item.novel.url,
                             providerName = item.novel.apiName
                         )
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Error syncing update notification for ${item.novel.url}", e)
                     }
                 }
 
@@ -572,4 +642,56 @@ class LibraryViewModel : ViewModel() {
     }
 
     fun getReadingPosition(novelUrl: String) = actionSheetManager.getReadingPosition(novelUrl)
+
+    private fun getHiddenStatuses(state: LibraryUiState): Set<ReadingStatus> =
+        LibraryFilter.hiddenStatuses(state.visibleFilters)
+
+    private fun getHiddenNovelUrlsToRefresh(
+        state: LibraryUiState,
+        hiddenStatuses: Set<ReadingStatus>
+    ): Set<String> {
+        if (hiddenStatuses.isEmpty()) return emptySet()
+
+        return state.allItems
+            .asSequence()
+            .filter { it.readingStatus in hiddenStatuses }
+            .mapTo(mutableSetOf()) { it.novel.url }
+    }
+
+    private fun LibraryUiState.applyLibrarySettings(
+        settings: com.emptycastle.novery.domain.model.AppSettings,
+        spicyShelfRevealed: Boolean
+    ): LibraryUiState {
+        val privacyEnabled = settings.hideSpicyLibraryContent
+        val showSpicyFilter = !privacyEnabled || spicyShelfRevealed
+        val enabledShelfFilters = settings.enabledLibraryFilters
+        val visibleFilters = LibraryFilter.visibleFilters(enabledShelfFilters, showSpicyFilter)
+
+        return copy(
+            filter = LibraryFilter.sanitizeDefault(
+                settings.defaultLibraryFilter,
+                enabledShelfFilters
+            ),
+            sortOrder = settings.defaultLibrarySort,
+            spicyPrivacyEnabled = privacyEnabled,
+            enabledShelfFilters = enabledShelfFilters,
+            visibleFilters = visibleFilters
+        )
+    }
+
+    private fun LibraryUiState.applySpicyShelfVisibility(
+        spicyShelfRevealed: Boolean
+    ): LibraryUiState {
+        val showSpicyFilter = !spicyPrivacyEnabled || spicyShelfRevealed
+        val visibleFilters = LibraryFilter.visibleFilters(enabledShelfFilters, showSpicyFilter)
+
+        return copy(
+            visibleFilters = visibleFilters,
+            filter = if (filter !in visibleFilters) {
+                LibraryFilter.ALL
+            } else {
+                filter
+            }
+        )
+    }
 }

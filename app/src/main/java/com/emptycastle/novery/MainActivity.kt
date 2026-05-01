@@ -44,6 +44,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.navigation.compose.rememberNavController
 import com.emptycastle.novery.data.repository.RepositoryProvider
+import com.emptycastle.novery.data.sync.SyncTrigger
+import com.emptycastle.novery.data.sync.SyncWorker
 import com.emptycastle.novery.data.update.StartupUpdateChecker
 import com.emptycastle.novery.service.TTSNotifications
 import com.emptycastle.novery.ui.components.MarkdownText
@@ -82,6 +84,8 @@ class MainActivity : ComponentActivity() {
         lifecycleScope.launch {
             StartupUpdateChecker.checkOnStartup(applicationContext)
         }
+
+        SyncWorker.triggerNow(applicationContext, SyncTrigger.APP_START)
 
         setContent {
             val preferencesManager = remember { RepositoryProvider.getPreferencesManager() }
@@ -196,6 +200,11 @@ class MainActivity : ComponentActivity() {
     override fun onPause() {
         super.onPause()
         VolumeKeyManager.reset()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        SyncWorker.triggerNow(applicationContext, SyncTrigger.APP_RESUME)
     }
 }
 

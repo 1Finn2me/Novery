@@ -42,7 +42,8 @@ data class LibraryItem(
     val newChapterCount: Int = 0,
     val unreadChapterCount: Int = 0,
     val hasNewChapters: Boolean = false,
-    val lastCheckedAt: Long = 0
+    val lastCheckedAt: Long = 0,
+    val isSpicy: Boolean = false
 )
 
 /**
@@ -70,7 +71,9 @@ class LibraryRepository(
 
     fun observeLibrary(): Flow<List<LibraryItem>> {
         return libraryDao.getAllFlow().map { entities ->
-            entities.map { entity -> entity.toLibraryItem() }
+            entities.map { entity ->
+                entity.toLibraryItem()
+            }
         }
     }
 
@@ -83,7 +86,9 @@ class LibraryRepository(
      */
     fun observeNovelsWithNewChapters(): Flow<List<LibraryItem>> {
         return libraryDao.observeNovelsWithNewChapters().map { entities ->
-            entities.map { it.toLibraryItem() }
+            entities.map { entity ->
+                entity.toLibraryItem()
+            }
         }
     }
 
@@ -103,7 +108,9 @@ class LibraryRepository(
         val downloadCounts = getDownloadCounts()
 
         entities.map { entity ->
-            entity.toLibraryItem(downloadCounts[entity.url] ?: 0)
+            entity.toLibraryItem(
+                downloadCount = downloadCounts[entity.url] ?: 0
+            )
         }
     }
 
@@ -113,7 +120,9 @@ class LibraryRepository(
     suspend fun getLibraryItem(url: String): LibraryItem? = withContext(Dispatchers.IO) {
         val entity = libraryDao.getByUrl(url) ?: return@withContext null
         val downloadCount = offlineDao.getDownloadedCount(url)
-        entity.toLibraryItem(downloadCount)
+        entity.toLibraryItem(
+            downloadCount = downloadCount
+        )
     }
 
     suspend fun getLibraryByStatus(status: ReadingStatus): List<LibraryItem> =
@@ -171,7 +180,9 @@ class LibraryRepository(
         val downloadCounts = getDownloadCounts()
 
         entities.map { entity ->
-            entity.toLibraryItem(downloadCounts[entity.url] ?: 0)
+            entity.toLibraryItem(
+                downloadCount = downloadCounts[entity.url] ?: 0
+            )
         }
     }
 
@@ -356,15 +367,50 @@ class LibraryRepository(
     suspend fun refreshNovelsWithFilter(
         getProvider: (String) -> MainProvider?,
         filter: LibraryFilter,
+        excludedStatuses: Set<ReadingStatus> = emptySet(),
         downloadCounts: Map<String, Int> = emptyMap(),
         onProgress: (Int, Int, String) -> Unit = { _, _, _ -> }
     ): LibraryRefreshResult = withContext(Dispatchers.IO) {
         val allNovels = libraryDao.getAll()
 
         // Filter novels based on the current filter
-        val novelsToRefresh = filterNovelsForRefresh(allNovels, filter, downloadCounts)
-        val skippedCount = allNovels.size - novelsToRefresh.size
+        val novelsToRefresh = filterNovelsForRefresh(
+            novels = allNovels,
+            filter = filter,
+            downloadCounts = downloadCounts,
+            excludedStatuses = excludedStatuses
+        )
+        refreshNovels(
+            novelsToRefresh = novelsToRefresh,
+            totalNovelCount = allNovels.size,
+            getProvider = getProvider,
+            onProgress = onProgress
+        )
+    }
 
+    suspend fun refreshNovelsByUrls(
+        getProvider: (String) -> MainProvider?,
+        novelUrls: Set<String>,
+        onProgress: (Int, Int, String) -> Unit = { _, _, _ -> }
+    ): LibraryRefreshResult = withContext(Dispatchers.IO) {
+        val allNovels = libraryDao.getAll()
+        val novelsToRefresh = allNovels.filter { it.url in novelUrls }
+
+        refreshNovels(
+            novelsToRefresh = novelsToRefresh,
+            totalNovelCount = allNovels.size,
+            getProvider = getProvider,
+            onProgress = onProgress
+        )
+    }
+
+    private suspend fun refreshNovels(
+        novelsToRefresh: List<LibraryEntity>,
+        totalNovelCount: Int,
+        getProvider: (String) -> MainProvider?,
+        onProgress: (Int, Int, String) -> Unit
+    ): LibraryRefreshResult {
+        val skippedCount = totalNovelCount - novelsToRefresh.size
         var updatedCount = 0
         var totalNewChapters = 0
         val errors = mutableListOf<String>()
@@ -403,7 +449,7 @@ class LibraryRepository(
             kotlinx.coroutines.delay(300)
         }
 
-        LibraryRefreshResult(
+        return LibraryRefreshResult(
             updatedCount = updatedCount,
             totalNewChapters = totalNewChapters,
             totalChecked = novelsToRefresh.size,
@@ -418,32 +464,39 @@ class LibraryRepository(
     private fun filterNovelsForRefresh(
         novels: List<LibraryEntity>,
         filter: LibraryFilter,
-        downloadCounts: Map<String, Int>
+        downloadCounts: Map<String, Int>,
+        excludedStatuses: Set<ReadingStatus>
     ): List<LibraryEntity> {
-        return when (filter) {
-            LibraryFilter.ALL -> novels
+        val visibleNovels = novels.filterNot { it.getStatus() in excludedStatuses }
 
-            LibraryFilter.DOWNLOADED -> novels.filter { entity ->
+        return when (filter) {
+            LibraryFilter.ALL -> visibleNovels
+
+            LibraryFilter.SPICY -> visibleNovels.filter { entity ->
+                entity.getStatus() == ReadingStatus.SPICY
+            }
+
+            LibraryFilter.DOWNLOADED -> visibleNovels.filter { entity ->
                 (downloadCounts[entity.url] ?: 0) > 0
             }
 
-            LibraryFilter.READING -> novels.filter { entity ->
+            LibraryFilter.READING -> visibleNovels.filter { entity ->
                 entity.getStatus() == ReadingStatus.READING
             }
 
-            LibraryFilter.COMPLETED -> novels.filter { entity ->
+            LibraryFilter.COMPLETED -> visibleNovels.filter { entity ->
                 entity.getStatus() == ReadingStatus.COMPLETED
             }
 
-            LibraryFilter.ON_HOLD -> novels.filter { entity ->
+            LibraryFilter.ON_HOLD -> visibleNovels.filter { entity ->
                 entity.getStatus() == ReadingStatus.ON_HOLD
             }
 
-            LibraryFilter.PLAN_TO_READ -> novels.filter { entity ->
+            LibraryFilter.PLAN_TO_READ -> visibleNovels.filter { entity ->
                 entity.getStatus() == ReadingStatus.PLAN_TO_READ
             }
 
-            LibraryFilter.DROPPED -> novels.filter { entity ->
+            LibraryFilter.DROPPED -> visibleNovels.filter { entity ->
                 entity.getStatus() == ReadingStatus.DROPPED
             }
         }
@@ -465,7 +518,9 @@ class LibraryRepository(
     // PRIVATE HELPERS
     // ================================================================
 
-    private fun LibraryEntity.toLibraryItem(downloadCount: Int = 0): LibraryItem {
+    private fun LibraryEntity.toLibraryItem(
+        downloadCount: Int = 0
+    ): LibraryItem {
         return LibraryItem(
             novel = toNovel(),
             readingStatus = getStatus(),
@@ -484,7 +539,8 @@ class LibraryRepository(
             newChapterCount = newChapterCount,
             unreadChapterCount = unreadChapterCount,
             hasNewChapters = hasNewChapters,
-            lastCheckedAt = lastCheckedAt
+            lastCheckedAt = lastCheckedAt,
+            isSpicy = getStatus() == ReadingStatus.SPICY
         )
     }
 

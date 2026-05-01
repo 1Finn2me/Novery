@@ -12,6 +12,7 @@ object DetailsColors {
     val Dropped = Color(0xFFEF4444)
 
     val StatusReading = Color(0xFF3B82F6)
+    val StatusSpicy = Color(0xFFF97316)
     val StatusCompleted = Color(0xFF22C55E)
     val StatusOnHold = Color(0xFFF59E0B)
     val StatusPlanToRead = Color(0xFF8B5CF6)

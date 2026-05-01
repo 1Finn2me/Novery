@@ -239,7 +239,7 @@ fun BrowseTab(
                 }
             },
             onAddToLibrary = if (!data.isInLibrary) {
-                { viewModel.addToLibrary(data.novel) }
+                { status -> viewModel.addToLibrary(data.novel, status) }
             } else null,
             onRemoveFromLibrary = if (data.isInLibrary) {
                 { viewModel.removeFromLibrary(data.novel.url) }

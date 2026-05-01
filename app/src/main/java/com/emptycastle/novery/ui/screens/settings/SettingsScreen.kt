@@ -68,10 +68,17 @@ import androidx.compose.material.icons.outlined.ViewComfy
 import androidx.compose.material.icons.outlined.ViewCompact
 import androidx.compose.material.icons.outlined.ViewCozy
 import androidx.compose.material.icons.outlined.ViewModule
+import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material.icons.outlined.Warning
 import androidx.compose.material.icons.outlined.Wifi
 import androidx.compose.material.icons.rounded.CloudDownload
+import androidx.compose.material.icons.rounded.BookmarkAdd
+import androidx.compose.material.icons.rounded.Cancel
+import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.DragHandle
+import androidx.compose.material.icons.rounded.LocalFireDepartment
+import androidx.compose.material.icons.rounded.MenuBook
+import androidx.compose.material.icons.rounded.PauseCircle
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -275,6 +282,8 @@ fun SettingsScreen(
             item { SectionHeader("Library", Icons.Outlined.LibraryBooks) }
             item {
                 SettingsCard {
+                    val defaultFilterOptions = LibraryFilter.standardOptions(settings.enabledLibraryFilters)
+
                     ToggleItem(
                         icon = Icons.Outlined.Badge,
                         title = "Show Badges",
@@ -285,15 +294,32 @@ fun SettingsScreen(
                         }
                     )
                     SettingsDivider()
+                    ToggleItem(
+                        icon = Icons.Outlined.VisibilityOff,
+                        title = "Hide Spicy Shelf",
+                        subtitle = "Keep spicy novels hidden until you double-tap All in Library",
+                        checked = settings.hideSpicyLibraryContent,
+                        onCheckedChange = {
+                            if (it) {
+                                preferencesManager.setSpicyShelfRevealed(false)
+                            }
+                            preferencesManager.updateAppSettings(
+                                settings.copy(hideSpicyLibraryContent = it)
+                            )
+                        }
+                    )
+                    SettingsDivider()
                     DropdownItem(
                         icon = Icons.Outlined.FilterList,
                         title = "Default Filter",
                         selectedValue = settings.defaultLibraryFilter.displayName(),
-                        options = LibraryFilter.values().map { it.displayName() },
-                        selectedIndex = settings.defaultLibraryFilter.ordinal,
+                        options = defaultFilterOptions.map { it.displayName() },
+                        selectedIndex = defaultFilterOptions
+                            .indexOf(settings.defaultLibraryFilter)
+                            .coerceAtLeast(0),
                         onSelect = {
                             preferencesManager.updateAppSettings(
-                                settings.copy(defaultLibraryFilter = LibraryFilter.values()[it])
+                                settings.copy(defaultLibraryFilter = defaultFilterOptions[it])
                             )
                         }
                     )
@@ -311,6 +337,14 @@ fun SettingsScreen(
                         }
                     )
                 }
+            }
+            item {
+                LibraryShelfCard(
+                    settings = settings,
+                    onShelfEnabledChange = { filter, enabled ->
+                        preferencesManager.setLibraryShelfEnabled(filter, enabled)
+                    }
+                )
             }
 
             // ═══════════════════════════════════════════════════════════
@@ -1551,6 +1585,101 @@ private fun ProviderItem(
             )
             Switch(enabled, onEnabledChange)
         }
+    }
+}
+
+@Composable
+private fun LibraryShelfCard(
+    settings: AppSettings,
+    onShelfEnabledChange: (LibraryFilter, Boolean) -> Unit
+) {
+    SettingsCard {
+        SettingsLabel("Visible Shelves", Icons.Outlined.ViewModule)
+        Text(
+            "Turn off shelves you do not want in the Library filter bar. All always stays visible.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(12.dp))
+
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            LibraryFilter.shelfOptions().forEach { filter ->
+                LibraryShelfItem(
+                    filter = filter,
+                    enabled = filter in settings.enabledLibraryFilters,
+                    onEnabledChange = { onShelfEnabledChange(filter, it) }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun LibraryShelfItem(
+    filter: LibraryFilter,
+    enabled: Boolean,
+    onEnabledChange: (Boolean) -> Unit
+) {
+    val bg by animateColorAsState(
+        if (enabled) MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+        else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f),
+        label = "shelf_bg"
+    )
+
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = bg,
+        shape = RoundedCornerShape(12.dp)
+    ) {
+        Row(
+            Modifier.padding(12.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = getLibraryShelfIcon(filter),
+                contentDescription = null,
+                modifier = Modifier.size(22.dp),
+                tint = if (enabled) getLibraryShelfColor(filter)
+                else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f)
+            )
+            Text(
+                filter.displayName(),
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = FontWeight.Medium,
+                color = if (enabled) MaterialTheme.colorScheme.onSurface
+                else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+            )
+            Switch(enabled, onEnabledChange)
+        }
+    }
+}
+
+private fun getLibraryShelfIcon(filter: LibraryFilter): ImageVector {
+    return when (filter) {
+        LibraryFilter.ALL -> Icons.Outlined.LibraryBooks
+        LibraryFilter.SPICY -> Icons.Rounded.LocalFireDepartment
+        LibraryFilter.DOWNLOADED -> Icons.Rounded.CloudDownload
+        LibraryFilter.READING -> Icons.Rounded.MenuBook
+        LibraryFilter.COMPLETED -> Icons.Rounded.CheckCircle
+        LibraryFilter.ON_HOLD -> Icons.Rounded.PauseCircle
+        LibraryFilter.PLAN_TO_READ -> Icons.Rounded.BookmarkAdd
+        LibraryFilter.DROPPED -> Icons.Rounded.Cancel
+    }
+}
+
+@Composable
+private fun getLibraryShelfColor(filter: LibraryFilter): Color {
+    return when (filter) {
+        LibraryFilter.ALL -> MaterialTheme.colorScheme.primary
+        LibraryFilter.SPICY -> Color(0xFFF97316)
+        LibraryFilter.DOWNLOADED -> Color(0xFF06B6D4)
+        LibraryFilter.READING -> Color(0xFF3B82F6)
+        LibraryFilter.COMPLETED -> Color(0xFF22C55E)
+        LibraryFilter.ON_HOLD -> Color(0xFFF59E0B)
+        LibraryFilter.PLAN_TO_READ -> Color(0xFF8B5CF6)
+        LibraryFilter.DROPPED -> Color(0xFFEF4444)
     }
 }
 

@@ -8,6 +8,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.emptycastle.novery.data.repository.LibraryItem
 import com.emptycastle.novery.data.repository.RepositoryProvider
+import com.emptycastle.novery.domain.model.LibraryFilter
 import com.emptycastle.novery.service.DownloadPriority
 import com.emptycastle.novery.service.DownloadRequest
 import com.emptycastle.novery.service.DownloadServiceManager
@@ -40,8 +41,15 @@ class NotificationViewModel : ViewModel() {
             try {
                 combine(
                     notificationRepository.observeNotificationEntries(),
-                    libraryRepository.observeLibrary()
-                ) { notificationEntries, libraryItems ->
+                    libraryRepository.observeLibrary(),
+                    preferencesManager.appSettings,
+                    preferencesManager.isSpicyShelfRevealed
+                ) { notificationEntries, libraryItems, appSettings, spicyShelfRevealed ->
+                    val visibleFilters = LibraryFilter.visibleFilters(
+                        enabledFilters = appSettings.enabledLibraryFilters,
+                        showSpicyFilter = !appSettings.hideSpicyLibraryContent || spicyShelfRevealed
+                    )
+                    val hiddenStatuses = LibraryFilter.hiddenStatuses(visibleFilters)
                     val libraryMap = libraryItems.associateBy { it.novel.url }
 
                     val displayItems = notificationEntries.mapNotNull { entry ->
@@ -58,7 +66,11 @@ class NotificationViewModel : ViewModel() {
                             }
                             null
                         }
-                    }.sortedWith(
+                    }
+                        .filter { item ->
+                            item.libraryItem.readingStatus !in hiddenStatuses
+                        }
+                        .sortedWith(
                         compareByDescending<NotificationDisplayItem> { it.isNew }
                             .thenByDescending { it.notificationEntry.lastUpdatedAt }
                     )
@@ -101,8 +113,8 @@ class NotificationViewModel : ViewModel() {
         viewModelScope.launch {
             try {
                 _uiState.update { it.copy(isMarkingAllSeen = true) }
-                notificationRepository.markAllAsSeen()
                 _uiState.value.displayItems.forEach { item ->
+                    notificationRepository.markAsSeen(item.libraryItem.novel.url)
                     libraryRepository.acknowledgeNewChapters(item.libraryItem.novel.url)
                 }
             } catch (e: Exception) {
@@ -131,8 +143,8 @@ class NotificationViewModel : ViewModel() {
     fun confirmClearAll() {
         viewModelScope.launch {
             try {
-                notificationRepository.clearAllNotifications()
                 _uiState.value.displayItems.forEach { item ->
+                    notificationRepository.removeNotification(item.libraryItem.novel.url)
                     libraryRepository.acknowledgeNewChapters(item.libraryItem.novel.url)
                 }
             } catch (e: Exception) {

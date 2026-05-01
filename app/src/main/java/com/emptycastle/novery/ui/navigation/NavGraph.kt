@@ -13,6 +13,7 @@ import com.emptycastle.novery.data.cache.CacheManager
 import com.emptycastle.novery.data.local.NovelDatabase
 import com.emptycastle.novery.data.local.PreferencesManager
 import com.emptycastle.novery.data.repository.RepositoryProvider
+import com.emptycastle.novery.data.sync.SyncManager
 import com.emptycastle.novery.domain.model.AppSettings
 import com.emptycastle.novery.ui.screens.about.AboutScreen
 import com.emptycastle.novery.ui.screens.details.DetailsScreen
@@ -151,13 +152,16 @@ fun NoveryNavGraph(
         composable(route = NavRoutes.Storage.route) {
             val context = LocalContext.current
             val database = remember { NovelDatabase.getInstance(context) }
-            val prefsManager = remember { PreferencesManager(context) }
+            val prefsManager = remember { RepositoryProvider.getPreferencesManager() }
             val cacheManager = remember { CacheManager(context, database) }
             val backupManager = remember { BackupManager(context, database, prefsManager) }
+            val syncManager = remember { SyncManager(context, prefsManager, backupManager) }
 
             StorageScreen(
                 cacheManager = cacheManager,
                 backupManager = backupManager,
+                preferencesManager = prefsManager,
+                syncManager = syncManager,
                 onBack = { navController.popBackStack() }
             )
         }

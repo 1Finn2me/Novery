@@ -472,8 +472,8 @@ class ProviderBrowseViewModel(
         actionSheetManager.updateReadingStatus(status)
     }
 
-    fun addToLibrary(novel: Novel) {
-        viewModelScope.launch { actionSheetManager.addToLibrary(novel) }
+    fun addToLibrary(novel: Novel, status: ReadingStatus) {
+        viewModelScope.launch { actionSheetManager.addToLibrary(novel, status) }
     }
 
     fun removeFromLibrary(novelUrl: String) {

@@ -201,6 +201,24 @@ class ActionSheetManager {
         }
     }
 
+    suspend fun addToLibrary(novel: Novel, status: ReadingStatus): Boolean {
+        return try {
+            libraryRepository.addToLibrary(novel, status)
+            _state.update { state ->
+                state.copy(
+                    data = state.data?.copy(
+                        isInLibrary = true,
+                        readingStatus = status
+                    )
+                )
+            }
+            refreshLibraryStatus()
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
+
     suspend fun removeFromLibrary(novelUrl: String): Boolean {
         return try {
             libraryRepository.removeFromLibrary(novelUrl)

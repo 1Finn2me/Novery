@@ -37,6 +37,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.MenuBook
 import androidx.compose.material.icons.filled.Cancel
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.LocalFireDepartment
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.Pause
@@ -115,6 +116,7 @@ private object ActionSheetColors {
     val Error = Color(0xFFEF4444)
 
     val StatusReading = Color(0xFF3B82F6)
+    val StatusSpicy = Color(0xFFF97316)
     val StatusCompleted = Color(0xFF22C55E)
     val StatusOnHold = Color(0xFFF59E0B)
     val StatusPlanToRead = Color(0xFF8B5CF6)
@@ -122,11 +124,17 @@ private object ActionSheetColors {
 
     fun forStatus(status: ReadingStatus) = when (status) {
         ReadingStatus.READING -> StatusReading
+        ReadingStatus.SPICY -> StatusSpicy
         ReadingStatus.COMPLETED -> StatusCompleted
         ReadingStatus.ON_HOLD -> StatusOnHold
         ReadingStatus.PLAN_TO_READ -> StatusPlanToRead
         ReadingStatus.DROPPED -> StatusDropped
     }
+}
+
+private enum class StatusPickerMode {
+    ADD,
+    UPDATE
 }
 
 // ================================================================
@@ -174,14 +182,14 @@ fun NovelActionSheet(
     onDismiss: () -> Unit,
     onViewDetails: () -> Unit,
     onContinueReading: () -> Unit,
-    onAddToLibrary: (() -> Unit)?,
+    onAddToLibrary: ((ReadingStatus) -> Unit)?,
     onRemoveFromLibrary: (() -> Unit)?,
     onStatusChange: ((ReadingStatus) -> Unit)? = null,
     onRemoveFromHistory: (() -> Unit)? = null
 ) {
     var showCoverZoom by remember { mutableStateOf(false) }
     var showSynopsisOverlay by remember { mutableStateOf(false) }
-    var showStatusPicker by remember { mutableStateOf(false) }
+    var statusPickerMode by remember { mutableStateOf<StatusPickerMode?>(null) }
     var showRemoveConfirmation by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
@@ -202,18 +210,29 @@ fun NovelActionSheet(
         )
     }
 
-    if (showStatusPicker) {
+    if (statusPickerMode != null) {
+        val pickerMode = statusPickerMode
         StatusPickerDialog(
             currentStatus = data.readingStatus ?: ReadingStatus.READING,
+            title = if (pickerMode == StatusPickerMode.ADD) "Add to Library" else "Reading Status",
+            showRemove = pickerMode == StatusPickerMode.UPDATE && onRemoveFromLibrary != null,
             onStatusSelect = { status ->
-                showStatusPicker = false
-                onStatusChange?.invoke(status)
+                statusPickerMode = null
+                if (pickerMode == StatusPickerMode.ADD) {
+                    scope.launch {
+                        sheetState.hide()
+                        onDismiss()
+                        onAddToLibrary?.invoke(status)
+                    }
+                } else {
+                    onStatusChange?.invoke(status)
+                }
             },
             onRemove = {
-                showStatusPicker = false
+                statusPickerMode = null
                 showRemoveConfirmation = true
             },
-            onDismiss = { showStatusPicker = false }
+            onDismiss = { statusPickerMode = null }
         )
     }
 
@@ -291,13 +310,9 @@ fun NovelActionSheet(
                     }
                 },
                 onAddToLibrary = {
-                    scope.launch {
-                        sheetState.hide()
-                        onDismiss()
-                        onAddToLibrary?.invoke()
-                    }
+                    statusPickerMode = StatusPickerMode.ADD
                 },
-                onOpenStatusPicker = { showStatusPicker = true },
+                onOpenStatusPicker = { statusPickerMode = StatusPickerMode.UPDATE },
                 onRemoveFromHistory = onRemoveFromHistory?.let { callback ->
                     {
                         scope.launch {
@@ -964,6 +979,8 @@ private fun StatusSelectorButton(
 @Composable
 private fun StatusPickerDialog(
     currentStatus: ReadingStatus,
+    title: String,
+    showRemove: Boolean,
     onStatusSelect: (ReadingStatus) -> Unit,
     onRemove: () -> Unit,
     onDismiss: () -> Unit
@@ -984,7 +1001,7 @@ private fun StatusPickerDialog(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "Reading Status",
+                        text = title,
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Bold
                     )
@@ -1020,19 +1037,20 @@ private fun StatusPickerDialog(
                     )
                 }
 
-                Spacer(modifier = Modifier.height(4.dp))
+                if (showRemove) {
+                    Spacer(modifier = Modifier.height(4.dp))
 
-                HorizontalDivider(
-                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
-                    modifier = Modifier.padding(horizontal = 12.dp)
-                )
+                    HorizontalDivider(
+                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
+                        modifier = Modifier.padding(horizontal = 12.dp)
+                    )
 
-                Spacer(modifier = Modifier.height(4.dp))
+                    Spacer(modifier = Modifier.height(4.dp))
 
-                // Remove option
-                RemoveOptionItem(onClick = onRemove)
+                    RemoveOptionItem(onClick = onRemove)
 
-                Spacer(modifier = Modifier.height(4.dp))
+                    Spacer(modifier = Modifier.height(4.dp))
+                }
             }
         }
     }
@@ -1417,6 +1435,7 @@ private fun formatVotesCompact(votes: Int): String = when {
 
 private fun getStatusIcon(status: ReadingStatus): ImageVector = when (status) {
     ReadingStatus.READING -> Icons.Default.MenuBook
+    ReadingStatus.SPICY -> Icons.Default.LocalFireDepartment
     ReadingStatus.COMPLETED -> Icons.Default.CheckCircle
     ReadingStatus.ON_HOLD -> Icons.Default.Pause
     ReadingStatus.PLAN_TO_READ -> Icons.Default.Schedule

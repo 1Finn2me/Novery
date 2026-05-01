@@ -5,6 +5,7 @@ import com.emptycastle.novery.data.local.NovelDatabase
 import com.emptycastle.novery.data.local.PreferencesManager
 import com.emptycastle.novery.data.remote.CloudflareManager
 import com.emptycastle.novery.data.repository.RepositoryProvider
+import com.emptycastle.novery.data.sync.SyncWorker
 import com.emptycastle.novery.provider.AllNovelProvider
 import com.emptycastle.novery.provider.FreeWebNovelProvider
 import com.emptycastle.novery.provider.LibReadProvider
@@ -58,6 +59,9 @@ class NoveryApp : Application() {
 
         // Create notification channels
         NotificationHelper.createNotificationChannels(this)
+
+        // Restore background sync scheduling from saved preferences.
+        SyncWorker.schedule(this)
     }
 
     override fun onTerminate() {

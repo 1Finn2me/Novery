@@ -65,6 +65,7 @@ import androidx.compose.material.icons.rounded.Clear
 import androidx.compose.material.icons.rounded.CloudDownload
 import androidx.compose.material.icons.rounded.Explore
 import androidx.compose.material.icons.rounded.LibraryBooks
+import androidx.compose.material.icons.rounded.LocalFireDepartment
 import androidx.compose.material.icons.rounded.MenuBook
 import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.material.icons.rounded.PauseCircle
@@ -130,6 +131,7 @@ import com.emptycastle.novery.util.calculateGridColumns
 private object LibraryColors {
     val NewChapters = Color(0xFF10B981)
     val NewChaptersLight = Color(0xFF34D399)
+    val Spicy = Color(0xFFF97316)
     val Reading = Color(0xFF3B82F6)
     val Completed = Color(0xFF22C55E)
     val OnHold = Color(0xFFF59E0B)
@@ -263,9 +265,10 @@ fun LibraryTab(
         // Filter Bar
         LibraryFilterBar(
             selectedFilter = uiState.filter,
+            visibleFilters = uiState.visibleFilters,
             onFilterChange = { filter ->
                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                viewModel.setFilter(filter)
+                viewModel.onFilterChipPressed(filter)
             },
             itemCounts = uiState.getFilterCounts(),
             modifier = Modifier.align(Alignment.BottomCenter)
@@ -1004,6 +1007,12 @@ private data class FilterEmptyContent(
 @Composable
 private fun getFilterEmptyContent(filter: LibraryFilter): FilterEmptyContent {
     return when (filter) {
+        LibraryFilter.SPICY -> FilterEmptyContent(
+            icon = Icons.Rounded.LocalFireDepartment,
+            color = LibraryColors.Spicy,
+            message = "No spicy novels yet",
+            hint = "Assign a novel to Spicy to keep it on this separate shelf"
+        )
         LibraryFilter.DOWNLOADED -> FilterEmptyContent(
             icon = Icons.Rounded.CloudDownload,
             color = LibraryColors.Downloaded,
@@ -1162,6 +1171,7 @@ private fun LibraryLoadingSkeleton(
 @Composable
 private fun LibraryFilterBar(
     selectedFilter: LibraryFilter,
+    visibleFilters: List<LibraryFilter>,
     onFilterChange: (LibraryFilter) -> Unit,
     itemCounts: Map<LibraryFilter, Int>,
     modifier: Modifier = Modifier
@@ -1175,7 +1185,7 @@ private fun LibraryFilterBar(
             .padding(horizontal = dimensions.gridPadding, vertical = 10.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        LibraryFilter.entries.forEach { filter ->
+        visibleFilters.forEach { filter ->
             LibraryFilterChip(
                 filter = filter,
                 selected = selectedFilter == filter,
@@ -1283,6 +1293,7 @@ private fun LibraryFilterChip(
 private fun getFilterColor(filter: LibraryFilter): Color {
     return when (filter) {
         LibraryFilter.ALL -> MaterialTheme.colorScheme.primary
+        LibraryFilter.SPICY -> LibraryColors.Spicy
         LibraryFilter.DOWNLOADED -> LibraryColors.Downloaded
         LibraryFilter.READING -> LibraryColors.Reading
         LibraryFilter.COMPLETED -> LibraryColors.Completed
@@ -1295,6 +1306,7 @@ private fun getFilterColor(filter: LibraryFilter): Color {
 private fun getFilterIcon(filter: LibraryFilter): ImageVector? {
     return when (filter) {
         LibraryFilter.ALL -> Icons.Rounded.LibraryBooks
+        LibraryFilter.SPICY -> Icons.Rounded.LocalFireDepartment
         LibraryFilter.DOWNLOADED -> Icons.Rounded.CloudDownload
         LibraryFilter.READING -> Icons.Rounded.MenuBook
         LibraryFilter.COMPLETED -> Icons.Rounded.CheckCircle
@@ -1307,6 +1319,7 @@ private fun getFilterIcon(filter: LibraryFilter): ImageVector? {
 private fun LibraryUiState.getFilterCounts(): Map<LibraryFilter, Int> {
     return mapOf(
         LibraryFilter.ALL to items.size,
+        LibraryFilter.SPICY to items.count { it.readingStatus == ReadingStatus.SPICY },
         LibraryFilter.DOWNLOADED to items.count { (downloadCounts[it.novel.url] ?: 0) > 0 },
         LibraryFilter.READING to items.count { it.readingStatus == ReadingStatus.READING },
         LibraryFilter.COMPLETED to items.count { it.readingStatus == ReadingStatus.COMPLETED },

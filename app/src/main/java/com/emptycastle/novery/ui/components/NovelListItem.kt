@@ -83,6 +83,7 @@ import com.emptycastle.novery.ui.theme.StatusDROPPED
 import com.emptycastle.novery.ui.theme.StatusOnHold
 import com.emptycastle.novery.ui.theme.StatusPlanToRead
 import com.emptycastle.novery.ui.theme.StatusReading
+import com.emptycastle.novery.ui.theme.StatusSpicy
 
 // ══════════════════════════════════════════════════════════════════════════════
 // Design Tokens
@@ -514,6 +515,7 @@ private fun ListStatusBadge(
     val statusColor = remember(status) {
         when (status) {
             ReadingStatus.READING -> StatusReading
+            ReadingStatus.SPICY -> StatusSpicy
             ReadingStatus.COMPLETED -> StatusCompleted
             ReadingStatus.ON_HOLD -> StatusOnHold
             ReadingStatus.PLAN_TO_READ -> StatusPlanToRead
@@ -562,6 +564,7 @@ private fun ListStatusDot(
     val statusColor = remember(status) {
         when (status) {
             ReadingStatus.READING -> StatusReading
+            ReadingStatus.SPICY -> StatusSpicy
             ReadingStatus.COMPLETED -> StatusCompleted
             ReadingStatus.ON_HOLD -> StatusOnHold
             ReadingStatus.PLAN_TO_READ -> StatusPlanToRead

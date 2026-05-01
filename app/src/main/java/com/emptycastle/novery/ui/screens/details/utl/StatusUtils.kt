@@ -3,6 +3,7 @@ package com.emptycastle.novery.ui.screens.details.util
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Cancel
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.LocalFireDepartment
 import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.Schedule
@@ -17,6 +18,7 @@ object StatusUtils {
 
     fun getStatusColor(status: ReadingStatus): Color = when (status) {
         ReadingStatus.READING -> DetailsColors.StatusReading
+        ReadingStatus.SPICY -> DetailsColors.StatusSpicy
         ReadingStatus.COMPLETED -> DetailsColors.StatusCompleted
         ReadingStatus.ON_HOLD -> DetailsColors.StatusOnHold
         ReadingStatus.PLAN_TO_READ -> DetailsColors.StatusPlanToRead
@@ -25,6 +27,7 @@ object StatusUtils {
 
     fun getStatusIcon(status: ReadingStatus): ImageVector = when (status) {
         ReadingStatus.READING -> Icons.Default.MenuBook
+        ReadingStatus.SPICY -> Icons.Default.LocalFireDepartment
         ReadingStatus.COMPLETED -> Icons.Default.CheckCircle
         ReadingStatus.ON_HOLD -> Icons.Default.Pause
         ReadingStatus.PLAN_TO_READ -> Icons.Default.Schedule
@@ -33,6 +36,7 @@ object StatusUtils {
 
     fun getStatusDescription(status: ReadingStatus): String = when (status) {
         ReadingStatus.READING -> "Currently reading this novel"
+        ReadingStatus.SPICY -> "Saved to the hidden spicy shelf"
         ReadingStatus.COMPLETED -> "Finished reading all chapters"
         ReadingStatus.ON_HOLD -> "Paused reading temporarily"
         ReadingStatus.PLAN_TO_READ -> "Added to reading list"
@@ -45,6 +49,7 @@ object StatusUtils {
  */
 fun ReadingStatus.displayName(): String = when (this) {
     ReadingStatus.READING -> "Reading"
+    ReadingStatus.SPICY -> "Spicy"
     ReadingStatus.COMPLETED -> "Completed"
     ReadingStatus.ON_HOLD -> "On Hold"
     ReadingStatus.PLAN_TO_READ -> "Plan to Read"

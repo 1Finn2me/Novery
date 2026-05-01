@@ -66,7 +66,8 @@ class BackupManager(
     /**
      * Create a complete backup of all app data
      */
-    suspend fun createBackup(): BackupData = withContext(Dispatchers.IO) {
+    suspend fun createBackup(selection: BackupSelection = BackupSelection()): BackupData =
+        withContext(Dispatchers.IO) {
         val libraryDao = database.libraryDao()
         val bookmarkDao = database.bookmarkDao()
         val historyDao = database.historyDao()
@@ -77,31 +78,71 @@ class BackupManager(
             createdAt = System.currentTimeMillis(),
             appVersion = getAppVersion(),
             deviceInfo = getDeviceInfo(),
-            library = libraryDao.getAll().map { it.toBackup() },
-            bookmarks = bookmarkDao.getAll().map { it.toBackup() },
-            history = historyDao.getAll().map { it.toBackup() },
-            readChapters = historyDao.getAllReadChapters().map { it.toBackup() },
-            readingStats = statsDao.getAllStats().map { it.toBackup() },
-            readingStreak = statsDao.getStreak()?.toBackup(),
-            appSettings = preferencesManager.appSettings.value.toBackup(),
-            readerSettings = preferencesManager.readerSettings.value.toBackup()
+            library = if (selection.includeLibrary) {
+                libraryDao.getAll().map { it.toBackup() }
+            } else {
+                emptyList()
+            },
+            bookmarks = if (selection.includeBookmarks) {
+                bookmarkDao.getAll().map { it.toBackup() }
+            } else {
+                emptyList()
+            },
+            history = if (selection.includeHistory) {
+                historyDao.getAll().map { it.toBackup() }
+            } else {
+                emptyList()
+            },
+            readChapters = if (selection.includeHistory) {
+                historyDao.getAllReadChapters().map { it.toBackup() }
+            } else {
+                emptyList()
+            },
+            readingStats = if (selection.includeStatistics) {
+                statsDao.getAllStats().map { it.toBackup() }
+            } else {
+                emptyList()
+            },
+            readingStreak = if (selection.includeStatistics) {
+                statsDao.getStreak()?.toBackup()
+            } else {
+                null
+            },
+            appSettings = if (selection.includeSettings) {
+                preferencesManager.appSettings.value.toBackup(
+                    preferencesManager.getAppSettingsUpdatedAt()
+                )
+            } else {
+                null
+            },
+            readerSettings = if (selection.includeSettings) {
+                preferencesManager.readerSettings.value.toBackup(
+                    preferencesManager.getReaderSettingsUpdatedAt()
+                )
+            } else {
+                null
+            }
         )
     }
 
     /**
      * Export backup to JSON string
      */
-    suspend fun exportToJson(): String = withContext(Dispatchers.IO) {
-        val backup = createBackup()
+    suspend fun exportToJson(selection: BackupSelection = BackupSelection()): String =
+        withContext(Dispatchers.IO) {
+        val backup = createBackup(selection)
         json.encodeToString(backup)
     }
 
     /**
      * Export backup to a URI (file)
      */
-    suspend fun exportToUri(uri: Uri): Result<Unit> = withContext(Dispatchers.IO) {
+    suspend fun exportToUri(
+        uri: Uri,
+        selection: BackupSelection = BackupSelection()
+    ): Result<Unit> = withContext(Dispatchers.IO) {
         try {
-            val backupJson = exportToJson()
+            val backupJson = exportToJson(selection)
             context.contentResolver.openOutputStream(uri)?.use { outputStream ->
                 outputStream.write(backupJson.toByteArray(Charsets.UTF_8))
             } ?: return@withContext Result.failure(Exception("Could not open output stream"))
@@ -210,7 +251,7 @@ class BackupManager(
                 )
             }
 
-            restoreBackup(backup, options)
+            restoreBackupData(backup, options)
         } catch (e: Exception) {
             RestoreResult(
                 success = false,
@@ -232,7 +273,7 @@ class BackupManager(
             } else {
                 json.decodeFromString<BackupData>(backupJson)
             }
-            restoreBackup(backup, options)
+            restoreBackupData(backup, options)
         } catch (e: Exception) {
             RestoreResult(
                 success = false,
@@ -241,7 +282,7 @@ class BackupManager(
         }
     }
 
-    private suspend fun restoreBackup(
+    suspend fun restoreBackupData(
         backup: BackupData,
         options: RestoreOptions
     ): RestoreResult {
@@ -264,10 +305,7 @@ class BackupManager(
                 if (options.restoreBookmarks) bookmarkDao.deleteAll()
                 if (options.restoreHistory) {
                     historyDao.deleteAll()
-                    // Clear all read chapters - need to iterate through novels
-                    libraryDao.getAll().forEach {
-                        historyDao.clearReadChapters(it.url)
-                    }
+                    historyDao.clearAllReadChapters()
                 }
                 if (options.restoreStatistics) {
                     statsDao.deleteAllStats()
@@ -285,11 +323,8 @@ class BackupManager(
                             libraryDao.insert(entity)
                             libraryCount++
                         } else {
-                            // Optionally merge: keep newer data
-                            if ((entity.lastReadAt ?: 0) > (existing.lastReadAt ?: 0)) {
-                                libraryDao.insert(entity)
-                                libraryCount++
-                            }
+                            libraryDao.insert(existing.mergeForSync(entity))
+                            libraryCount++
                         }
                     } else {
                         libraryDao.insert(entity)
@@ -300,9 +335,18 @@ class BackupManager(
 
             // Restore bookmarks
             if (options.restoreBookmarks) {
+                val existingBookmarks = if (options.mergeWithExisting) {
+                    bookmarkDao.getAll().map { it.syncKey() }.toMutableSet()
+                } else {
+                    mutableSetOf()
+                }
+
                 backup.bookmarks.forEach { item ->
-                    bookmarkDao.insert(item.toEntity())
-                    bookmarkCount++
+                    val entity = item.toEntity()
+                    if (!options.mergeWithExisting || existingBookmarks.add(entity.syncKey())) {
+                        bookmarkDao.insert(entity)
+                        bookmarkCount++
+                    }
                 }
             }
 
@@ -326,7 +370,13 @@ class BackupManager(
             // Restore statistics
             if (options.restoreStatistics) {
                 backup.readingStats.forEach { item ->
-                    statsDao.insertStats(item.toEntity())
+                    val entity = item.toEntity()
+                    val existing = if (options.mergeWithExisting) {
+                        statsDao.getStatsForNovelDay(entity.novelUrl, entity.date)
+                    } else {
+                        null
+                    }
+                    statsDao.insertStats(existing?.mergeForSync(entity) ?: entity)
                     statsCount++
                 }
                 backup.readingStreak?.let { streak ->
@@ -484,7 +534,8 @@ private fun ReadingStreakEntity.toBackup() = ReadingStreakBackup(
     updatedAt = updatedAt
 )
 
-private fun AppSettings.toBackup() = AppSettingsBackup(
+private fun AppSettings.toBackup(updatedAt: Long) = AppSettingsBackup(
+    updatedAt = updatedAt,
     themeMode = themeMode.name,
     amoledBlack = amoledBlack,
     useDynamicColor = useDynamicColor,
@@ -498,7 +549,14 @@ private fun AppSettings.toBackup() = AppSettingsBackup(
     searchDisplayMode = searchDisplayMode.name,
     ratingFormat = ratingFormat.name,
     defaultLibrarySort = defaultLibrarySort.name,
-    defaultLibraryFilter = defaultLibraryFilter.name,
+    defaultLibraryFilter = LibraryFilter.sanitizeDefault(
+        defaultLibraryFilter,
+        enabledLibraryFilters
+    ).name,
+    hideSpicyLibraryContent = hideSpicyLibraryContent,
+    enabledLibraryFilters = LibraryFilter.shelfOptions()
+        .filter { it in enabledLibraryFilters }
+        .map { it.name },
     autoDownloadEnabled = autoDownloadEnabled,
     autoDownloadOnWifiOnly = autoDownloadOnWifiOnly,
     autoDownloadLimit = autoDownloadLimit,
@@ -510,7 +568,8 @@ private fun AppSettings.toBackup() = AppSettingsBackup(
     disabledProviders = disabledProviders.toList()
 )
 
-private fun ReaderSettings.toBackup() = ReaderSettingsBackup(
+private fun ReaderSettings.toBackup(updatedAt: Long) = ReaderSettingsBackup(
+    updatedAt = updatedAt,
     fontSize = fontSize,
     lineHeight = lineHeight,
     fontFamily = fontFamily.id,
@@ -583,6 +642,32 @@ private fun LibraryBackup.toEntity() = LibraryEntity(
     unreadChapterCount = unreadChapterCount
 )
 
+private fun LibraryEntity.mergeForSync(remote: LibraryEntity): LibraryEntity {
+    val localReadAt = lastReadAt ?: 0L
+    val remoteReadAt = remote.lastReadAt ?: 0L
+    val newestRead = if (remoteReadAt > localReadAt) remote else this
+    val newestMetadata = if (remote.lastUpdatedAt > lastUpdatedAt) remote else this
+
+    return newestMetadata.copy(
+        name = newestMetadata.name.ifBlank { newestRead.name },
+        posterUrl = newestMetadata.posterUrl ?: newestRead.posterUrl,
+        latestChapter = newestMetadata.latestChapter ?: newestRead.latestChapter,
+        addedAt = minOf(addedAt, remote.addedAt),
+        readingStatus = newestRead.readingStatus,
+        lastChapterUrl = newestRead.lastChapterUrl,
+        lastChapterName = newestRead.lastChapterName,
+        lastReadAt = newestRead.lastReadAt,
+        lastScrollIndex = newestRead.lastScrollIndex,
+        lastScrollOffset = newestRead.lastScrollOffset,
+        totalChapterCount = maxOf(totalChapterCount, remote.totalChapterCount),
+        acknowledgedChapterCount = maxOf(acknowledgedChapterCount, remote.acknowledgedChapterCount),
+        lastCheckedAt = maxOf(lastCheckedAt, remote.lastCheckedAt),
+        lastUpdatedAt = maxOf(lastUpdatedAt, remote.lastUpdatedAt),
+        lastReadChapterIndex = maxOf(lastReadChapterIndex, remote.lastReadChapterIndex),
+        unreadChapterCount = newestRead.unreadChapterCount.coerceAtLeast(0)
+    )
+}
+
 private fun BookmarkBackup.toEntity() = BookmarkEntity(
     novelUrl = novelUrl,
     novelName = novelName,
@@ -597,6 +682,20 @@ private fun BookmarkBackup.toEntity() = BookmarkEntity(
     createdAt = createdAt,
     updatedAt = updatedAt
 )
+
+private fun BookmarkEntity.syncKey(): String {
+    return buildString {
+        append(novelUrl)
+        append('|')
+        append(chapterUrl)
+        append('|')
+        append(segmentId ?: textSnippet.orEmpty())
+        append('|')
+        append(segmentIndex)
+        append('|')
+        append(category)
+    }
+}
 
 private fun HistoryBackup.toEntity() = HistoryEntity(
     novelUrl = novelUrl,
@@ -627,6 +726,19 @@ private fun ReadingStatsBackup.toEntity() = ReadingStatsEntity(
     updatedAt = updatedAt
 )
 
+private fun ReadingStatsEntity.mergeForSync(remote: ReadingStatsEntity): ReadingStatsEntity {
+    return copy(
+        novelName = if (remote.updatedAt >= updatedAt) remote.novelName else novelName,
+        readingTimeSeconds = maxOf(readingTimeSeconds, remote.readingTimeSeconds),
+        chaptersRead = maxOf(chaptersRead, remote.chaptersRead),
+        wordsRead = maxOf(wordsRead, remote.wordsRead),
+        sessionsCount = maxOf(sessionsCount, remote.sessionsCount),
+        longestSessionSeconds = maxOf(longestSessionSeconds, remote.longestSessionSeconds),
+        createdAt = minOf(createdAt, remote.createdAt),
+        updatedAt = maxOf(updatedAt, remote.updatedAt)
+    )
+}
+
 private fun ReadingStreakBackup.toEntity() = ReadingStreakEntity(
     currentStreak = currentStreak,
     longestStreak = longestStreak,
@@ -636,33 +748,53 @@ private fun ReadingStreakBackup.toEntity() = ReadingStreakEntity(
     updatedAt = updatedAt
 )
 
-private fun AppSettingsBackup.toAppSettings() = AppSettings(
-    themeMode = try { ThemeMode.valueOf(themeMode) } catch (e: Exception) { ThemeMode.DARK },
-    amoledBlack = amoledBlack,
-    useDynamicColor = useDynamicColor,
-    uiDensity = try { UiDensity.valueOf(uiDensity) } catch (e: Exception) { UiDensity.DEFAULT },
-    libraryGridColumns = GridColumns.fromInt(libraryGridColumns),
-    browseGridColumns = GridColumns.fromInt(browseGridColumns),
-    searchGridColumns = GridColumns.fromInt(searchGridColumns),
-    showBadges = showBadges,
-    libraryDisplayMode = try { DisplayMode.valueOf(libraryDisplayMode) } catch (e: Exception) { DisplayMode.GRID },
-    browseDisplayMode = try { DisplayMode.valueOf(browseDisplayMode) } catch (e: Exception) { DisplayMode.GRID },
-    searchDisplayMode = try { DisplayMode.valueOf(searchDisplayMode) } catch (e: Exception) { DisplayMode.GRID },
-    ratingFormat = try { RatingFormat.valueOf(ratingFormat) } catch (e: Exception) { RatingFormat.TEN_POINT },
-    defaultLibrarySort = try { LibrarySortOrder.valueOf(defaultLibrarySort) } catch (e: Exception) { LibrarySortOrder.LAST_READ },
-    defaultLibraryFilter = try { LibraryFilter.valueOf(defaultLibraryFilter) } catch (e: Exception) { LibraryFilter.DOWNLOADED },
-    autoDownloadEnabled = autoDownloadEnabled,
-    autoDownloadOnWifiOnly = autoDownloadOnWifiOnly,
-    autoDownloadLimit = autoDownloadLimit,
-    autoDownloadForStatuses = autoDownloadForStatuses.mapNotNull {
-        try { ReadingStatus.valueOf(it) } catch (e: Exception) { null }
-    }.toSet(),
-    searchResultsPerProvider = searchResultsPerProvider,
-    keepScreenOn = keepScreenOn,
-    infiniteScroll = infiniteScroll,
-    providerOrder = providerOrder,
-    disabledProviders = disabledProviders.toSet()
-)
+private fun AppSettingsBackup.toAppSettings(): AppSettings {
+    val restoredEnabledLibraryFilters = LibraryFilter.sanitizeEnabledShelves(
+        enabledLibraryFilters.mapNotNull {
+            try { LibraryFilter.valueOf(it) } catch (e: Exception) { null }
+        }.toSet()
+    )
+
+    return AppSettings(
+        themeMode = try { ThemeMode.valueOf(themeMode) } catch (e: Exception) { ThemeMode.DARK },
+        amoledBlack = amoledBlack,
+        useDynamicColor = useDynamicColor,
+        uiDensity = try { UiDensity.valueOf(uiDensity) } catch (e: Exception) { UiDensity.DEFAULT },
+        libraryGridColumns = GridColumns.fromInt(libraryGridColumns),
+        browseGridColumns = GridColumns.fromInt(browseGridColumns),
+        searchGridColumns = GridColumns.fromInt(searchGridColumns),
+        showBadges = showBadges,
+        libraryDisplayMode = try { DisplayMode.valueOf(libraryDisplayMode) } catch (e: Exception) { DisplayMode.GRID },
+        browseDisplayMode = try { DisplayMode.valueOf(browseDisplayMode) } catch (e: Exception) { DisplayMode.GRID },
+        searchDisplayMode = try { DisplayMode.valueOf(searchDisplayMode) } catch (e: Exception) { DisplayMode.GRID },
+        ratingFormat = try { RatingFormat.valueOf(ratingFormat) } catch (e: Exception) { RatingFormat.TEN_POINT },
+        defaultLibrarySort = try { LibrarySortOrder.valueOf(defaultLibrarySort) } catch (e: Exception) { LibrarySortOrder.LAST_READ },
+        enabledLibraryFilters = restoredEnabledLibraryFilters,
+        defaultLibraryFilter = try {
+            LibraryFilter.sanitizeDefault(
+                LibraryFilter.valueOf(defaultLibraryFilter),
+                restoredEnabledLibraryFilters
+            )
+        } catch (e: Exception) {
+            LibraryFilter.sanitizeDefault(
+                LibraryFilter.DOWNLOADED,
+                restoredEnabledLibraryFilters
+            )
+        },
+        hideSpicyLibraryContent = hideSpicyLibraryContent,
+        autoDownloadEnabled = autoDownloadEnabled,
+        autoDownloadOnWifiOnly = autoDownloadOnWifiOnly,
+        autoDownloadLimit = autoDownloadLimit,
+        autoDownloadForStatuses = autoDownloadForStatuses.mapNotNull {
+            try { ReadingStatus.valueOf(it) } catch (e: Exception) { null }
+        }.toSet(),
+        searchResultsPerProvider = searchResultsPerProvider,
+        keepScreenOn = keepScreenOn,
+        infiniteScroll = infiniteScroll,
+        providerOrder = providerOrder,
+        disabledProviders = disabledProviders.toSet()
+    )
+}
 
 private fun ReaderSettingsBackup.toReaderSettings(): ReaderSettings {
     val fontFamily = FontFamily.fromId(fontFamily) ?: FontFamily.SYSTEM_SERIF

@@ -16,6 +16,7 @@ import com.emptycastle.novery.recommendation.UserPreferenceManager
  */
 object RepositoryProvider {
 
+    private var appContext: Context? = null
     private var database: NovelDatabase? = null
     private var preferencesManager: PreferencesManager? = null
 
@@ -40,13 +41,22 @@ object RepositoryProvider {
      * Initialize the repository provider with application context
      */
     fun initialize(context: Context) {
+        if (appContext == null) {
+            appContext = context.applicationContext
+        }
         if (database == null) {
             database = NovelDatabase.getInstance(context)
         }
         if (preferencesManager == null) {
-            preferencesManager = PreferencesManager(context)
+            preferencesManager = PreferencesManager.getInstance(context)
         }
         notificationRepository = NotificationRepository(context)
+    }
+
+    fun getAppContext(): Context {
+        return appContext ?: throw IllegalStateException(
+            "RepositoryProvider not initialized. Call initialize() first."
+        )
     }
 
     fun getDatabase(): NovelDatabase {

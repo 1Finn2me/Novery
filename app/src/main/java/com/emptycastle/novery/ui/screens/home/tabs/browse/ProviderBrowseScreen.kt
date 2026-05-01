@@ -126,6 +126,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.emptycastle.novery.domain.model.AppSettings
 import com.emptycastle.novery.domain.model.Novel
+import com.emptycastle.novery.domain.model.ReadingStatus
 import com.emptycastle.novery.provider.MainProvider
 import com.emptycastle.novery.ui.components.NovelActionSheet
 import com.emptycastle.novery.ui.components.NovelCard
@@ -233,7 +234,8 @@ fun ProviderBrowseScreen(
                     }
                 }
             },
-            onAddToLibrary = { viewModel.addToLibrary(data.novel) }.takeIf { !data.isInLibrary },
+            onAddToLibrary = { status: ReadingStatus -> viewModel.addToLibrary(data.novel, status) }
+                .takeIf { !data.isInLibrary },
             onRemoveFromLibrary = { viewModel.removeFromLibrary(data.novel.url) }.takeIf { data.isInLibrary },
             onRemoveFromHistory = null
         )

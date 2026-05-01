@@ -1910,13 +1910,31 @@ class ReaderViewModel : ViewModel() {
         return indices
     }
 
-    private fun loadSavedStablePosition(chapterUrl: String, chapterIndex: Int): StableScrollPosition? {
-        val saved = preferencesManager.getReadingPosition(chapterUrl) ?: return null
+    private suspend fun loadSavedStablePosition(
+        chapterUrl: String,
+        chapterIndex: Int
+    ): StableScrollPosition? {
+        val saved = preferencesManager.getReadingPosition(chapterUrl)
+        if (saved != null) {
+            return StableScrollPosition(
+                chapterIndex = chapterIndex,
+                characterOffset = 0,
+                segmentIndex = saved.segmentIndex,
+                pixelOffset = saved.offset
+            )
+        }
+
+        val novelUrl = currentNovelUrl ?: return null
+        val syncedPosition = libraryRepository.getReadingPosition(novelUrl) ?: return null
+        if (syncedPosition.chapterUrl != chapterUrl) {
+            return null
+        }
+
         return StableScrollPosition(
             chapterIndex = chapterIndex,
-            characterOffset = 0,
-            segmentIndex = saved.segmentIndex,
-            pixelOffset = saved.offset
+            characterOffset = syncedPosition.scrollOffset.coerceAtLeast(0),
+            segmentIndex = syncedPosition.scrollIndex.coerceAtLeast(0),
+            pixelOffset = 0
         )
     }
 
@@ -2107,7 +2125,7 @@ class ReaderViewModel : ViewModel() {
                     chapterUrl = chapter.url,
                     chapterName = chapter.name,
                     scrollIndex = position.segmentIndex,
-                    scrollOffset = position.pixelOffset
+                    scrollOffset = position.characterOffset
                 )
             }
         }

@@ -43,6 +43,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.Sort
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.outlined.Check
+import androidx.compose.material.icons.outlined.CloudSync
 import androidx.compose.material.icons.outlined.CloudUpload
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.DeleteSweep
@@ -108,6 +109,8 @@ import com.emptycastle.novery.data.backup.RestoreOptions
 import com.emptycastle.novery.data.cache.CacheInfo
 import com.emptycastle.novery.data.cache.CacheManager
 import com.emptycastle.novery.data.cache.NovelDownloadInfo
+import com.emptycastle.novery.data.local.PreferencesManager
+import com.emptycastle.novery.data.sync.SyncManager
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -129,6 +132,8 @@ private enum class DownloadSortOrder(val label: String) {
 fun StorageScreen(
     cacheManager: CacheManager,
     backupManager: BackupManager,
+    preferencesManager: PreferencesManager,
+    syncManager: SyncManager,
     onBack: () -> Unit
 ) {
     val scope = rememberCoroutineScope()
@@ -290,6 +295,17 @@ fun StorageScreen(
                             arrayOf(BackupData.MIME_TYPE, "application/json", "*/*")
                         )
                     }
+                )
+            }
+
+            item(key = "sync_header") {
+                SectionHeader(title = "Cloud Sync", icon = Icons.Outlined.CloudSync)
+            }
+
+            item(key = "sync_card") {
+                StorageSyncSection(
+                    preferencesManager = preferencesManager,
+                    syncManager = syncManager
                 )
             }
 
@@ -732,19 +748,21 @@ fun StorageScreen(
 @Composable
 private fun SectionHeader(
     title: String,
-    icon: ImageVector
+    icon: ImageVector? = null
 ) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier.padding(vertical = 4.dp, horizontal = 4.dp)
     ) {
-        Icon(
-            icon,
-            contentDescription = null,
-            modifier = Modifier.size(20.dp),
-            tint = MaterialTheme.colorScheme.primary
-        )
-        Spacer(Modifier.width(10.dp))
+        if (icon != null) {
+            Icon(
+                icon,
+                contentDescription = null,
+                modifier = Modifier.size(20.dp),
+                tint = MaterialTheme.colorScheme.primary
+            )
+            Spacer(Modifier.width(10.dp))
+        }
         Text(
             text = title,
             style = MaterialTheme.typography.titleMedium,

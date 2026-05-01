@@ -19,6 +19,7 @@ object NotificationHelper {
     const val CHANNEL_DOWNLOAD = "novery_download_channel"
     const val CHANNEL_DOWNLOAD_COMPLETE = "novery_download_complete_channel"
     const val CHANNEL_TTS = "novery_tts_channel"
+    const val CHANNEL_SYNC = "novery_sync_channel"
 
     // ID ranges to avoid collisions:
     // 1001 = preparing/initial notification
@@ -26,11 +27,13 @@ object NotificationHelper {
     // 3000-3999 = completion notifications (unique per novel)
     // 4000-4999 = error notifications (unique per novel)
     // 5000 = TTS notification
+    // 6000 = sync notification
     const val NOTIFICATION_ID_PREPARING = 1001
     private const val NOTIFICATION_ID_PROGRESS_BASE = 2000
     private const val NOTIFICATION_ID_COMPLETE_BASE = 3000
     private const val NOTIFICATION_ID_ERROR_BASE = 4000
     const val NOTIFICATION_ID_TTS = 5000
+    const val NOTIFICATION_ID_SYNC = 6000
 
     // Keep old constants for backward compatibility, but mark as deprecated
     @Deprecated("Use getProgressNotificationId() instead")
@@ -41,6 +44,7 @@ object NotificationHelper {
     const val ACTION_DOWNLOAD_PAUSE = "com.emptycastle.novery.action.DOWNLOAD_PAUSE"
     const val ACTION_DOWNLOAD_RESUME = "com.emptycastle.novery.action.DOWNLOAD_RESUME"
     const val ACTION_DOWNLOAD_CANCEL = "com.emptycastle.novery.action.DOWNLOAD_CANCEL"
+    const val ACTION_SYNC_CANCEL = "com.emptycastle.novery.action.SYNC_CANCEL"
 
     const val ACTION_TTS_PLAY = "com.emptycastle.novery.action.TTS_PLAY"
     const val ACTION_TTS_PAUSE = "com.emptycastle.novery.action.TTS_PAUSE"
@@ -107,8 +111,19 @@ object NotificationHelper {
                 setSound(null, null)
             }
 
+            val syncChannel = NotificationChannel(
+                CHANNEL_SYNC,
+                "Library Sync",
+                NotificationManager.IMPORTANCE_LOW
+            ).apply {
+                description = "Shows sync progress and results"
+                setShowBadge(false)
+                enableVibration(false)
+                setSound(null, null)
+            }
+
             notificationManager.createNotificationChannels(
-                listOf(downloadChannel, downloadCompleteChannel, ttsChannel)
+                listOf(downloadChannel, downloadCompleteChannel, ttsChannel, syncChannel)
             )
         }
     }
@@ -125,7 +140,7 @@ object NotificationHelper {
         )
     }
 
-    private fun getActionPendingIntent(context: Context, action: String, requestCode: Int): PendingIntent {
+    fun getActionPendingIntent(context: Context, action: String, requestCode: Int): PendingIntent {
         val intent = Intent(action).apply {
             setPackage(context.packageName)
         }
@@ -135,6 +150,10 @@ object NotificationHelper {
             intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
+    }
+
+    fun getSyncCancelPendingIntent(context: Context): PendingIntent {
+        return getActionPendingIntent(context, ACTION_SYNC_CANCEL, 3)
     }
 
     private fun ensureChannelExists(context: Context) {

@@ -216,6 +216,8 @@ data class AppSettings(
     // Library
     val defaultLibrarySort: LibrarySortOrder = LibrarySortOrder.LAST_READ,
     val defaultLibraryFilter: LibraryFilter = LibraryFilter.DOWNLOADED,
+    val hideSpicyLibraryContent: Boolean = true,
+    val enabledLibraryFilters: Set<LibraryFilter> = LibraryFilter.defaultEnabledShelves(),
 
     // Auto-Download
     val autoDownloadEnabled: Boolean = false,
@@ -261,6 +263,7 @@ enum class LibrarySortOrder {
  */
 enum class LibraryFilter {
     ALL,
+    SPICY,
     DOWNLOADED,
     READING,
     COMPLETED,
@@ -270,11 +273,88 @@ enum class LibraryFilter {
 
     fun displayName(): String = when (this) {
         ALL -> "All"
+        SPICY -> "Spicy"
         DOWNLOADED -> "Downloaded"
         READING -> "Reading"
         COMPLETED -> "Completed"
         ON_HOLD -> "On Hold"
         PLAN_TO_READ -> "Plan to Read"
         DROPPED -> "Dropped"
+    }
+
+    fun readingStatusOrNull(): ReadingStatus? = when (this) {
+        ALL,
+        DOWNLOADED -> null
+        SPICY -> ReadingStatus.SPICY
+        READING -> ReadingStatus.READING
+        COMPLETED -> ReadingStatus.COMPLETED
+        ON_HOLD -> ReadingStatus.ON_HOLD
+        PLAN_TO_READ -> ReadingStatus.PLAN_TO_READ
+        DROPPED -> ReadingStatus.DROPPED
+    }
+
+    companion object {
+        fun shelfOptions(): List<LibraryFilter> = entries.filter { it != ALL }
+
+        fun contentShelfOptions(): List<LibraryFilter> =
+            shelfOptions().filter { it.readingStatusOrNull() != null }
+
+        fun defaultEnabledShelves(): Set<LibraryFilter> = shelfOptions().toSet()
+
+        fun sanitizeEnabledShelves(filters: Set<LibraryFilter>): Set<LibraryFilter> {
+            val validShelves = shelfOptions().toSet()
+            return filters.filterTo(mutableSetOf()) { it in validShelves }
+        }
+
+        fun visibleFilters(
+            enabledFilters: Set<LibraryFilter>,
+            showSpicyFilter: Boolean
+        ): List<LibraryFilter> {
+            val sanitizedEnabledFilters = sanitizeEnabledShelves(enabledFilters)
+
+            return buildList {
+                add(ALL)
+                addAll(
+                    shelfOptions().filter { filter ->
+                        filter in sanitizedEnabledFilters &&
+                            (filter != SPICY || showSpicyFilter)
+                    }
+                )
+            }
+        }
+
+        fun standardOptions(
+            enabledFilters: Set<LibraryFilter> = defaultEnabledShelves()
+        ): List<LibraryFilter> {
+            val sanitizedEnabledFilters = sanitizeEnabledShelves(enabledFilters)
+
+            return buildList {
+                add(ALL)
+                addAll(
+                    shelfOptions().filter { filter ->
+                        filter != SPICY && filter in sanitizedEnabledFilters
+                    }
+                )
+            }
+        }
+
+        fun sanitizeDefault(
+            filter: LibraryFilter,
+            enabledFilters: Set<LibraryFilter> = defaultEnabledShelves()
+        ): LibraryFilter {
+            val allowedFilters = standardOptions(enabledFilters)
+
+            return when {
+                filter in allowedFilters -> filter
+                DOWNLOADED in allowedFilters -> DOWNLOADED
+                READING in allowedFilters -> READING
+                else -> ALL
+            }
+        }
+
+        fun hiddenStatuses(visibleFilters: Collection<LibraryFilter>): Set<ReadingStatus> =
+            contentShelfOptions()
+                .filter { it !in visibleFilters }
+                .mapNotNullTo(mutableSetOf()) { it.readingStatusOrNull() }
     }
 }
