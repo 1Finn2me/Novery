@@ -113,6 +113,9 @@ dependencies {
     // JSON
     implementation("com.google.code.gson:gson:2.11.0")
 
+    // MLKit Translation
+    implementation(libs.mlkit.translate)
+
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
 

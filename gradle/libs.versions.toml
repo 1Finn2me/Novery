@@ -15,6 +15,7 @@ roomCommonJvm = "2.8.4"
 adapters = "3.2.0-alpha11"
 animation = "1.10.1"
 animationVersion = "1.10.6"
+mlkit-translate = "17.0.3"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -38,6 +39,7 @@ androidx-room-common-jvm = { group = "androidx.room", name = "room-common-jvm", 
 androidx-adapters = { group = "androidx.databinding", name = "adapters", version.ref = "adapters" }
 androidx-compose-animation = { group = "androidx.compose.animation", name = "animation", version.ref = "animation" }
 androidx-animation = { group = "androidx.compose.animation", name = "animation", version.ref = "animationVersion" }
+mlkit-translate = { group = "com.google.mlkit", name = "translate", version.ref = "mlkit-translate" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

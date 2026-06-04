@@ -61,6 +61,7 @@ import com.emptycastle.novery.ui.components.ChapterListSheet
 import com.emptycastle.novery.ui.components.ReaderBottomBar
 import com.emptycastle.novery.ui.components.TTSPlayer
 import com.emptycastle.novery.ui.components.TTSSettingsPanel
+import com.emptycastle.novery.ui.components.TranslationPanel
 import com.emptycastle.novery.ui.screens.reader.components.KeepScreenOnEffect
 import com.emptycastle.novery.ui.screens.reader.components.ReaderContainer
 import com.emptycastle.novery.ui.screens.reader.components.ReaderErrorState
@@ -519,6 +520,8 @@ fun ReaderScreen(
         onToggleChapterList = viewModel::toggleChapterList,
         onToggleTTSSettings = viewModel::toggleTTSSettings,
         onHideTTSSettings = viewModel::hideTTSSettings,
+        onToggleTranslation = viewModel::toggleTranslation,
+        onHideTranslation = viewModel::hideTranslation,
         onSettingsChange = viewModel::updateReaderSettings,
         onNavigateToSettings = onNavigateToSettings,
         onStartTTS = viewModel::startTTS,
@@ -697,6 +700,8 @@ private fun ReaderScreenContent(
     onToggleChapterList: () -> Unit,
     onToggleTTSSettings: () -> Unit,
     onHideTTSSettings: () -> Unit,
+    onToggleTranslation: () -> Unit,
+    onHideTranslation: () -> Unit,
     onSettingsChange: (ReaderSettings) -> Unit,
     onNavigateToSettings: () -> Unit,
     onStartTTS: () -> Unit,
@@ -855,7 +860,8 @@ private fun ReaderScreenContent(
                         onStopTTS = onStopTTS,
                         onTTSNext = onTTSNext,
                         onTTSPrevious = onTTSPrevious,
-                        onToggleTTSSettings = onToggleTTSSettings
+                        onToggleTTSSettings = onToggleTTSSettings,
+                        onOpenTranslation = onToggleTranslation
                     )
 
                     // TTS Settings Panel
@@ -883,6 +889,22 @@ private fun ReaderScreenContent(
                             onAutoAdvanceChapterChange = onTTSAutoAdvanceChapterChange,  // NEW
                             onUseSystemVoiceChange = onTTSUseSystemVoiceChange,
                             onDismiss = onHideTTSSettings,
+                            modifier = Modifier.padding(16.dp)
+                        )
+                    }
+
+                    // Translation Panel
+                    AnimatedVisibility(
+                        visible = uiState.showTranslation,
+                        enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
+                        exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
+                        modifier = Modifier.align(Alignment.BottomCenter)
+                    ) {
+                        TranslationPanel(
+                            settings = uiState.settings,
+                            translationStatus = uiState.translationStatus,
+                            onSettingsChange = onSettingsChange,
+                            onDismiss = onHideTranslation,
                             modifier = Modifier.padding(16.dp)
                         )
                     }
@@ -954,7 +976,8 @@ private fun ControlsOverlay(
     onStopTTS: () -> Unit,
     onTTSNext: () -> Unit,
     onTTSPrevious: () -> Unit,
-    onToggleTTSSettings: () -> Unit
+    onToggleTTSSettings: () -> Unit,
+    onOpenTranslation: () -> Unit
 ) {
     val animationDuration = if (uiState.settings.reduceMotion) 0 else ReaderDefaults.ControlsAnimationDuration
 
@@ -1041,7 +1064,8 @@ private fun ControlsOverlay(
                         onSettingsChange = onSettingsChange,
                         onOpenChapterList = onToggleChapterList,
                         onStartTTS = onStartTTS,
-                        onNavigateToSettings = onNavigateToSettings
+                        onNavigateToSettings = onNavigateToSettings,
+                        onOpenTranslation = onOpenTranslation
                     )
                 }
             }

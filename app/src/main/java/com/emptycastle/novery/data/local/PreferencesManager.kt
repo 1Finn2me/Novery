@@ -678,6 +678,13 @@ class PreferencesManager(context: Context) {
             scrollSensitivity = prefs.getFloat(KEY_SCROLL_SENSITIVITY, 1.0f),
             edgeGestures = prefs.getBoolean(KEY_EDGE_GESTURES, true),
 
+            // Translation
+            translationEnabled = prefs.getBoolean(KEY_TRANSLATION_ENABLED, false),
+            sourceLang = prefs.getString(KEY_SOURCE_LANG, "en") ?: "en",
+            targetLang = prefs.getString(KEY_TARGET_LANG, "es") ?: "es",
+            useOnlineTranslation = prefs.getBoolean(KEY_USE_ONLINE_TRANSLATION, false),
+            hideTranslateButtonWhenActive = prefs.getBoolean(KEY_HIDE_TRANSLATE_BUTTON, true),
+
             // Accessibility
             forceHighContrast = prefs.getBoolean(KEY_FORCE_HIGH_CONTRAST, false),
             reduceMotion = prefs.getBoolean(KEY_REDUCE_MOTION, false),
@@ -869,6 +876,13 @@ class PreferencesManager(context: Context) {
             putBoolean(KEY_SMOOTH_SCROLL, settings.smoothScroll)
             putFloat(KEY_SCROLL_SENSITIVITY, settings.scrollSensitivity)
             putBoolean(KEY_EDGE_GESTURES, settings.edgeGestures)
+
+            // Translation
+            putBoolean(KEY_TRANSLATION_ENABLED, settings.translationEnabled)
+            putString(KEY_SOURCE_LANG, settings.sourceLang)
+            putString(KEY_TARGET_LANG, settings.targetLang)
+            putBoolean(KEY_USE_ONLINE_TRANSLATION, settings.useOnlineTranslation)
+            putBoolean(KEY_HIDE_TRANSLATE_BUTTON, settings.hideTranslateButtonWhenActive)
 
             // Accessibility
             putBoolean(KEY_FORCE_HIGH_CONTRAST, settings.forceHighContrast)
@@ -1637,6 +1651,11 @@ class PreferencesManager(context: Context) {
 
         // Behavior
         private const val KEY_READER_KEEP_SCREEN_ON = "reader_keep_screen_on"
+        private const val KEY_TRANSLATION_ENABLED = "reader_translation_enabled"
+        private const val KEY_SOURCE_LANG = "reader_source_lang"
+        private const val KEY_TARGET_LANG = "reader_target_lang"
+        private const val KEY_USE_ONLINE_TRANSLATION = "reader_use_online_translation"
+        private const val KEY_HIDE_TRANSLATE_BUTTON = "reader_hide_translate_button"
         private const val KEY_READER_TTS_AUTO_ADVANCE = "reader_tts_auto_advance"
         private const val KEY_READER_LOCK_SCROLL_DURING_TTS = "reader_lock_scroll_during_tts"
         private const val KEY_VOLUME_KEY_NAVIGATION = "reader_volume_key_navigation"

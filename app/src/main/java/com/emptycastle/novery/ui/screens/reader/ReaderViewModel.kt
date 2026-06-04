@@ -21,6 +21,7 @@ import com.emptycastle.novery.service.TTSContent
 import com.emptycastle.novery.service.TTSSegment
 import com.emptycastle.novery.service.TTSServiceManager
 import com.emptycastle.novery.service.TTSStatus
+import com.emptycastle.novery.translation.TranslationManager
 import com.emptycastle.novery.tts.TTSManager
 import com.emptycastle.novery.tts.VoiceInfo
 import com.emptycastle.novery.tts.VoiceManager
@@ -29,6 +30,7 @@ import com.emptycastle.novery.ui.screens.reader.logic.ChapterLoader
 import com.emptycastle.novery.ui.screens.reader.model.ChapterCharacterMap
 import com.emptycastle.novery.ui.screens.reader.model.ChapterContentItem
 import com.emptycastle.novery.ui.screens.reader.model.ContentSegment
+import com.emptycastle.novery.ui.screens.reader.model.LoadedChapter
 import com.emptycastle.novery.ui.screens.reader.model.PositionResolution
 import com.emptycastle.novery.ui.screens.reader.model.ReaderDisplayItem
 import com.emptycastle.novery.ui.screens.reader.model.ReaderUiState
@@ -40,6 +42,7 @@ import com.emptycastle.novery.ui.screens.reader.model.TTSPosition
 import com.emptycastle.novery.ui.screens.reader.model.TTSScrollEdge
 import com.emptycastle.novery.ui.screens.reader.model.TTSSettingsState
 import com.emptycastle.novery.util.ReadingTimeTracker
+import com.emptycastle.novery.util.SentenceParser
 import com.emptycastle.novery.util.VolumeKeyEvent
 import com.emptycastle.novery.util.VolumeKeyManager
 import kotlinx.coroutines.Dispatchers
@@ -271,9 +274,19 @@ class ReaderViewModel : ViewModel() {
     private fun observeSettings() {
         viewModelScope.launch {
             preferencesManager.readerSettings.collect { settings ->
+                val oldSettings = _uiState.value.settings
+                val translationChanged = oldSettings.translationEnabled != settings.translationEnabled ||
+                        oldSettings.sourceLang != settings.sourceLang ||
+                        oldSettings.targetLang != settings.targetLang ||
+                        oldSettings.useOnlineTranslation != settings.useOnlineTranslation
+
                 _uiState.update { it.copy(settings = settings) }
                 VolumeKeyManager.setVolumeKeyNavigationEnabled(settings.volumeKeyNavigation)
                 _ttsScrollLocked.value = settings.lockScrollDuringTTS
+
+                if (translationChanged) {
+                    reTranslateAllLoadedChapters()
+                }
             }
         }
 
@@ -1435,6 +1448,14 @@ class ReaderViewModel : ViewModel() {
         _uiState.update { it.copy(showTTSSettings = false) }
     }
 
+    fun toggleTranslation() {
+        _uiState.update { it.copy(showTranslation = !it.showTranslation, showControls = false) }
+    }
+
+    fun hideTranslation() {
+        _uiState.update { it.copy(showTranslation = false) }
+    }
+
     fun getHighlightedText(
         segment: ContentSegment,
         displayIndex: Int,
@@ -1653,9 +1674,100 @@ class ReaderViewModel : ViewModel() {
         }
     }
 
+    private fun reTranslateAllLoadedChapters() {
+        val loadedIndices = _uiState.value.loadedChapters.keys.toList()
+        viewModelScope.launch {
+            loadedIndices.forEach { index ->
+                loadChapterContent(index, forceReload = true)
+            }
+        }
+    }
+
+    private suspend fun performTranslation(loadedChapter: LoadedChapter): LoadedChapter {
+        val settings = _uiState.value.settings
+        if (!settings.translationEnabled) return loadedChapter
+
+        val source = settings.sourceLang
+        val target = settings.targetLang
+        val useOnline = settings.useOnlineTranslation
+
+        if (useOnline && appContext?.let { !TranslationManager.isOnline(it) } == true) {
+            _uiState.update { it.copy(translationStatus = "No internet for online translation") }
+            return loadedChapter
+        }
+
+        if (!useOnline) {
+            _uiState.update { it.copy(translationStatus = "Preparing offline model...") }
+            val prepareResult = TranslationManager.prepareModel(source, target) { progress ->
+                _uiState.update { it.copy(translationStatus = progress) }
+            }
+            if (prepareResult.isFailure) {
+                _uiState.update { it.copy(translationStatus = "Model download failed") }
+                return loadedChapter
+            }
+        }
+
+        _uiState.update { it.copy(translationStatus = "Translating chapter ${loadedChapter.chapterIndex + 1}...") }
+
+        // Batch extraction
+        val translatableItems = loadedChapter.contentItems.filter {
+            it is ChapterContentItem.Text || it is ChapterContentItem.AuthorNote ||
+                    it is ChapterContentItem.Table || it is ChapterContentItem.List
+        }
+
+        val textsToTranslate = translatableItems.map { item ->
+            when (item) {
+                is ChapterContentItem.Text -> item.segment.text
+                is ChapterContentItem.AuthorNote -> item.authorNote.plainText
+                is ChapterContentItem.Table -> item.table.plainText
+                is ChapterContentItem.List -> item.list.plainText
+                else -> ""
+            }
+        }
+
+        val translatedTexts = TranslationManager.translate(textsToTranslate, source, target, useOnline)
+
+        var translatedIndex = 0
+        val translatedItems = loadedChapter.contentItems.map { item ->
+            if (item is ChapterContentItem.Text || item is ChapterContentItem.AuthorNote ||
+                item is ChapterContentItem.Table || item is ChapterContentItem.List) {
+
+                val translatedText = translatedTexts.getOrNull(translatedIndex) ?: ""
+                translatedIndex++
+
+                when (item) {
+                    is ChapterContentItem.Text -> {
+                        val parsed = SentenceParser.parse(translatedText)
+                        item.copy(segment = item.segment.copy(
+                            text = translatedText,
+                            styledText = AnnotatedString(translatedText),
+                            sentences = parsed.sentences
+                        ))
+                    }
+                    is ChapterContentItem.AuthorNote -> {
+                        item.copy(authorNote = item.authorNote.copy(plainText = translatedText))
+                    }
+                    is ChapterContentItem.Table -> {
+                        item.copy(table = item.table.copy(plainText = translatedText))
+                    }
+                    is ChapterContentItem.List -> {
+                        item.copy(list = item.list.copy(plainText = translatedText))
+                    }
+                    else -> item
+                }
+            } else {
+                item
+            }
+        }
+
+        _uiState.update { it.copy(translationStatus = null) }
+        return loadedChapter.copy(contentItems = translatedItems)
+    }
+
     private suspend fun loadChapterContent(
         chapterIndex: Int,
-        isInitialLoad: Boolean = false
+        isInitialLoad: Boolean = false,
+        forceReload: Boolean = false
     ) {
         val state = _uiState.value
         val allChapters = state.allChapters
@@ -1663,7 +1775,7 @@ class ReaderViewModel : ViewModel() {
         if (chapterIndex < 0 || chapterIndex >= allChapters.size) return
 
         val shouldLoad = loadingChaptersMutex.withLock {
-            if (state.loadedChapters.containsKey(chapterIndex)) return
+            if (!forceReload && state.loadedChapters.containsKey(chapterIndex)) return
             if (loadingChapters.contains(chapterIndex)) return
             loadingChapters.add(chapterIndex)
             true
@@ -1692,19 +1804,22 @@ class ReaderViewModel : ViewModel() {
 
             when (result) {
                 is ChapterLoadResult.Success -> {
+                    // Apply translation if enabled
+                    val processedChapter = performTranslation(result.loadedChapter)
+
                     stateMutex.withLock {
                         characterMaps[chapterIndex] = ChapterCharacterMap.build(
-                            result.loadedChapter.segments,
+                            processedChapter.segments,
                             chapterIndex
                         )
 
                         _uiState.update {
                             it.copy(
-                                loadedChapters = it.loadedChapters + (chapterIndex to result.loadedChapter),
+                                loadedChapters = it.loadedChapters + (chapterIndex to processedChapter),
                                 isLoading = if (chapterIndex == it.initialChapterIndex) false else it.isLoading,
                                 isContentReady = if (chapterIndex == it.initialChapterIndex) true else it.isContentReady,
                                 currentChapterName = if (chapterIndex == it.currentChapterIndex) chapter.name else it.currentChapterName,
-                                isOfflineMode = result.loadedChapter.isFromCache && it.isOfflineMode
+                                isOfflineMode = processedChapter.isFromCache && it.isOfflineMode
                             )
                         }
 
@@ -2507,5 +2622,6 @@ class ReaderViewModel : ViewModel() {
         preloadJob?.cancel()
         readingTimeTracker?.stopTracking()
         onReaderExit()
+        TranslationManager.release()
     }
 }

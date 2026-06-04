@@ -153,7 +153,17 @@ data class ReaderSettings(
     val reduceMotion: Boolean = false,
 
     /** Larger touch targets */
-    val largerTouchTargets: Boolean = false
+    val largerTouchTargets: Boolean = false,
+
+    // =========================================================================
+    // TRANSLATION
+    // =========================================================================
+
+    val translationEnabled: Boolean = false,
+    val sourceLang: String = "en",
+    val targetLang: String = "es",
+    val useOnlineTranslation: Boolean = false,
+    val hideTranslateButtonWhenActive: Boolean = true
 ) {
 
     // =========================================================================

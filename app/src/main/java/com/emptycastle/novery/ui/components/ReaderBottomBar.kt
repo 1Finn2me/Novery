@@ -51,6 +51,7 @@ import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.SpaceBar
 import androidx.compose.material.icons.filled.TextFields
+import androidx.compose.material.icons.filled.Translate
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.ExpandLess
@@ -147,6 +148,7 @@ fun ReaderBottomBar(
     onOpenChapterList: () -> Unit,
     onStartTTS: () -> Unit,
     onNavigateToSettings: () -> Unit,
+    onOpenTranslation: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val navBarPadding = WindowInsets.navigationBars.asPaddingValues()
@@ -159,6 +161,7 @@ fun ReaderBottomBar(
             .padding(horizontal = 12.dp)
             .padding(bottom = navBarPadding.calculateBottomPadding() + 8.dp)
     ) {
+        // ... (rest of the Column content)
         // Inline Settings Panel
         AnimatedVisibility(
             visible = showSettings,
@@ -228,6 +231,15 @@ fun ReaderBottomBar(
                         }
                     )
 
+                    BottomBarButton(
+                        icon = Icons.Default.Translate,
+                        label = "Translate",
+                        onClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            onOpenTranslation()
+                        }
+                    )
+
                     ListenButton(
                         onClick = {
                             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -282,7 +294,7 @@ private fun BottomBarButton(
         modifier = Modifier.scale(scale)
     ) {
         Column(
-            modifier = Modifier.padding(horizontal = 22.dp, vertical = 12.dp),
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Icon(
@@ -315,11 +327,10 @@ private fun ListenButton(onClick: () -> Unit) {
 
     Surface(
         onClick = onClick,
-        shape = RoundedCornerShape(20.dp),
+        shape = RoundedCornerShape(16.dp),
         color = BarTheme.primary,
         shadowElevation = 8.dp,
         modifier = Modifier
-            .height(54.dp)
             .scale(scale)
             .pointerInput(Unit) {
                 detectTapGestures(
@@ -331,22 +342,23 @@ private fun ListenButton(onClick: () -> Unit) {
                 )
             }
     ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 28.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        Column(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
         ) {
             Icon(
                 imageVector = Icons.Default.Headphones,
                 contentDescription = null,
                 tint = Color.White,
-                modifier = Modifier.size(22.dp)
+                modifier = Modifier.size(24.dp)
             )
+            Spacer(modifier = Modifier.height(4.dp))
             Text(
                 text = "Listen",
-                style = MaterialTheme.typography.labelLarge.copy(
+                style = MaterialTheme.typography.labelSmall.copy(
                     fontWeight = FontWeight.Bold,
-                    letterSpacing = 0.5.sp
+                    fontSize = 11.sp
                 ),
                 color = Color.White
             )
