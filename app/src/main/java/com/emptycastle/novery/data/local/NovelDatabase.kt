@@ -96,7 +96,7 @@ class DatabaseConverters {
         BlockedAuthorEntity::class,
         AuthorPreferenceEntity::class,
     ],
-    version = 10,
+    version = 12,
     exportSchema = false
 )
 @TypeConverters(DatabaseConverters::class)
@@ -135,7 +135,9 @@ abstract class NovelDatabase : RoomDatabase() {
                         MIGRATION_6_7,
                         MIGRATION_7_8,
                         MIGRATION_8_9,
-                        MIGRATION_9_10
+                        MIGRATION_9_10,
+                        MIGRATION_10_11,
+                        MIGRATION_11_12
                     )
                     .fallbackToDestructiveMigration()
                     .build()
@@ -430,6 +432,26 @@ abstract class NovelDatabase : RoomDatabase() {
 
                 // Add customCoverUrl to history table (reading history)
                 safeAddColumn(database, "history", "customCoverUrl", "TEXT")
+            }
+        }
+
+        /**
+         * Migration 10 -> 11
+         * Adds isTranslationEnabled column to library table for per-novel translation settings.
+         */
+        private val MIGRATION_10_11 = object : Migration(10, 11) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                safeAddColumn(database, "library", "isTranslationEnabled", "INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
+        /**
+         * Migration 11 -> 12
+         * Adds translationTargetLanguage column to library table.
+         */
+        private val MIGRATION_11_12 = object : Migration(11, 12) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                safeAddColumn(database, "library", "translationTargetLanguage", "TEXT")
             }
         }
 

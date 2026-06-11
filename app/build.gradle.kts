@@ -102,6 +102,10 @@ dependencies {
     // HTML Parsing
     implementation("org.jsoup:jsoup:1.18.1")
 
+    // Markwon for HTML/Markdown rendering
+    implementation("io.noties.markwon:core:4.6.2")
+    implementation("io.noties.markwon:html:4.6.2")
+
     // Image Loading
     implementation("io.coil-kt:coil-compose:2.7.0")
     implementation("androidx.compose.animation:animation:1.6.1")
@@ -112,6 +116,10 @@ dependencies {
 
     // JSON
     implementation("com.google.code.gson:gson:2.11.0")
+
+    // MLKit Translation & Identification
+    implementation(libs.mlkit.translate)
+    implementation(libs.mlkit.language.id)
 
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
@@ -130,6 +138,9 @@ dependencies {
     implementation("androidx.core:core-splashscreen:1.0.1")
 
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
+
+    // SLF4J for EPUB library
+    implementation("org.slf4j:slf4j-android:1.7.36")
 
     // Testing
     testImplementation(libs.junit)

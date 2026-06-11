@@ -202,4 +202,16 @@ interface LibraryDao {
 
     @Query("SELECT customCoverUrl FROM library WHERE url = :novelUrl")
     suspend fun getCustomCover(novelUrl: String): String?
+
+    @Query("UPDATE library SET isTranslationEnabled = :enabled WHERE url = :url")
+    suspend fun updateTranslationEnabled(url: String, enabled: Boolean)
+
+    @Query("UPDATE library SET translationTargetLanguage = :lang WHERE url = :url")
+    suspend fun updateTranslationTargetLanguage(url: String, lang: String)
+
+    @Query("SELECT isTranslationEnabled FROM library WHERE url = :url")
+    suspend fun isTranslationEnabled(url: String): Boolean
+
+    @Query("SELECT translationTargetLanguage FROM library WHERE url = :url")
+    suspend fun getTranslationTargetLanguage(url: String): String?
 }

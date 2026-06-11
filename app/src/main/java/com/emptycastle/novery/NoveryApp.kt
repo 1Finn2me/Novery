@@ -16,6 +16,8 @@ import com.emptycastle.novery.provider.NovelsOnlineProvider
 import com.emptycastle.novery.provider.RoyalRoadProvider
 import com.emptycastle.novery.provider.WebnovelProvider
 import com.emptycastle.novery.provider.WtrLabProvider
+import com.emptycastle.novery.provider.WuxiaBoxProvider
+import com.emptycastle.novery.provider.FanMTLProvider
 import com.emptycastle.novery.service.NotificationHelper
 import com.emptycastle.novery.tts.TTSManager
 import com.emptycastle.novery.tts.VoiceManager
@@ -77,6 +79,8 @@ class NoveryApp : Application() {
         MainProvider.register(WebnovelProvider())
         MainProvider.register(FreeWebNovelProvider())
         MainProvider.register(AllNovelProvider())
+        MainProvider.register(WuxiaBoxProvider())
+        MainProvider.register(FanMTLProvider())
         //MainProvider.register(EmpireNovelProvider())
     }
 }

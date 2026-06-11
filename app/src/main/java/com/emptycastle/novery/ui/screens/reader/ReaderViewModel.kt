@@ -29,6 +29,7 @@ import com.emptycastle.novery.ui.screens.reader.logic.ChapterLoader
 import com.emptycastle.novery.ui.screens.reader.model.ChapterCharacterMap
 import com.emptycastle.novery.ui.screens.reader.model.ChapterContentItem
 import com.emptycastle.novery.ui.screens.reader.model.ContentSegment
+import com.emptycastle.novery.ui.screens.reader.model.LoadedChapter
 import com.emptycastle.novery.ui.screens.reader.model.PositionResolution
 import com.emptycastle.novery.ui.screens.reader.model.ReaderDisplayItem
 import com.emptycastle.novery.ui.screens.reader.model.ReaderUiState
@@ -40,6 +41,7 @@ import com.emptycastle.novery.ui.screens.reader.model.TTSPosition
 import com.emptycastle.novery.ui.screens.reader.model.TTSScrollEdge
 import com.emptycastle.novery.ui.screens.reader.model.TTSSettingsState
 import com.emptycastle.novery.util.ReadingTimeTracker
+import com.emptycastle.novery.util.SentenceParser
 import com.emptycastle.novery.util.VolumeKeyEvent
 import com.emptycastle.novery.util.VolumeKeyManager
 import kotlinx.coroutines.Dispatchers
@@ -59,6 +61,8 @@ import kotlinx.coroutines.withContext
 import java.net.URL
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
+import me.ag2s.epublib.util.zip.AndroidZipFile
+import me.ag2s.epublib.epub.EpubReader
 
 private const val TAG = "ReaderViewModel"
 
@@ -149,6 +153,7 @@ class ReaderViewModel : ViewModel() {
     private val bookmarkRepository = RepositoryProvider.getBookmarkRepository()
 
     private val chapterLoader = ChapterLoader(novelRepository)
+    private var currentBook: com.emptycastle.novery.data.reader.AbstractBook? = null
 
     // =========================================================================
     // STATE
@@ -271,15 +276,34 @@ class ReaderViewModel : ViewModel() {
     private fun observeSettings() {
         viewModelScope.launch {
             preferencesManager.readerSettings.collect { settings ->
-                _uiState.update { it.copy(settings = settings) }
+                val oldSettings = _uiState.value.settings
+                
+                // Merge global settings with per-novel translation settings
+                val mergedSettings = settings.copy(
+                    translationEnabled = oldSettings.translationEnabled,
+                    sourceLang = oldSettings.sourceLang,
+                    targetLang = oldSettings.targetLang,
+                    useOnlineTranslation = oldSettings.useOnlineTranslation
+                )
+
+                _uiState.update { it.copy(settings = mergedSettings) }
                 VolumeKeyManager.setVolumeKeyNavigationEnabled(settings.volumeKeyNavigation)
                 _ttsScrollLocked.value = settings.lockScrollDuringTTS
+
+                // Only reload if non-translation settings that affect rendering changed
+                val visualChanged = oldSettings.fontSize != settings.fontSize ||
+                        oldSettings.fontFamily != settings.fontFamily ||
+                        oldSettings.theme != settings.theme
+                
+                if (visualChanged) {
+                    // Visual changes are mostly handled by state and composition
+                }
             }
         }
 
         viewModelScope.launch {
             preferencesManager.appSettings.collect { appSettings ->
-                _uiState.update { it.copy(infiniteScrollEnabled = appSettings.infiniteScroll) }
+                _uiState.update { it.copy(infiniteScrollEnabled = true) }
             }
         }
     }
@@ -985,12 +1009,6 @@ class ReaderViewModel : ViewModel() {
 
     /**
      * Handle TTS playback completion.
-     *
-     * FIX #9 — Removed redundant state cleanup that duplicated deactivateTTS().
-     * stopTTSInternal() → deactivateTTS() → clearTTSHighlight() already resets
-     * all TTS-related state including currentTTSCoordinate, isTTSActive, ttsStatus,
-     * currentSentenceHighlight, and currentTTSChapterIndex. Duplicate updates
-     * after the call were a maintenance hazard.
      */
     private fun handleTTSPlaybackComplete() {
         // Guard: if we are already stopping, do nothing
@@ -1016,19 +1034,11 @@ class ReaderViewModel : ViewModel() {
 
         when {
             isLastChapter -> {
-                // FIX #1 (last chapter case) — stopTTSInternal now sets isTTSStopping
-                // before calling TTSServiceManager.stop(), which prevents the service's
-                // internal reset (segmentChanged=0 / playbackState update) from being
-                // processed by the ViewModel and scrolling the reader back to the start.
                 Log.d(TAG, "Reached end of novel, fully stopping TTS")
                 stopTTSInternal()
-                // All state is already cleaned up by stopTTSInternal() → deactivateTTS()
             }
 
             shouldAutoAdvance -> {
-                // The service's playbackComplete was emitted, meaning its backgroundLoader
-                // couldn't auto-advance (failed to load or not configured properly).
-                // ViewModel takes over the auto-advance responsibility.
                 Log.d(TAG, "TTS service couldn't auto-advance — ViewModel taking over")
 
                 val nextChapterIndex = currentChapterIndex + 1
@@ -1043,7 +1053,6 @@ class ReaderViewModel : ViewModel() {
             }
 
             else -> {
-                // Auto-advance is disabled and this is not the last chapter — stop cleanly
                 Log.d(TAG, "Chapter ended, TTS auto-advance disabled")
                 stopTTSInternal()
             }
@@ -1157,10 +1166,6 @@ class ReaderViewModel : ViewModel() {
 
     /**
      * Handle chapter change events from TTS service.
-     *
-     * FIX #6 — Wrap the entire async block in blockTTSSync so that concurrent
-     * segment-change events and scroll-driven chapter updates cannot interleave
-     * with the chapter loading + TTS rebuild sequence.
      */
     private fun handleTTSChapterChange(event: TTSChapterChangeEvent) {
         val chapterIndex = event.chapterIndex
@@ -1186,7 +1191,6 @@ class ReaderViewModel : ViewModel() {
         val state = _uiState.value
 
         viewModelScope.launch {
-            // FIX #6 — block concurrent updates for the duration of this operation
             blockTTSSync.set(true)
             try {
                 // Load chapter if needed
@@ -1287,18 +1291,6 @@ class ReaderViewModel : ViewModel() {
         }
     }
 
-    /**
-     * FIX #1 — Set isTTSStopping BEFORE calling TTSServiceManager.stop().
-     *
-     * The TTS service may emit segmentChanged(0) and/or a playbackState update
-     * as part of its internal reset when stopped. Those events are processed by
-     * separate coroutines in observeTTSState(). By setting isTTSStopping = true
-     * first, all observers and handlers bail out immediately, preventing the
-     * service's reset events from scrolling the reader back to sentence 0.
-     *
-     * The flag is cleared after deactivateTTS() finishes so that a subsequent
-     * startTTS() call can operate normally.
-     */
     private fun stopTTSInternal() {
         isTTSStopping.set(true)
         try {
@@ -1321,12 +1313,6 @@ class ReaderViewModel : ViewModel() {
         TTSServiceManager.resume()
     }
 
-    /**
-     * FIX #7 — Validate that the current coordinate is actually valid before
-     * computing next/previous. When currentTTSCoordinate is INVALID,
-     * findSentenceIndexByCoordinate returns -1, making nextIndex = 0, which
-     * would silently jump to the very first sentence of the list.
-     */
     fun nextSegment() {
         viewModelScope.launch {
             ttsOperationMutex.withLock {
@@ -1348,9 +1334,6 @@ class ReaderViewModel : ViewModel() {
         }
     }
 
-    /**
-     * FIX #7 (same as nextSegment) — Guard against invalid current coordinate.
-     */
     fun previousSegment() {
         viewModelScope.launch {
             ttsOperationMutex.withLock {
@@ -1435,6 +1418,112 @@ class ReaderViewModel : ViewModel() {
         _uiState.update { it.copy(showTTSSettings = false) }
     }
 
+    fun toggleTranslationMenu() {
+        _uiState.update { it.copy(showTranslation = !it.showTranslation, showControls = false) }
+    }
+
+    fun toggleTranslationForNovel() {
+        val novelUrl = currentNovelUrl ?: return
+        val currentEnabled = _uiState.value.settings.translationEnabled
+
+        viewModelScope.launch {
+            if (!currentEnabled) {
+                // Turning ON
+                val targetLang = _uiState.value.settings.targetLang
+                var sourceLang = "auto"
+                val useOnline = _uiState.value.settings.useOnlineTranslation
+
+                _uiState.update { it.copy(isTranslationModelDownloading = true, translationStatus = "Identifying language...") }
+                
+                // 1. Identify language
+                val sampleText = _uiState.value.displayItems
+                    .filterIsInstance<ReaderDisplayItem.Segment>()
+                    .take(5)
+                    .joinToString("\n") { it.segment.text }
+                
+                if (sampleText.isNotBlank()) {
+                    val identified = com.emptycastle.novery.translation.TranslationManager.identifyLanguage(sampleText)
+                    if (identified != null) {
+                        sourceLang = identified
+                        Log.d(TAG, "Identified language: $sourceLang")
+                    }
+                }
+
+                // 2. Check if Source == Target
+                if (sourceLang == targetLang) {
+                    _uiState.update { 
+                        it.copy(
+                            isTranslationModelDownloading = false,
+                            translationStatus = "The novel is already in your target language ($targetLang)."
+                        )
+                    }
+                    delay(3000)
+                    _uiState.update { it.copy(translationStatus = null) }
+                    return@launch
+                }
+
+                // 3. If offline, check if model exists and notify if download needed
+                if (!useOnline) {
+                    val isDownloaded = com.emptycastle.novery.translation.TranslationManager.isModelDownloaded(sourceLang, targetLang)
+                    
+                    if (!isDownloaded) {
+                        _uiState.update { 
+                            it.copy(
+                                translationStatus = "A download is required for offline translation (approx. 30MB)."
+                            ) 
+                        }
+                        delay(2000)
+                    }
+
+                    _uiState.update { it.copy(isTranslationModelDownloading = true, translationStatus = "Preparing translation model ($sourceLang -> $targetLang)...") }
+                    val result = com.emptycastle.novery.translation.TranslationManager.prepareModel(sourceLang, targetLang) { progress ->
+                        _uiState.update { it.copy(translationStatus = progress) }
+                    }
+                    _uiState.update { it.copy(isTranslationModelDownloading = false) }
+                    
+                    if (result.isFailure) {
+                        _uiState.update { it.copy(error = "Failed to prepare translation model: ${result.exceptionOrNull()?.message}") }
+                        return@launch
+                    }
+                } else {
+                    _uiState.update { it.copy(isTranslationModelDownloading = false) }
+                }
+
+                // 4. Update settings and Room
+                val newSettings = _uiState.value.settings.copy(translationEnabled = true, sourceLang = sourceLang)
+                _uiState.update { it.copy(settings = newSettings) }
+                
+                if (libraryRepository.isFavorite(novelUrl)) {
+                    libraryRepository.updateTranslationEnabled(novelUrl, true)
+                    libraryRepository.updateTranslationTargetLanguage(novelUrl, targetLang)
+                }
+                
+                // Clear status after successful activation
+                delay(1000)
+                _uiState.update { it.copy(translationStatus = null) }
+            } else {
+                // Turning OFF
+                val newSettings = _uiState.value.settings.copy(translationEnabled = false)
+                _uiState.update { it.copy(settings = newSettings) }
+                
+                if (libraryRepository.isFavorite(novelUrl)) {
+                    libraryRepository.updateTranslationEnabled(novelUrl, false)
+                }
+            }
+            
+            // Reload content to apply/remove translation
+            reTranslateAllLoadedChapters()
+        }
+    }
+
+    fun toggleTranslation() {
+        toggleTranslationMenu()
+    }
+
+    fun hideTranslation() {
+        _uiState.update { it.copy(showTranslation = false) }
+    }
+
     fun getHighlightedText(
         segment: ContentSegment,
         displayIndex: Int,
@@ -1451,7 +1540,7 @@ class ReaderViewModel : ViewModel() {
         return buildAnnotatedString {
             append(segment.text)
 
-            if (shouldHighlight && currentHighlight != null) {
+            if (shouldHighlight) {
                 val sentence = currentHighlight.sentence
                 addStyle(
                     style = SpanStyle(background = highlightColor),
@@ -1475,13 +1564,6 @@ class ReaderViewModel : ViewModel() {
         currentNovelUrl = novelUrl
         currentProvider = novelRepository.getProvider(providerName)
         lastNavigationSource = source
-
-        val provider = currentProvider ?: run {
-            _uiState.update { it.copy(error = "Provider not found", isLoading = false) }
-            return
-        }
-
-        chapterLoader.configure(provider)
 
         // Block EVERYTHING
         isTransitioning.set(true)
@@ -1545,30 +1627,84 @@ class ReaderViewModel : ViewModel() {
                 )
             }
 
-            val detailsResult = novelRepository.loadNovelDetails(provider, novelUrl)
+            // Load per-novel translation setting
+            val perNovelTranslation = if (libraryRepository.isFavorite(novelUrl)) {
+                libraryRepository.isTranslationEnabled(novelUrl)
+            } else false
+            
+            val perNovelTargetLang = if (libraryRepository.isFavorite(novelUrl)) {
+                libraryRepository.getTranslationTargetLanguage(novelUrl)
+            } else null
 
-            detailsResult.onSuccess { details ->
-                if (thisGeneration != loadGeneration.get()) return@onSuccess
+            _uiState.update { state ->
+                state.copy(
+                    settings = state.settings.copy(
+                        translationEnabled = perNovelTranslation,
+                        targetLang = perNovelTargetLang ?: state.settings.targetLang
+                    )
+                )
+            }
 
-                val allChapters = details.chapters
-                val chapterIndex = allChapters.indexOfFirst { it.url == chapterUrl }
-                    .takeIf { it >= 0 } ?: 0
+            // Initialize Book Abstraction
+            val isEpub = novelUrl.startsWith("content://") || novelUrl.endsWith(".epub")
+            
+            try {
+                val loadedAllChapters: List<com.emptycastle.novery.domain.model.Chapter>
+
+                if (isEpub) {
+                    val context = appContext ?: throw Exception("Context not found")
+                    val uri = android.net.Uri.parse(novelUrl)
+                    val fd = context.contentResolver.openFileDescriptor(uri, "r")
+                        ?: throw Exception("Unable to open file descriptor")
+                    val zipFile = AndroidZipFile(fd, "")
+                    val epub = EpubReader().readEpubLazy(zipFile, "utf-8")
+                    val book = com.emptycastle.novery.data.reader.RegularBook(epub)
+                    currentBook = book
+                    
+                    loadedAllChapters = (0 until book.size()).map { i ->
+                        com.emptycastle.novery.domain.model.Chapter(
+                            name = book.getChapterTitle(i),
+                            url = "epub://$i"
+                        )
+                    }
+                } else {
+                    val provider = currentProvider ?: run {
+                        _uiState.update { it.copy(error = "Provider not found", isLoading = false) }
+                        return@launch
+                    }
+                    
+                    val detailsResult = novelRepository.loadNovelDetails(provider, novelUrl)
+                    val details = detailsResult.getOrThrow()
+                    currentBook = com.emptycastle.novery.data.reader.QuickBook(details, provider)
+                    loadedAllChapters = details.chapters
+                }
+                
+                val book = currentBook ?: throw Exception("Failed to initialize book")
+                book.initializePoster()
+                
+                if (thisGeneration != loadGeneration.get()) return@launch
+
+                val chapterIndex = if (isEpub && chapterUrl.startsWith("epub://")) {
+                    chapterUrl.removePrefix("epub://").toIntOrNull() ?: 0
+                } else {
+                    loadedAllChapters.indexOfFirst { it.url == chapterUrl }.takeIf { it >= 0 } ?: 0
+                }
 
                 requestedChapterIndex = chapterIndex
 
                 _uiState.update {
                     it.copy(
-                        allChapters = allChapters,
+                        allChapters = loadedAllChapters,
                         initialChapterIndex = chapterIndex,
                         currentChapterIndex = chapterIndex,
-                        previousChapter = allChapters.getOrNull(chapterIndex - 1),
-                        nextChapter = allChapters.getOrNull(chapterIndex + 1)
+                        previousChapter = loadedAllChapters.getOrNull(chapterIndex - 1),
+                        nextChapter = loadedAllChapters.getOrNull(chapterIndex + 1)
                     )
                 }
 
                 startInitialLoad(chapterIndex, thisGeneration, shouldRestorePosition)
 
-            }.onFailure { error ->
+            } catch (e: Exception) {
                 if (thisGeneration == loadGeneration.get()) {
                     isTransitioning.set(false)
                     blockInfiniteScroll.set(false)
@@ -1577,7 +1713,7 @@ class ReaderViewModel : ViewModel() {
 
                     _uiState.update {
                         it.copy(
-                            error = error.message ?: "Failed to load novel details",
+                            error = e.message ?: "Failed to load novel",
                             isLoading = false,
                             isContentReady = true
                         )
@@ -1653,9 +1789,19 @@ class ReaderViewModel : ViewModel() {
         }
     }
 
+    private fun reTranslateAllLoadedChapters() {
+        val loadedIndices = _uiState.value.loadedChapters.keys.toList()
+        viewModelScope.launch {
+            loadedIndices.forEach { index ->
+                loadChapterContent(index, forceReload = true)
+            }
+        }
+    }
+
     private suspend fun loadChapterContent(
         chapterIndex: Int,
-        isInitialLoad: Boolean = false
+        isInitialLoad: Boolean = false,
+        forceReload: Boolean = false
     ) {
         val state = _uiState.value
         val allChapters = state.allChapters
@@ -1663,7 +1809,7 @@ class ReaderViewModel : ViewModel() {
         if (chapterIndex < 0 || chapterIndex >= allChapters.size) return
 
         val shouldLoad = loadingChaptersMutex.withLock {
-            if (state.loadedChapters.containsKey(chapterIndex)) return
+            if (!forceReload && state.loadedChapters.containsKey(chapterIndex)) return
             if (loadingChapters.contains(chapterIndex)) return
             loadingChapters.add(chapterIndex)
             true
@@ -1688,7 +1834,22 @@ class ReaderViewModel : ViewModel() {
         }
 
         try {
-            val result = chapterLoader.loadChapter(chapter, chapterIndex)
+            val settings = _uiState.value.settings
+            val book = currentBook ?: return
+            val context = appContext ?: return
+            
+            val result = chapterLoader.loadChapter(
+                context = context,
+                book = book,
+                chapterIndex = chapterIndex,
+                sourceLang = settings.sourceLang,
+                targetLang = settings.targetLang,
+                translationEnabled = settings.translationEnabled,
+                useOnline = settings.useOnlineTranslation,
+                onProgress = { current, total ->
+                    _uiState.update { it.copy(translationStatus = "Translating paragraph $current/$total...") }
+                }
+            )
 
             when (result) {
                 is ChapterLoadResult.Success -> {
@@ -2432,6 +2593,31 @@ class ReaderViewModel : ViewModel() {
 
     fun updateReaderSettings(settings: ReaderSettings) {
         preferencesManager.updateReaderSettings(settings)
+    }
+
+    fun updateTranslationTargetLang(lang: String) {
+        val novelUrl = currentNovelUrl ?: return
+        _uiState.update { it.copy(settings = it.settings.copy(targetLang = lang)) }
+        
+        viewModelScope.launch {
+            if (libraryRepository.isFavorite(novelUrl)) {
+                libraryRepository.updateTranslationTargetLanguage(novelUrl, lang)
+            }
+            if (_uiState.value.settings.translationEnabled) {
+                reTranslateAllLoadedChapters()
+            }
+        }
+    }
+
+    fun updateTranslationMode(useOnline: Boolean) {
+        val novelUrl = currentNovelUrl ?: return
+        _uiState.update { it.copy(settings = it.settings.copy(useOnlineTranslation = useOnline)) }
+        
+        viewModelScope.launch {
+            if (_uiState.value.settings.translationEnabled) {
+                reTranslateAllLoadedChapters()
+            }
+        }
     }
 
     // =========================================================================

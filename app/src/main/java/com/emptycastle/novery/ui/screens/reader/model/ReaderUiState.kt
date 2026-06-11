@@ -202,6 +202,7 @@ data class ReaderUiState(
     val showQuickSettings: Boolean = false,
     val showChapterList: Boolean = false,
     val showTTSSettings: Boolean = false,
+    val showTranslation: Boolean = false,
 
     // Features
     val infiniteScrollEnabled: Boolean = false,
@@ -232,6 +233,9 @@ data class ReaderUiState(
     val totalTTSSentences: Int = 0,
     val currentGlobalSentenceIndex: Int = 0,
     val ttsSettings: TTSSettingsState = TTSSettingsState(),
+    val translationStatus: String? = null,
+    val isTranslationModelDownloading: Boolean = false,
+    val translationDownloadProgress: Float = 0f,
 
     // Track which edge the sentence was last at for flip behavior
     val lastTTSScrollEdge: TTSScrollEdge = TTSScrollEdge.NONE

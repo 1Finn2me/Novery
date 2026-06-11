@@ -93,7 +93,8 @@ object NetworkClient {
         val isSuccessful: Boolean,
         val code: Int,
         val isCloudflareBlocked: Boolean = false,
-        val headers: Map<String, String> = emptyMap()
+        val headers: Map<String, String> = emptyMap(),
+        val effectiveUrl: String = ""
     )
 
     // ========================================================================
@@ -155,7 +156,8 @@ object NetworkClient {
         isSuccessful = code in 200..299,
         code = code,
         isCloudflareBlocked = isCloudflareChallenge(code, body),
-        headers = headers.toMap()
+        headers = headers.toMap(),
+        effectiveUrl = url
     )
 
     private fun okhttp3.Headers.toMap(): Map<String, String> =

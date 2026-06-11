@@ -29,15 +29,21 @@ interface OfflineDao {
     @Query("SELECT COUNT(*) FROM offline_chapters WHERE novelUrl = :novelUrl")
     suspend fun getDownloadedCount(novelUrl: String): Int
 
-    @Query("SELECT novelUrl, COUNT(*) as count FROM offline_chapters GROUP BY novelUrl")
+    @Query("""
+        SELECT oc.novelUrl, COUNT(*) as count 
+        FROM offline_chapters oc
+        INNER JOIN offline_novels ON oc.novelUrl = offline_novels.url
+        GROUP BY oc.novelUrl
+    """)
     suspend fun getAllNovelCounts(): List<NovelChapterCount>
 
     @Query("""
-        SELECT novelUrl, 
+        SELECT oc.novelUrl, 
                COUNT(*) as count, 
-               MAX(downloadedAt) as lastDownloadedAt 
-        FROM offline_chapters 
-        GROUP BY novelUrl
+               MAX(oc.downloadedAt) as lastDownloadedAt 
+        FROM offline_chapters oc
+        INNER JOIN offline_novels ON oc.novelUrl = offline_novels.url
+        GROUP BY oc.novelUrl
     """)
     suspend fun getAllNovelDownloadData(): List<NovelDownloadData>
 
@@ -87,14 +93,16 @@ interface OfflineDao {
     @Query("DELETE FROM novel_details")
     suspend fun deleteAllNovelDetails()
     /**
-     * Get download info for all novels with downloaded chapters
+     * Get download info only for novels that have been explicitly registered as downloaded.
+     * This excludes novels that only have chapters in the temporary reading cache.
      */
     @Query("""
-    SELECT novelUrl, 
+    SELECT oc.novelUrl, 
            COUNT(*) as chapterCount, 
-           MAX(downloadedAt) as lastDownloadedAt 
-    FROM offline_chapters 
-    GROUP BY novelUrl
+           MAX(oc.downloadedAt) as lastDownloadedAt 
+    FROM offline_chapters oc
+    INNER JOIN offline_novels ON oc.novelUrl = offline_novels.url
+    GROUP BY oc.novelUrl
 """)
     suspend fun getAllDownloadInfo(): List<DownloadInfoTuple>
 

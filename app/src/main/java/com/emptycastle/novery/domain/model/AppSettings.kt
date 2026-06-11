@@ -230,7 +230,7 @@ data class AppSettings(
 
     // Reader
     val keepScreenOn: Boolean = true,
-    val infiniteScroll: Boolean = false,
+    val infiniteScroll: Boolean = true,
 
     // Providers
     val providerOrder: List<String> = emptyList(),

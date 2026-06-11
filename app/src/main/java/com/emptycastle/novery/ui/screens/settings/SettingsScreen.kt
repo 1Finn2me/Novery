@@ -446,16 +446,6 @@ fun SettingsScreen(
                             preferencesManager.updateAppSettings(settings.copy(keepScreenOn = it))
                         }
                     )
-                    SettingsDivider()
-                    ToggleItem(
-                        icon = Icons.Outlined.AllInclusive,
-                        title = "Infinite Scroll (Experimental)",
-                        subtitle = "Auto-load next chapters (Experimental)",
-                        checked = settings.infiniteScroll,
-                        onCheckedChange = {
-                            preferencesManager.updateAppSettings(settings.copy(infiniteScroll = it))
-                        }
-                    )
                 }
             }
 
