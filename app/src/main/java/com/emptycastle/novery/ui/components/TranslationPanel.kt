@@ -1,7 +1,6 @@
 package com.emptycastle.novery.ui.components
 
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -34,6 +33,7 @@ import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Translate
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -41,7 +41,6 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
@@ -92,7 +91,9 @@ private val LANGUAGES = listOf(
 fun TranslationPanel(
     settings: ReaderSettings,
     translationStatus: String?,
-    onSettingsChange: (ReaderSettings) -> Unit,
+    onToggleTranslation: () -> Unit,
+    onTargetLangChange: (String) -> Unit,
+    onModeChange: (Boolean) -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -144,11 +145,11 @@ fun TranslationPanel(
                         title = "Enable Translation",
                         subtitle = "Translate content automatically",
                         checked = settings.translationEnabled,
-                        onCheckedChange = { onSettingsChange(settings.copy(translationEnabled = it)) }
+                        onCheckedChange = { onToggleTranslation() }
                     )
 
                     AnimatedVisibility(
-                        visible = settings.translationEnabled,
+                        visible = settings.translationEnabled || translationStatus != null,
                         enter = expandVertically() + fadeIn(),
                         exit = shrinkVertically() + fadeOut()
                     ) {
@@ -160,14 +161,14 @@ fun TranslationPanel(
                                         icon = Icons.Default.CloudOff,
                                         label = "Offline",
                                         isSelected = !settings.useOnlineTranslation,
-                                        onClick = { onSettingsChange(settings.copy(useOnlineTranslation = false)) },
+                                        onClick = { onModeChange(false) },
                                         modifier = Modifier.weight(1f)
                                     )
                                     ModeChip(
                                         icon = Icons.Default.Cloud,
                                         label = "Online",
                                         isSelected = settings.useOnlineTranslation,
-                                        onClick = { onSettingsChange(settings.copy(useOnlineTranslation = true)) },
+                                        onClick = { onModeChange(true) },
                                         modifier = Modifier.weight(1f)
                                     )
                                 }
@@ -182,14 +183,14 @@ fun TranslationPanel(
                                             LanguageChip(
                                                 name = name,
                                                 isSelected = isSelected,
-                                                onClick = { onSettingsChange(settings.copy(targetLang = code)) }
+                                                onClick = { onTargetLangChange(code) }
                                             )
                                         }
                                     }
                                 }
                             }
 
-                            // Status Indicator
+                            // Status Indicator (Embedded in Panel)
                             if (translationStatus != null) {
                                 Surface(
                                     shape = RoundedCornerShape(12.dp),
@@ -201,12 +202,21 @@ fun TranslationPanel(
                                         horizontalArrangement = Arrangement.spacedBy(10.dp),
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                        Icon(
-                                            imageVector = Icons.Default.Language,
-                                            contentDescription = null,
-                                            tint = TransTheme.blue,
-                                            modifier = Modifier.size(18.dp)
-                                        )
+                                        if (translationStatus.contains("download", ignoreCase = true) || 
+                                            translationStatus.contains("Preparing", ignoreCase = true)) {
+                                            CircularProgressIndicator(
+                                                modifier = Modifier.size(18.dp),
+                                                strokeWidth = 2.dp,
+                                                color = TransTheme.blue
+                                            )
+                                        } else {
+                                            Icon(
+                                                imageVector = Icons.Default.Language,
+                                                contentDescription = null,
+                                                tint = TransTheme.blue,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        }
                                         Text(
                                             text = translationStatus,
                                             style = MaterialTheme.typography.bodySmall,
@@ -236,7 +246,7 @@ fun TranslationPanel(
                                 modifier = Modifier.size(18.dp)
                             )
                             Text(
-                                text = "Translation replaces the original text in-place. Offline mode requires a one-time model download.",
+                                text = "Translation replaces the original text in-place. Per-novel settings are saved automatically.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = TransTheme.textMuted
                             )

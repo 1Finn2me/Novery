@@ -37,3 +37,9 @@ keystore.properties
 
 # Release APKs
 release/
+
+# Release *
+/screen
+/app/release
+/app/Release2
+/app/Release2/*

@@ -35,7 +35,11 @@ data class LibraryEntity(
     val unreadChapterCount: Int = 0,
 
     //Custom Cover
-    val customCoverUrl: String? = null
+    val customCoverUrl: String? = null,
+
+    // Translation settings per novel
+    val isTranslationEnabled: Boolean = false,
+    val translationTargetLanguage: String? = null
 ) {
     // Update toNovel() to use custom cover
     fun toNovel(): Novel = Novel(

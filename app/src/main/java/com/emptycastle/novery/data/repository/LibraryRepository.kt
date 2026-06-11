@@ -233,13 +233,6 @@ class LibraryRepository(
         libraryDao.insert(entity)
 
         offlineDao.saveNovelDetails(NovelDetailsEntity.fromNovelDetails(details))
-        offlineDao.saveNovel(
-            OfflineNovelEntity(
-                url = novel.url,
-                name = novel.name,
-                coverUrl = novel.posterUrl
-            )
-        )
     }
 
     suspend fun removeFromLibrary(url: String) = withContext(Dispatchers.IO) {
@@ -598,5 +591,25 @@ class LibraryRepository(
 
     suspend fun getCustomCover(novelUrl: String): String? = withContext(Dispatchers.IO) {
         libraryDao.getCustomCover(novelUrl)
+    }
+
+    // ================================================================
+    // TRANSLATION SETTINGS
+    // ================================================================
+
+    suspend fun updateTranslationEnabled(url: String, enabled: Boolean) = withContext(Dispatchers.IO) {
+        libraryDao.updateTranslationEnabled(url, enabled)
+    }
+
+    suspend fun updateTranslationTargetLanguage(url: String, lang: String) = withContext(Dispatchers.IO) {
+        libraryDao.updateTranslationTargetLanguage(url, lang)
+    }
+
+    suspend fun isTranslationEnabled(url: String): Boolean = withContext(Dispatchers.IO) {
+        libraryDao.isTranslationEnabled(url)
+    }
+
+    suspend fun getTranslationTargetLanguage(url: String): String? = withContext(Dispatchers.IO) {
+        libraryDao.getTranslationTargetLanguage(url)
     }
 }

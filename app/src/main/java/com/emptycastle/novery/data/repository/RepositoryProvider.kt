@@ -21,6 +21,7 @@ object RepositoryProvider {
 
     // Repositories
     private var novelRepository: NovelRepository? = null
+    private var contentLoadingStrategy: ContentLoadingStrategy? = null
     private var libraryRepository: LibraryRepository? = null
     private var historyRepository: HistoryRepository? = null
     private var offlineRepository: OfflineRepository? = null
@@ -63,8 +64,15 @@ object RepositoryProvider {
 
     fun getNovelRepository(): NovelRepository {
         return novelRepository ?: NovelRepository(
-            offlineDao = getDatabase().offlineDao()
+            offlineDao = getDatabase().offlineDao(),
+            contentStrategy = getContentLoadingStrategy()
         ).also { novelRepository = it }
+    }
+
+    fun getContentLoadingStrategy(): ContentLoadingStrategy {
+        return contentLoadingStrategy ?: ContentLoadingStrategy(
+            offlineDao = getDatabase().offlineDao()
+        ).also { contentLoadingStrategy = it }
     }
 
     fun getLibraryRepository(): LibraryRepository {

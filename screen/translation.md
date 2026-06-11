@@ -332,3 +332,24 @@ AnimatedVisibility(visible = uiState.showTranslation) {
 
 ## Summary
 By following this manual, the translation feature integrates natively into the reading flow, providing in-place text replacement while maintaining synchronization with the TTS engine.
+
+### Notes
+**Lifecycle**  
+`release()` and `deleteModel()` are already included in `TranslationManager`. Call `release()` from `ReaderViewModel.onCleared()`:
+```kotlin
+override fun onCleared() {—    TranslationManager.release()ó    super.onCleared()}—
+```
+**Translator reuse** 
+— `prepareMoel` already handles reuse and close-on-change via `currentSource`/`currentTarget` checks.
+ No extra work needed.
+**Online Translation** 
+— Uses `NetworkClient.getText()` (OkHttp) con chunking por 2000 chars, retry con backoff exponencial, 
+y detección de traducciones fallidas. 
+Endpoint unofficial de `translate.googleapis.com`, sin API key. Si deja de funcionar, se puede remover
+sin afectar MLKit offline.
+**Performance**  
+MLKit local processing can be memory intensive on long 
+chapters. Wrapped maps filter out tiny or empty text elements to bypass redundant task allocation.
+**Scope**
+ó Intenionally avoids external backends, API keys, paid services, or extra infrastructure. 
+Lightweight by design.d

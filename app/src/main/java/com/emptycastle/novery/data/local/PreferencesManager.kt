@@ -425,7 +425,7 @@ class PreferencesManager(context: Context) {
             hideSpicyLibraryContent = prefs.getBoolean(KEY_HIDE_SPICY_LIBRARY_CONTENT, true),
             enabledLibraryFilters = enabledLibraryFilters,
             keepScreenOn = prefs.getBoolean(KEY_KEEP_SCREEN_ON, true),
-            infiniteScroll = prefs.getBoolean(KEY_INFINITE_SCROLL, false),
+            infiniteScroll = prefs.getBoolean(KEY_INFINITE_SCROLL, true),
             autoDownloadEnabled = prefs.getBoolean(KEY_AUTO_DOWNLOAD_ENABLED, false),
             autoDownloadOnWifiOnly = prefs.getBoolean(KEY_AUTO_DOWNLOAD_WIFI_ONLY, true),
             autoDownloadLimit = prefs.getInt(KEY_AUTO_DOWNLOAD_LIMIT, 10),

@@ -520,88 +520,15 @@ fun ChapterDividerItem(
     onNext: () -> Unit,
     onBackToDetails: () -> Unit
 ) {
-    val buttonHeight = if (largerTouchTargets) 64.dp else 56.dp
-    val iconSize = if (largerTouchTargets) 24.dp else 20.dp
-
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 48.dp)
-            .padding(horizontal = horizontalPadding),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        HorizontalDivider(
-            modifier = Modifier.padding(horizontal = 32.dp),
-            color = colors.divider
-        )
-
-        Spacer(modifier = Modifier.height(24.dp))
-
-        Icon(
-            imageVector = Icons.AutoMirrored.Filled.MenuBook,
-            contentDescription = null,
-            modifier = Modifier.size(40.dp),
-            tint = colors.text.copy(alpha = 0.3f)
-        )
-
-        Spacer(modifier = Modifier.height(12.dp))
-
-        Text(
-            text = "End of Chapter ${item.chapterNumber}",
-            style = MaterialTheme.typography.titleSmall,
-            color = colors.text.copy(alpha = 0.6f)
-        )
-
-        Text(
-            text = item.chapterName,
-            style = MaterialTheme.typography.bodySmall,
-            color = colors.text.copy(alpha = 0.4f),
-            textAlign = TextAlign.Center,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis
-        )
-
-        if (!infiniteScrollEnabled) {
-            Spacer(modifier = Modifier.height(24.dp))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                ChapterNavButton(
-                    text = "Previous",
-                    icon = Icons.AutoMirrored.Filled.ArrowBack,
-                    enabled = item.chapterNumber > 1,
-                    isPrimary = false,
-                    colors = colors,
-                    onClick = onPrevious,
-                    modifier = Modifier.weight(1f),
-                    height = buttonHeight,
-                    iconSize = iconSize
-                )
-
-                ChapterNavButton(
-                    text = "Next",
-                    icon = Icons.AutoMirrored.Filled.ArrowForward,
-                    enabled = item.hasNextChapter,
-                    isPrimary = true,
-                    colors = colors,
-                    onClick = onNext,
-                    modifier = Modifier.weight(1f),
-                    height = buttonHeight,
-                    iconSize = iconSize
-                )
-            }
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            GhostButton(
-                text = "Back to Novel",
-                onClick = onBackToDetails
-            )
-        } else if (!item.hasNextChapter) {
-            Spacer(modifier = Modifier.height(24.dp))
-
+    // Only show content if it's the very last chapter of the novel
+    if (!item.hasNextChapter) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 48.dp)
+                .padding(horizontal = horizontalPadding),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
             Surface(
                 shape = RoundedCornerShape(12.dp),
                 color = colors.accent.copy(alpha = 0.1f)
@@ -622,6 +549,9 @@ fun ChapterDividerItem(
                 onClick = onBackToDetails
             )
         }
+    } else {
+        // For intermediate chapters, show nothing or just a small spacer to maintain flow
+        Spacer(modifier = Modifier.height(32.dp))
     }
 }
 

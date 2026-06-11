@@ -23,6 +23,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
@@ -45,6 +48,8 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -92,12 +97,12 @@ fun ReaderScreen(
     providerName: String,
     onBack: () -> Unit,
     onNavigateToSettings: () -> Unit,
-    viewModel: ReaderViewModel = viewModel()
+    readerViewModel: ReaderViewModel = viewModel()
 ) {
-    val uiState by viewModel.uiState.collectAsState()
-    val ttsScrollLocked by viewModel.ttsScrollLocked.collectAsState()
-    val ensureVisibleIndex by viewModel.ttsShouldEnsureVisible.collectAsState()
-    val sentenceBounds by viewModel.sentenceBounds.collectAsState()
+    val uiState by readerViewModel.uiState.collectAsState()
+    val ttsScrollLocked by readerViewModel.ttsScrollLocked.collectAsState()
+    val ensureVisibleIndex by readerViewModel.ttsShouldEnsureVisible.collectAsState()
+    val sentenceBounds by readerViewModel.sentenceBounds.collectAsState()
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
@@ -110,12 +115,12 @@ fun ReaderScreen(
 
     // Initialize context for TTS
     LaunchedEffect(Unit) {
-        viewModel.setContext(context)
+        readerViewModel.setContext(context)
     }
 
     // Auto-advance event feedback
     LaunchedEffect(Unit) {
-        viewModel.autoAdvanceEvent.collect { event ->
+        readerViewModel.autoAdvanceEvent.collect { event ->
             when (event) {
                 is AutoAdvanceEvent.Advancing -> {
                     Toast.makeText(
@@ -140,9 +145,9 @@ fun ReaderScreen(
 
     // Register/unregister with volume key manager
     DisposableEffect(Unit) {
-        viewModel.onReaderEnter()
+        readerViewModel.onReaderEnter()
         onDispose {
-            viewModel.onReaderExit()
+            readerViewModel.onReaderExit()
         }
     }
 
@@ -182,7 +187,7 @@ fun ReaderScreen(
         ) {
             autoHideJob = scope.launch {
                 delay(uiState.settings.autoHideControlsDelay)
-                viewModel.hideControls()
+                readerViewModel.hideControls()
             }
         }
     }
@@ -192,12 +197,12 @@ fun ReaderScreen(
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
                 Lifecycle.Event.ON_PAUSE -> {
-                    viewModel.onPauseReading()
-                    viewModel.onReaderBecameInvisible()
+                    readerViewModel.onPauseReading()
+                    readerViewModel.onReaderBecameInvisible()
                 }
                 Lifecycle.Event.ON_RESUME -> {
-                    viewModel.onResumeReading()
-                    viewModel.onReaderBecameVisible()
+                    readerViewModel.onResumeReading()
+                    readerViewModel.onReaderBecameVisible()
                 }
                 else -> {}
             }
@@ -210,7 +215,7 @@ fun ReaderScreen(
 
     // Load chapter on first composition
     LaunchedEffect(chapterUrl, novelUrl, providerName) {
-        viewModel.loadChapter(chapterUrl, novelUrl, providerName)
+        readerViewModel.loadChapter(chapterUrl, novelUrl, providerName)
     }
 
     // Restore scroll position when content is loaded and ready
@@ -242,7 +247,7 @@ fun ReaderScreen(
                         listState.scrollToItem(0)
                     } catch (_: Exception) { }
                 }
-                viewModel.markScrollRestored()
+                readerViewModel.markScrollRestored()
             }
             is PositionResolution.ChapterNotLoaded -> {
                 Log.d("ReaderScreen", "Chapter ${resolution.chapterIndex} not yet loaded, waiting...")
@@ -253,7 +258,7 @@ fun ReaderScreen(
                 try {
                     listState.scrollToItem(0)
                 } catch (_: Exception) { }
-                viewModel.markScrollRestored()
+                readerViewModel.markScrollRestored()
             }
         }
     }
@@ -265,7 +270,7 @@ fun ReaderScreen(
         snapshotFlow {
             Pair(listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset)
         }.collect { (index, offset) ->
-            viewModel.updateCurrentScrollPosition(index, offset)
+            readerViewModel.updateCurrentScrollPosition(index, offset)
         }
     }
 
@@ -297,7 +302,7 @@ fun ReaderScreen(
 
                 val chapter = uiState.allChapters.getOrNull(chapterIndex)
                 if (chapter != null) {
-                    viewModel.updateCurrentChapter(chapterIndex, chapter.url, chapter.name)
+                    readerViewModel.updateCurrentChapter(chapterIndex, chapter.url, chapter.name)
                 }
             }
     }
@@ -326,7 +331,7 @@ fun ReaderScreen(
                     is ReaderDisplayItem.ErrorIndicator -> firstItem.chapterIndex
                     null -> return@collect
                 }
-                viewModel.onApproachingBeginning(chapterIndex)
+                readerViewModel.onApproachingBeginning(chapterIndex)
             }
         }
     }
@@ -357,7 +362,7 @@ fun ReaderScreen(
                     is ReaderDisplayItem.ErrorIndicator -> lastItem.chapterIndex
                     null -> return@collect
                 }
-                viewModel.onApproachingEnd(chapterIndex)
+                readerViewModel.onApproachingEnd(chapterIndex)
             }
         }
     }
@@ -388,7 +393,7 @@ fun ReaderScreen(
 
     // Volume key scroll handling
     LaunchedEffect(Unit) {
-        viewModel.volumeScrollAction.collectLatest { goForward ->
+        readerViewModel.volumeScrollAction.collectLatest { goForward ->
             ScrollUtils.scrollByPage(
                 scope = scope,
                 listState = listState,
@@ -404,7 +409,7 @@ fun ReaderScreen(
     // Save position when leaving
     DisposableEffect(Unit) {
         onDispose {
-            viewModel.savePositionOnExit()
+            readerViewModel.savePositionOnExit()
         }
     }
 
@@ -423,7 +428,7 @@ fun ReaderScreen(
     // Update progress in ViewModel
     LaunchedEffect(chapterProgress, uiState.isContentReady) {
         if (uiState.isContentReady) {
-            viewModel.updateChapterProgress(chapterProgress)
+            readerViewModel.updateChapterProgress(chapterProgress)
         }
     }
 
@@ -477,9 +482,9 @@ fun ReaderScreen(
             currentChapterIndex = uiState.currentChapterIndex,
             readChapterUrls = uiState.readChapterUrls,
             onChapterSelected = { index, _ ->
-                viewModel.navigateToChapter(index)
+                readerViewModel.navigateToChapter(index)
             },
-            onDismiss = { viewModel.hideChapterList() },
+            onDismiss = { readerViewModel.hideChapterList() },
             sheetState = chapterListSheetState
         )
     }
@@ -495,54 +500,57 @@ fun ReaderScreen(
         ensureVisibleIndex = ensureVisibleIndex,
         ttsScrollLocked = ttsScrollLocked,
         currentSentenceBounds = sentenceBounds,
-        onSentenceBoundsUpdated = viewModel::updateSentenceBounds,
-        onEnsureVisibleHandled = { viewModel.clearTTSEnsureVisible() },
+        onSentenceBoundsUpdated = readerViewModel::updateSentenceBounds,
+        onEnsureVisibleHandled = { readerViewModel.clearTTSEnsureVisible() },
         onTapAction = { action ->
             when (action) {
-                TapAction.TOGGLE_CONTROLS -> viewModel.toggleControls()
+                TapAction.TOGGLE_CONTROLS -> readerViewModel.toggleControls()
                 TapAction.PREVIOUS_PAGE -> scrollByPage(false)
                 TapAction.NEXT_PAGE -> scrollByPage(true)
-                TapAction.BOOKMARK -> viewModel.toggleBookmark()
-                TapAction.OPEN_SETTINGS -> viewModel.toggleControls()
-                TapAction.OPEN_CHAPTERS -> viewModel.toggleChapterList()
-                TapAction.START_TTS -> viewModel.startTTS()
+                TapAction.BOOKMARK -> readerViewModel.toggleBookmark()
+                TapAction.OPEN_SETTINGS -> readerViewModel.toggleControls()
+                TapAction.OPEN_CHAPTERS -> readerViewModel.toggleChapterList()
+                TapAction.START_TTS -> readerViewModel.startTTS()
                 TapAction.SCROLL_UP -> scrollByPage(false)
                 TapAction.SCROLL_DOWN -> scrollByPage(true)
-                TapAction.TOGGLE_FULLSCREEN -> viewModel.toggleControls()
+                TapAction.TOGGLE_FULLSCREEN -> readerViewModel.toggleControls()
                 TapAction.NONE -> { }
             }
         },
         onBack = onBack,
-        onRetry = { viewModel.loadChapter(chapterUrl, novelUrl, providerName) },
-        onRetryChapter = { chapterIndex -> viewModel.retryChapter(chapterIndex) },
-        onToggleControls = viewModel::toggleControls,
-        onToggleBookmark = viewModel::toggleBookmark,
-        onToggleChapterList = viewModel::toggleChapterList,
-        onToggleTTSSettings = viewModel::toggleTTSSettings,
-        onHideTTSSettings = viewModel::hideTTSSettings,
-        onToggleTranslation = viewModel::toggleTranslation,
-        onHideTranslation = viewModel::hideTranslation,
-        onSettingsChange = viewModel::updateReaderSettings,
+        onRetry = { readerViewModel.loadChapter(chapterUrl, novelUrl, providerName) },
+        onRetryChapter = { chapterIndex -> readerViewModel.retryChapter(chapterIndex) },
+        onToggleControls = readerViewModel::toggleControls,
+        onToggleBookmark = readerViewModel::toggleBookmark,
+        onToggleChapterList = readerViewModel::toggleChapterList,
+        onToggleTTSSettings = readerViewModel::toggleTTSSettings,
+        onHideTTSSettings = readerViewModel::hideTTSSettings,
+        onToggleTranslationMenu = readerViewModel::toggleTranslationMenu,
+        onToggleTranslationLogic = readerViewModel::toggleTranslationForNovel,
+        onTargetLangChange = readerViewModel::updateTranslationTargetLang,
+        onModeChange = readerViewModel::updateTranslationMode,
+        onHideTranslation = readerViewModel::hideTranslation,
+        onSettingsChange = readerViewModel::updateReaderSettings,
         onNavigateToSettings = onNavigateToSettings,
-        onStartTTS = viewModel::startTTS,
-        onPauseTTS = viewModel::pauseTTS,
-        onResumeTTS = viewModel::resumeTTS,
-        onStopTTS = viewModel::stopTTS,
-        onTTSNext = viewModel::nextSegment,
-        onTTSPrevious = viewModel::previousSegment,
-        onTTSSpeedChange = viewModel::updateTTSSpeed,
-        onTTSPitchChange = viewModel::updateTTSPitch,
-        onTTSVoiceSelected = viewModel::updateTTSVoice,
-        onTTSAutoScrollChange = viewModel::updateTTSAutoScroll,
-        onTTSHighlightChange = viewModel::updateTTSHighlightSentence,
-        onTTSLockScrollChange = viewModel::setTTSScrollLock,
-        onTTSUseSystemVoiceChange = viewModel::updateTTSUseSystemVoice,
+        onStartTTS = readerViewModel::startTTS,
+        onPauseTTS = readerViewModel::pauseTTS,
+        onResumeTTS = readerViewModel::resumeTTS,
+        onStopTTS = readerViewModel::stopTTS,
+        onTTSNext = readerViewModel::nextSegment,
+        onTTSPrevious = readerViewModel::previousSegment,
+        onTTSSpeedChange = readerViewModel::updateTTSSpeed,
+        onTTSPitchChange = readerViewModel::updateTTSPitch,
+        onTTSVoiceSelected = readerViewModel::updateTTSVoice,
+        onTTSAutoScrollChange = readerViewModel::updateTTSAutoScroll,
+        onTTSHighlightChange = readerViewModel::updateTTSHighlightSentence,
+        onTTSLockScrollChange = readerViewModel::setTTSScrollLock,
+        onTTSUseSystemVoiceChange = readerViewModel::updateTTSUseSystemVoice,
         onTTSAutoAdvanceChapterChange = { enabled ->
-            viewModel.updateReaderSettings(uiState.settings.copy(ttsAutoAdvanceChapter = enabled))
+            readerViewModel.updateReaderSettings(uiState.settings.copy(ttsAutoAdvanceChapter = enabled))
         },
-        onPrevious = viewModel::navigateToPrevious,
-        onNext = viewModel::navigateToNext,
-        onConfirmScrollReset = viewModel::confirmScrollReset
+        onPrevious = readerViewModel::navigateToPrevious,
+        onNext = readerViewModel::navigateToNext,
+        onConfirmScrollReset = readerViewModel::confirmScrollReset
     )
 }
 
@@ -700,7 +708,10 @@ private fun ReaderScreenContent(
     onToggleChapterList: () -> Unit,
     onToggleTTSSettings: () -> Unit,
     onHideTTSSettings: () -> Unit,
-    onToggleTranslation: () -> Unit,
+    onToggleTranslationMenu: () -> Unit,
+    onToggleTranslationLogic: () -> Unit,
+    onTargetLangChange: (String) -> Unit,
+    onModeChange: (Boolean) -> Unit,
     onHideTranslation: () -> Unit,
     onSettingsChange: (ReaderSettings) -> Unit,
     onNavigateToSettings: () -> Unit,
@@ -861,7 +872,7 @@ private fun ReaderScreenContent(
                         onTTSNext = onTTSNext,
                         onTTSPrevious = onTTSPrevious,
                         onToggleTTSSettings = onToggleTTSSettings,
-                        onOpenTranslation = onToggleTranslation
+                        onOpenTranslation = onToggleTranslationMenu
                     )
 
                     // TTS Settings Panel
@@ -903,7 +914,9 @@ private fun ReaderScreenContent(
                         TranslationPanel(
                             settings = uiState.settings,
                             translationStatus = uiState.translationStatus,
-                            onSettingsChange = onSettingsChange,
+                            onToggleTranslation = onToggleTranslationLogic,
+                            onTargetLangChange = onTargetLangChange,
+                            onModeChange = onModeChange,
                             onDismiss = onHideTranslation,
                             modifier = Modifier.padding(16.dp)
                         )
@@ -941,6 +954,52 @@ private fun ReaderScreenContent(
                         style = MaterialTheme.typography.bodyMedium,
                         color = colors.text
                     )
+                }
+            }
+        }
+
+        // Translation Model Download Overlay
+        if (uiState.isTranslationModelDownloading) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.6f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Card(
+                    modifier = Modifier.padding(24.dp),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surface
+                    )
+                ) {
+                    Column(
+                        modifier = Modifier.padding(24.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
+                        Text(
+                            text = uiState.translationStatus ?: "Preparing translation...",
+                            style = MaterialTheme.typography.titleMedium,
+                            textAlign = TextAlign.Center
+                        )
+                        if (uiState.translationStatus?.contains("download", ignoreCase = true) == true) {
+                            Text(
+                                text = "A download is required for offline translation (approx. 30MB).",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                textAlign = TextAlign.Center,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        Text(
+                            text = "This might take a moment.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center
+                        )
+                    }
                 }
             }
         }
